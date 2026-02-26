@@ -121,8 +121,15 @@ async def show_update_confirm(callback: CallbackQuery, state: FSMContext):
         return
     
     commit_hash = get_current_commit() or "неизвестно"
-    last_commit = get_last_commit_info()
-    previous_commits = get_previous_commits_info(5)
+    
+    if commits_behind > 0:
+        branch = get_current_branch() or "main"
+        target_rev = f"origin/{branch}"
+    else:
+        target_rev = "HEAD"
+        
+    last_commit = get_last_commit_info(target_rev)
+    previous_commits = get_previous_commits_info(5, target_rev)
     
     # Формируем текст с коммитами
     commits_text = f"🔹 *Последний коммит:*\n```\n{last_commit}\n```\n"

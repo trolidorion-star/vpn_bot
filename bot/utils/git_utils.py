@@ -191,20 +191,20 @@ def pull_updates() -> Tuple[bool, str]:
     return True, f"✅ Обновление успешно!\n\n{output}"
 
 
-def get_last_commit_info() -> str:
+def get_last_commit_info(revision: str = 'HEAD') -> str:
     """Получает информацию о последнем коммите."""
     success, output = run_git_command([
-        'log', '--format=%h %B', '-n', '1'
+        'log', '--format=%h %B', '-n', '1', revision
     ])
     if success and output:
         return output
     return "Не удалось получить информацию о последнем коммите"
 
 
-def get_previous_commits_info(limit: int = 5) -> str:
+def get_previous_commits_info(limit: int = 5, revision: str = 'HEAD') -> str:
     """Получает предыдущие коммиты, пропуская последний."""
     success, output = run_git_command([
-        'log', '--format=%h %B', '--skip=1', '-n', str(limit)
+        'log', '--format=%h %B', '--skip=1', '-n', str(limit), revision
     ])
     if success and output:
         return output
