@@ -87,44 +87,57 @@ def support_kb(support_link: str) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def buy_key_kb(crypto_url: str = None, stars_enabled: bool = False, cards_enabled: bool = False, order_id: str = None) -> InlineKeyboardMarkup:
+def buy_key_kb(
+    crypto_url: str = None,
+    stars_enabled: bool = False,
+    cards_enabled: bool = False,
+    yookassa_qr_enabled: bool = False,
+    order_id: str = None
+) -> InlineKeyboardMarkup:
     """
     Клавиатура для страницы «Купить ключ».
-    
+
     Args:
         crypto_url: URL для оплаты криптой (если настроен)
         stars_enabled: Показывать ли кнопку оплаты Stars
         cards_enabled: Показывать ли кнопку оплаты картой ЮКасса
+        yookassa_qr_enabled: Показывать ли кнопку QR-оплаты через ЮКассу
         order_id: ID созданного ордера (для оптимизации Stars/Cards)
     """
     builder = InlineKeyboardBuilder()
-    
+
     # Кнопки оплаты (показываем только включённые методы)
     # USDT — внешняя ссылка
     if crypto_url:
         builder.row(
             InlineKeyboardButton(text="💰 Оплатить USDT", url=crypto_url)
         )
-    
+
     # Stars — переход к выбору тарифа
     if stars_enabled:
         cb_data = f"pay_stars:{order_id}" if order_id else "pay_stars"
         builder.row(
             InlineKeyboardButton(text="⭐ Оплатить звёздами", callback_data=cb_data)
         )
-        
-    # Карты — переход к выбору тарифа
+
+    # Карты (Telegram Payments) — переход к выбору тарифа
     if cards_enabled:
         cb_data = f"pay_cards:{order_id}" if order_id else "pay_cards"
         builder.row(
             InlineKeyboardButton(text="💳 Оплатить картой", callback_data=cb_data)
         )
-    
+
+    # QR ЮКасса — переход к выбору тарифа
+    if yookassa_qr_enabled:
+        builder.row(
+            InlineKeyboardButton(text="📱 QR-оплата (Карта/СБП)", callback_data="pay_qr")
+        )
+
     # Кнопка «На главную» — последний ряд
     builder.row(
         InlineKeyboardButton(text="🈴 На главную", callback_data="start")
     )
-    
+
     return builder.as_markup()
 
 
@@ -329,48 +342,64 @@ def renew_tariff_select_kb(tariffs: list, key_id: int, order_id: str = None, is_
     return builder.as_markup()
 
 
-def renew_payment_method_kb(key_id: int, crypto_url: str = None, stars_enabled: bool = False, cards_enabled: bool = False) -> InlineKeyboardMarkup:
+def renew_payment_method_kb(
+    key_id: int,
+    crypto_url: str = None,
+    stars_enabled: bool = False,
+    cards_enabled: bool = False,
+    yookassa_qr_enabled: bool = False
+) -> InlineKeyboardMarkup:
     """
     Клавиатура выбора способа оплаты для продления (первый шаг).
-    
+
     Args:
         key_id: ID ключа
         crypto_url: URL для оплаты криптой (с placeholder тарифом)
         stars_enabled: Доступна ли оплата Stars
         cards_enabled: Доступна ли оплата Картами
+        yookassa_qr_enabled: Доступна ли QR-оплата через ЮКассу
     """
     builder = InlineKeyboardBuilder()
-    
+
     # USDT — внешняя ссылка (если настроено)
     if crypto_url:
         builder.row(
             InlineKeyboardButton(text="💰 Оплатить USDT", url=crypto_url)
         )
-    
+
     # Stars — переход к выбору тарифа
     if stars_enabled:
         builder.row(
             InlineKeyboardButton(
-                text="⭐ Оплатить звёздами", 
+                text="⭐ Оплатить звёздами",
                 callback_data=f"renew_stars_tariff:{key_id}"
             )
         )
-        
+
     # Карты — переход к выбору тарифа
     if cards_enabled:
         builder.row(
             InlineKeyboardButton(
-                text="💳 Оплатить картой", 
+                text="💳 Оплатить картой",
                 callback_data=f"renew_cards_tariff:{key_id}"
             )
         )
-    
+
+    # QR ЮКасса— переход к выбору тарифа
+    if yookassa_qr_enabled:
+        builder.row(
+            InlineKeyboardButton(
+                text="📱 QR-оплата (Карта/СБП)",
+                callback_data=f"renew_qr_tariff:{key_id}"
+            )
+        )
+
     # Последний ряд: назад и на главную
     builder.row(
         InlineKeyboardButton(text="⬅️ Назад", callback_data=f"key:{key_id}"),
         InlineKeyboardButton(text="🈴 На главную", callback_data="start")
     )
-    
+
     return builder.as_markup()
 
 
@@ -549,7 +578,7 @@ def key_issued_kb() -> InlineKeyboardMarkup:
 def trial_sub_kb() -> InlineKeyboardMarkup:
     """
     Клавиатура экрана «Пробная подписка».
-    
+
     Две кнопки:
     - Активировать (trial_activate)
     - На главную (start)
@@ -562,3 +591,82 @@ def trial_sub_kb() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="🈴 На главную", callback_data="start")
     )
     return builder.as_markup()
+
+
+# ============================================================================
+# QR-ОПЛАТА ЮКАССА (direct API)
+# ============================================================================
+
+def yookassa_qr_kb(order_id: str, back_callback: str = "buy_key") -> InlineKeyboardMarkup:
+    """
+    Клавиатура страницы QR-оплаты ЮКассы.
+
+    Args:
+        order_id: Наш внутренний order_id
+        back_callback: Каллбэк для кнопки «Назад»
+    """
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_yookassa_qr:{order_id}")
+    )
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback),
+        InlineKeyboardButton(text="🈴 На главную", callback_data="start")
+    )
+    return builder.as_markup()
+
+
+def renew_yookassa_qr_tariff_kb(tariffs: list, key_id: int) -> InlineKeyboardMarkup:
+    """
+    Клавиатура выбора тарифа для QR-оплаты при продлении ключа.
+
+    Args:
+        tariffs: Список активных тарифов
+        key_id: ID ключа для продления
+    """
+    builder = InlineKeyboardBuilder()
+
+    for tariff in tariffs:
+        price_rub = tariff.get('price_rub')
+        if price_rub is None or price_rub <= 0:
+            continue
+        builder.row(
+            InlineKeyboardButton(
+                text=f"📱 {tariff['name']} — {price_rub} ₽",
+                callback_data=f"renew_pay_qr:{key_id}:{tariff['id']}"
+            )
+        )
+
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад", callback_data=f"key_renew:{key_id}"),
+        InlineKeyboardButton(text="🈴 На главную", callback_data="start")
+    )
+    return builder.as_markup()
+
+
+def qr_tariff_select_kb(tariffs: list) -> InlineKeyboardMarkup:
+    """
+    Клавиатура выбора тарифа для QR-оплаты нового ключа.
+
+    Args:
+        tariffs: Список активных тарифов
+    """
+    builder = InlineKeyboardBuilder()
+
+    for tariff in tariffs:
+        price_rub = tariff.get('price_rub')
+        if price_rub is None or price_rub <= 0:
+            continue
+        builder.row(
+            InlineKeyboardButton(
+                text=f"📱 {tariff['name']} — {price_rub} ₽",
+                callback_data=f"qr_pay:{tariff['id']}"
+            )
+        )
+
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="buy_key"),
+        InlineKeyboardButton(text="🈴 На главную", callback_data="start")
+    )
+    return builder.as_markup()
+

@@ -37,6 +37,11 @@ class AdminStates(StatesGroup):
     crypto_setup_url = State()       # Ввод ссылки на товар
     crypto_setup_secret = State()    # Ввод секретного ключа
     edit_crypto = State()            # Редактирование крипто-настроек
+
+    # ========== Настройка QR-оплаты ЮКасса ==========
+    qr_setup_shop_id = State()       # Ввод Shop ID
+    qr_setup_secret_key = State()    # Ввод Secret Key
+
     
     # ========== Редактирование текстов ==========
     waiting_for_text = State()       # Ожидание ввода нового текста

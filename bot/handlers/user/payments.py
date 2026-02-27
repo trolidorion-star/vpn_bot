@@ -50,7 +50,7 @@ async def handle_start_with_payment(message: Message, command: CommandObject, st
         
         # Используем единую точку выхода UI
         if success and order:
-            await finalize_payment_ui(message, state, response_text, order)
+            await finalize_payment_ui(message, state, response_text, order, user_id=user_id)
         else:
             from bot.keyboards.admin import home_only_kb
             await message.answer(
@@ -218,7 +218,7 @@ async def successful_payment_handler(message: Message, state: FSMContext):
         
         # Завершаем UI
         if success and order:
-            await finalize_payment_ui(message, state, text, order)
+            await finalize_payment_ui(message, state, text, order, user_id=message.from_user.id)
         else:
              from bot.keyboards.admin import home_only_kb
              await message.answer(text, reply_markup=home_only_kb(), parse_mode="Markdown")
@@ -240,7 +240,7 @@ async def successful_payment_handler(message: Message, state: FSMContext):
             await message.answer("❌ Произошла ошибка при обработке платежа.", parse_mode="Markdown")
 
 
-async def finalize_payment_ui(message: Message, state: FSMContext, text: str, order: dict):
+async def finalize_payment_ui(message: Message, state: FSMContext, text: str, order: dict, user_id: int):
     """
     Завершает UI после успешной оплаты.
     Показывает сообщение и либо перекидывает на настройку (draft), либо на главную.
@@ -253,7 +253,6 @@ async def finalize_payment_ui(message: Message, state: FSMContext, text: str, or
     logger = logging.getLogger(__name__)
     
     key_id = order.get('vpn_key_id')
-    user_id = message.from_user.id 
     
     logger.info(f"finalize_payment_ui: Order={order.get('order_id')}, Key={key_id}, User={user_id}")
     
@@ -780,5 +779,352 @@ async def renew_cards_invoice(callback: CallbackQuery):
         raise e
     
     await callback.message.delete()
+    await callback.answer()
+
+
+# ============================================================================
+# QR-ОПЛАТА ЮКАССА (direct API — без Telegram Payments)
+# ============================================================================
+
+@router.callback_query(F.data == "pay_qr")
+async def pay_qr_select_tariff(callback: CallbackQuery):
+    """Выбор тарифа для QR-оплаты (Новый ключ)."""
+    from database.requests import get_all_tariffs
+    from bot.keyboards.user import qr_tariff_select_kb
+    from bot.keyboards.admin import home_only_kb
+
+    tariffs = get_all_tariffs(include_hidden=False)
+    rub_tariffs = [t for t in tariffs if t.get('price_rub') and t['price_rub'] > 0]
+
+    if not rub_tariffs:
+        await callback.message.edit_text(
+            "📱 *QR-оплата*\n\n"
+            "😔 Для QR-оплаты не настроены цены в рублях.\n"
+            "Обратитесь к администратору.",
+            reply_markup=home_only_kb(),
+            parse_mode="Markdown"
+        )
+        await callback.answer()
+        return
+
+    await callback.message.edit_text(
+        "📱 *QR-оплата (Карта/СБП)*\n\n"
+        "Выберите тариф:\n\n"
+        "_Оплата через ЮКассу — поддерживает банковские карты и СБП._",
+        reply_markup=qr_tariff_select_kb(rub_tariffs),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("qr_pay:"))
+async def qr_pay_create(callback: CallbackQuery):
+    """Создаёт QR-платёж ЮКасса для нового ключа и отправляет QR-фото."""
+    from database.requests import (
+        get_tariff_by_id, get_user_internal_id, create_pending_order,
+        save_yookassa_payment_id
+    )
+    from bot.services.billing import create_yookassa_qr_payment
+    from bot.keyboards.user import yookassa_qr_kb
+    from bot.keyboards.admin import home_only_kb
+
+    tariff_id = int(callback.data.split(":")[1])
+    tariff = get_tariff_by_id(tariff_id)
+
+    if not tariff:
+        await callback.answer("❌ Тариф не найден", show_alert=True)
+        return
+
+    price_rub = float(tariff.get('price_rub') or 0)
+    if price_rub <= 0:
+        await callback.answer("❌ Цена в рублях не задана для этого тарифа", show_alert=True)
+        return
+
+    user_id = get_user_internal_id(callback.from_user.id)
+    if not user_id:
+        await callback.answer("❌ Пользователь не найден", show_alert=True)
+        return
+
+    _, order_id = create_pending_order(
+        user_id=user_id,
+        tariff_id=tariff_id,
+        payment_type='yookassa_qr',
+        vpn_key_id=None
+    )
+
+    await callback.message.edit_text("⏳ Создаём QR-код для оплаты...")
+
+    try:
+        description = f"Покупка «{tariff['name']}» — {tariff['duration_days']} дней"
+        result = await create_yookassa_qr_payment(
+            amount_rub=price_rub,
+            order_id=order_id,
+            description=description
+        )
+
+        save_yookassa_payment_id(order_id, result['yookassa_payment_id'])
+
+        qr_image_data = result.get('qr_image_data')
+        qr_url = result.get('qr_url', '')
+        if not qr_image_data or not qr_url:
+            await callback.message.edit_text(
+                "❌ ЮКасса не вернула данные для оплаты. Попробуйте позже.",
+                reply_markup=home_only_kb(),
+                parse_mode="Markdown"
+            )
+            return
+
+        text = (
+            f"📱 *QR-код для оплаты*\n\n"
+            f"💳 *Тариф:* {tariff['name']}\n"
+            f"💰 *Сумма:* {int(price_rub)} ₽\n"
+            f"⏳ *Срок:* {tariff['duration_days']} дней\n\n"
+            f"Отсканируйте QR-код банковским приложением (СБП) или перейдите по [ссылке на оплату]({qr_url}).\n\n"
+            "_После оплаты нажмите «✅ Я оплатил»._"
+        )
+        
+        from aiogram.types import BufferedInputFile
+        photo = BufferedInputFile(qr_image_data, filename="qr.png")
+
+        await callback.message.delete()
+        await callback.message.answer_photo(
+            photo=photo,
+            caption=text,
+            reply_markup=yookassa_qr_kb(order_id, back_callback="pay_qr"),
+            parse_mode="Markdown"
+        )
+
+    except (ValueError, RuntimeError) as e:
+        logger.error(f"Ошибка создания QR ЮКасса: {e}")
+        await callback.message.edit_text(
+            f"❌ *Ошибка создания QR*\n\n_{e}_\n\nПопробуйте другой способ оплаты.",
+            reply_markup=home_only_kb(),
+            parse_mode="Markdown"
+        )
+
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("check_yookassa_qr:"))
+async def check_yookassa_payment(callback: CallbackQuery, state: FSMContext):
+    """
+    Проверяет статус QR-платежа ЮКасса по нажатию «✅ Я оплатил».
+    При успехе — запускает процесс создания ключа.
+    """
+    from database.requests import (
+        find_order_by_order_id, is_order_already_paid, update_payment_type
+    )
+    from bot.services.billing import check_yookassa_payment_status, process_payment_order
+    from bot.keyboards.admin import home_only_kb
+
+    order_id = callback.data.split(":", 1)[1]
+
+    if is_order_already_paid(order_id):
+        order = find_order_by_order_id(order_id)
+        if order:
+            await finalize_payment_ui(callback.message, state,
+                                      "✅ Оплата уже была обработана ранее.", order, user_id=callback.from_user.id)
+        await callback.answer()
+        return
+
+    order = find_order_by_order_id(order_id)
+    if not order:
+        await callback.answer("❌ Ордер не найден", show_alert=True)
+        return
+
+    yookassa_payment_id = order.get('yookassa_payment_id')
+    if not yookassa_payment_id:
+        await callback.answer("⚠️ Нет данных о платеже. Попробуйте чуть позже.", show_alert=True)
+        return
+
+    await callback.answer("🔍 Проверяем платёж...")
+
+    try:
+        status = await check_yookassa_payment_status(yookassa_payment_id)
+    except Exception as e:
+        logger.error(f"Ошибка проверки статуса ЮКасса {yookassa_payment_id}: {e}")
+        await callback.message.answer(
+            "❌ Не удалось проверить статус платежа. Попробуйте позже.",
+            reply_markup=home_only_kb(),
+            parse_mode="Markdown"
+        )
+        return
+
+    if status == 'succeeded':
+        update_payment_type(order_id, 'yookassa_qr')
+
+        try:
+            success, text, updated_order = process_payment_order(order_id)
+            if success and updated_order:
+                try:
+                    await callback.message.delete()
+                except Exception:
+                    pass
+                await finalize_payment_ui(callback.message, state, text, updated_order, user_id=callback.from_user.id)
+            else:
+                await callback.message.answer(
+                    text, reply_markup=home_only_kb(), parse_mode="Markdown"
+                )
+        except Exception as e:
+            from bot.errors import TariffNotFoundError
+            if isinstance(e, TariffNotFoundError):
+                from database.requests import get_setting
+                from bot.keyboards.user import support_kb
+                support_link = get_setting('support_channel_link', 'https://t.me/YadrenoChat')
+                await callback.message.answer(str(e),
+                                              reply_markup=support_kb(support_link),
+                                              parse_mode="Markdown")
+            else:
+                logger.exception(f"Ошибка обработки QR-платежа: {e}")
+                await callback.message.answer(
+                    "❌ Произошла ошибка при обработке платежа.", parse_mode="Markdown"
+                )
+
+    elif status == 'canceled':
+        await callback.message.answer(
+            "❌ *Платёж отменён*\n\n"
+            "Похоже, платёж был отменён или истёк срок QR-кода.\n"
+            "Попробуйте снова выбрать тариф.",
+            reply_markup=home_only_kb(),
+            parse_mode="Markdown"
+        )
+    else:
+        # pending / waiting_for_capture / etc.
+        await callback.message.answer(
+            "⏳ *Платёж ещё не поступил*\n\n"
+            "Оплатите QR-код и нажмите «✅ Я оплатил» снова.\n\n"
+            "_Если только что оплатили — подождите пару секунд._",
+            parse_mode="Markdown"
+        )
+
+
+# ============================================================================
+# QR-ОПЛАТА ЮКАССА ПРИ ПРОДЛЕНИИ КЛЮЧА
+# ============================================================================
+
+@router.callback_query(F.data.startswith("renew_qr_tariff:"))
+async def renew_qr_select_tariff(callback: CallbackQuery):
+    """Выбор тарифа для QR-оплаты при продлении ключа."""
+    from database.requests import get_key_details_for_user, get_all_tariffs
+    from bot.keyboards.user import renew_yookassa_qr_tariff_kb
+    from bot.utils.text import escape_md
+
+    key_id = int(callback.data.split(":")[1])
+    key = get_key_details_for_user(key_id, callback.from_user.id)
+    if not key:
+        await callback.answer("❌ Ключ не найден", show_alert=True)
+        return
+
+    tariffs = get_all_tariffs(include_hidden=False)
+    rub_tariffs = [t for t in tariffs if t.get('price_rub') and t['price_rub'] > 0]
+
+    if not rub_tariffs:
+        await callback.answer("😔 Нет тарифов с ценой в рублях", show_alert=True)
+        return
+
+    await callback.message.edit_text(
+        f"📱 *QR-оплата (Карта/СБП)*\n\n"
+        f"🔑 Ключ: *{escape_md(key['display_name'])}*\n\n"
+        "Выберите тариф для продления:",
+        reply_markup=renew_yookassa_qr_tariff_kb(rub_tariffs, key_id),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("renew_pay_qr:"))
+async def renew_qr_create(callback: CallbackQuery):
+    """Создаёт QR-платёж ЮКасса для продления ключа."""
+    from database.requests import (
+        get_tariff_by_id, get_user_internal_id, create_pending_order,
+        save_yookassa_payment_id, get_key_details_for_user
+    )
+    from bot.services.billing import create_yookassa_qr_payment
+    from bot.keyboards.user import yookassa_qr_kb
+    from bot.keyboards.admin import home_only_kb
+    from bot.utils.text import escape_md
+
+    parts = callback.data.split(":")
+    key_id = int(parts[1])
+    tariff_id = int(parts[2])
+
+    tariff = get_tariff_by_id(tariff_id)
+    key = get_key_details_for_user(key_id, callback.from_user.id)
+
+    if not tariff or not key:
+        await callback.answer("❌ Ошибка тарифа или ключа", show_alert=True)
+        return
+
+    price_rub = float(tariff.get('price_rub') or 0)
+    if price_rub <= 0:
+        await callback.answer("❌ Цена в рублях не задана", show_alert=True)
+        return
+
+    user_id = get_user_internal_id(callback.from_user.id)
+    if not user_id:
+        await callback.answer("❌ Пользователь не найден", show_alert=True)
+        return
+
+    _, order_id = create_pending_order(
+        user_id=user_id,
+        tariff_id=tariff_id,
+        payment_type='yookassa_qr',
+        vpn_key_id=key_id
+    )
+
+    await callback.message.edit_text("⏳ Создаём QR-код для оплаты...")
+
+    try:
+        description = (
+            f"Продление Ключа «{key['display_name']}»: "
+            f"«{tariff['name']}» ({tariff['duration_days']} дн.)"
+        )
+        result = await create_yookassa_qr_payment(
+            amount_rub=price_rub,
+            order_id=order_id,
+            description=description
+        )
+
+        save_yookassa_payment_id(order_id, result['yookassa_payment_id'])
+
+        qr_image_data = result.get('qr_image_data')
+        qr_url = result.get('qr_url', '')
+        if not qr_image_data or not qr_url:
+            await callback.message.edit_text(
+                "❌ ЮКасса не вернула данные для оплаты. Попробуйте позже.",
+                reply_markup=home_only_kb(),
+                parse_mode="Markdown"
+            )
+            return
+
+        text = (
+            f"📱 *QR-код для оплаты*\n\n"
+            f"🔑 *Ключ:* {escape_md(key['display_name'])}\n"
+            f"💳 *Тариф:* {tariff['name']}\n"
+            f"💰 *Сумма:* {int(price_rub)} ₽\n"
+            f"⏳ *Продление:* +{tariff['duration_days']} дней\n\n"
+            f"Отсканируйте QR-код банковским приложением (СБП) или перейдите по [ссылке на оплату]({qr_url}).\n\n"
+            "_После оплаты нажмите «✅ Я оплатил»._"
+        )
+        
+        from aiogram.types import BufferedInputFile
+        photo = BufferedInputFile(qr_image_data, filename="qr.png")
+
+        await callback.message.delete()
+        await callback.message.answer_photo(
+            photo=photo,
+            caption=text,
+            reply_markup=yookassa_qr_kb(order_id, back_callback=f"renew_qr_tariff:{key_id}"),
+            parse_mode="Markdown"
+        )
+
+    except (ValueError, RuntimeError) as e:
+        logger.error(f"Ошибка QR ЮКасса (продление): {e}")
+        await callback.message.edit_text(
+            f"❌ *Ошибка создания QR*\n\n_{e}_",
+            reply_markup=home_only_kb(),
+            parse_mode="Markdown"
+        )
+
     await callback.answer()
 

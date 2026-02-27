@@ -416,17 +416,23 @@ def confirm_delete_kb(server_id: int) -> InlineKeyboardMarkup:
 # РАЗДЕЛ «ОПЛАТЫ»
 # ============================================================================
 
-def payments_menu_kb(stars_enabled: bool, crypto_enabled: bool, cards_enabled: bool) -> InlineKeyboardMarkup:
+def payments_menu_kb(
+    stars_enabled: bool,
+    crypto_enabled: bool,
+    cards_enabled: bool,
+    qr_enabled: bool = False
+) -> InlineKeyboardMarkup:
     """
     Главное меню раздела оплат.
-    
+
     Args:
         stars_enabled: Включены ли Telegram Stars
         crypto_enabled: Включены ли крипто-платежи
-        cards_enabled: Включена ли оплата картами (ЮКасса)
+        cards_enabled: Включена ли оплата картами (ЮКасса Telegram Payments)
+        qr_enabled: Включена ли прямая QR-оплата ЮКасса
     """
     builder = InlineKeyboardBuilder()
-    
+
     # Toggle для Stars
     stars_status = "✅" if stars_enabled else "❌"
     builder.row(
@@ -435,8 +441,8 @@ def payments_menu_kb(stars_enabled: bool, crypto_enabled: bool, cards_enabled: b
             callback_data="admin_payments_toggle_stars"
         )
     )
-    
-    # Toggle для Crypto (без отдельной кнопки настроек)
+
+    # Toggle для Crypto
     crypto_status = "✅" if crypto_enabled else "❌"
     builder.row(
         InlineKeyboardButton(
@@ -444,8 +450,8 @@ def payments_menu_kb(stars_enabled: bool, crypto_enabled: bool, cards_enabled: b
             callback_data="admin_payments_toggle_crypto"
         )
     )
-    
-    # Toggle для Карт
+
+    # Toggle для Карт (Telegram Payments)
     cards_status = "✅" if cards_enabled else "❌"
     builder.row(
         InlineKeyboardButton(
@@ -453,7 +459,16 @@ def payments_menu_kb(stars_enabled: bool, crypto_enabled: bool, cards_enabled: b
             callback_data="admin_payments_cards"
         )
     )
-    
+
+    # Кнопка QR-оплаты ЮКасса (прямая)
+    qr_status = "✅" if qr_enabled else "❌"
+    builder.row(
+        InlineKeyboardButton(
+            text=f"📱 QR-оплата (ЮКасса/СБП): {qr_status}",
+            callback_data="admin_payments_qr"
+        )
+    )
+
     # Тарифы
     builder.row(
         InlineKeyboardButton(
@@ -461,11 +476,12 @@ def payments_menu_kb(stars_enabled: bool, crypto_enabled: bool, cards_enabled: b
             callback_data="admin_tariffs"
         )
     )
-    
+
     # Навигация
     builder.row(back_button("admin_panel"), home_button())
-    
+
     return builder.as_markup()
+
 
 
 def crypto_setup_kb(step: int) -> InlineKeyboardMarkup:

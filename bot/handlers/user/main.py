@@ -705,8 +705,10 @@ async def key_renew_select_payment(callback: CallbackQuery):
     crypto_configured = is_crypto_configured()
     stars_enabled = is_stars_enabled()
     cards_enabled = is_cards_enabled()
-    
-    if not crypto_configured and not stars_enabled and not cards_enabled:
+    from database.requests import is_yookassa_qr_configured
+    yookassa_qr = is_yookassa_qr_configured()
+
+    if not crypto_configured and not stars_enabled and not cards_enabled and not yookassa_qr:
          await callback.message.edit_text(
             "💳 *Продление ключа*\n\n"
             "😔 Способы оплаты временно недоступны.\n"
@@ -750,7 +752,8 @@ async def key_renew_select_payment(callback: CallbackQuery):
         f"💳 *Продление ключа*\n\n"
         f"🔑 Ключ: *{key['display_name']}*\n\n"
         "Выберите способ оплаты:",
-        reply_markup=renew_payment_method_kb(key_id, crypto_url, stars_enabled, cards_enabled),
+        reply_markup=renew_payment_method_kb(key_id, crypto_url, stars_enabled, cards_enabled,
+                                             yookassa_qr_enabled=yookassa_qr),
         parse_mode="Markdown"
     )
     await callback.answer()
@@ -1125,15 +1128,15 @@ async def buy_key_handler(callback: CallbackQuery):
     """Страница «Купить ключ» с условиями и способами оплаты."""
     from database.requests import (
         is_crypto_configured, is_stars_enabled, is_cards_enabled, get_setting,
-        get_user_internal_id, get_all_tariffs, create_pending_order
+        get_user_internal_id, get_all_tariffs, create_pending_order,
+        is_yookassa_qr_configured
     )
     from bot.services.billing import build_crypto_payment_url, extract_item_id_from_url
     from bot.keyboards.user import buy_key_kb
     from bot.keyboards.admin import home_only_kb
-    
+
     telegram_id = callback.from_user.id
-    
-    # Проверяем какие методы оплаты доступны
+
     # Проверяем какие методы оплаты доступны
     crypto_url = None
     existing_order_id = None  # Сохраняем ID ордера для переиспользования в Stars
@@ -1143,8 +1146,6 @@ async def buy_key_handler(callback: CallbackQuery):
         # (или можно использовать специальный placeholder тариф)
         user_id = get_user_internal_id(telegram_id)
         if user_id:
-            # Создаём pending order без конкретного тарифа
-            # (тарифа и сумма определятся при оплате в CryptoBot)
             _, order_id = create_pending_order(
                 user_id=user_id,
                 tariff_id=None,
@@ -1152,11 +1153,11 @@ async def buy_key_handler(callback: CallbackQuery):
                 vpn_key_id=None  # Новый ключ
             )
             existing_order_id = order_id
-            
+
             # Формируем ссылку с invoice
             crypto_item_url = get_setting('crypto_item_url')
             item_id = extract_item_id_from_url(crypto_item_url)
-            
+
             if item_id:
                 crypto_url = build_crypto_payment_url(
                     item_id=item_id,
@@ -1164,12 +1165,13 @@ async def buy_key_handler(callback: CallbackQuery):
                     tariff_external_id=None,  # Пользователь выберет в боте
                     price_cents=None  # Цена определяется в Ya.Seller
                 )
-    
+
     stars_enabled = is_stars_enabled()
     cards_enabled = is_cards_enabled()
+    yookassa_qr = is_yookassa_qr_configured()
     
     # Если нет ни одного метода оплаты — показываем заглушку
-    if not crypto_url and not stars_enabled and not cards_enabled:
+    if not crypto_url and not stars_enabled and not cards_enabled and not yookassa_qr:
         await callback.message.edit_text(
             "💳 *Купить ключ*\n\n"
             "😔 К сожалению, сейчас оплата недоступна.\n\n"
@@ -1191,7 +1193,7 @@ async def buy_key_handler(callback: CallbackQuery):
 ⚠️ *Важно знать:*
 • Средства не возвращаются — услуга считается оказанной в момент получения ключа
 • Мы не даём никаких гарантий бесперебойной работы сервиса в будущем
-• Мы не можем гарантировать, что данная технология обхода блокировок останется доступной в вашей стране
+• Мы не можем гарантировать, что данная технология останется рабочей
 
 _Приобретая ключ, вы соглашаетесь с этими условиями._
 
@@ -1200,7 +1202,9 @@ _Приобретая ключ, вы соглашаетесь с этими ус
     try:
         await callback.message.edit_text(
             text,
-            reply_markup=buy_key_kb(crypto_url=crypto_url, stars_enabled=stars_enabled, cards_enabled=cards_enabled, order_id=existing_order_id),
+            reply_markup=buy_key_kb(crypto_url=crypto_url, stars_enabled=stars_enabled,
+                                    cards_enabled=cards_enabled, yookassa_qr_enabled=yookassa_qr,
+                                    order_id=existing_order_id),
             parse_mode="Markdown"
         )
     except Exception:
@@ -1210,7 +1214,9 @@ _Приобретая ключ, вы соглашаетесь с этими ус
             pass
         await callback.message.answer(
             text,
-            reply_markup=buy_key_kb(crypto_url=crypto_url, stars_enabled=stars_enabled, cards_enabled=cards_enabled, order_id=existing_order_id),
+            reply_markup=buy_key_kb(crypto_url=crypto_url, stars_enabled=stars_enabled,
+                                    cards_enabled=cards_enabled, yookassa_qr_enabled=yookassa_qr,
+                                    order_id=existing_order_id),
             parse_mode="Markdown"
         )
         

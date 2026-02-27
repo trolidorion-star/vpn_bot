@@ -11,7 +11,7 @@ from .connection import get_db
 logger = logging.getLogger(__name__)
 
 # Текущая версия схемы БД
-LATEST_VERSION = 5
+LATEST_VERSION = 6
 
 
 def get_current_version() -> int:
@@ -375,12 +375,48 @@ def migration_5(conn: sqlite3.Connection) -> None:
     logger.info("Миграция v5 применена")
 
 
+def migration_6(conn: sqlite3.Connection) -> None:
+    """
+    Миграция v6: Прямая QR-оплата через ЮКассу (без Telegram Payments API).
+
+    Изменения:
+    - Добавляет в settings настройки: yookassa_qr_enabled, yookassa_shop_id, yookassa_secret_key
+    - Добавляет в payments колонку yookassa_payment_id для хранения ID платежа на стороне ЮКассы
+    """
+    logger.info("Применение миграции v6 (ЮКасса QR-оплата)...")
+
+    # Добавляем колонку yookassa_payment_id в payments
+    try:
+        conn.execute("ALTER TABLE payments ADD COLUMN yookassa_payment_id TEXT")
+        logger.info("Колонка yookassa_payment_id добавлена в таблицу payments")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" in str(e):
+            logger.info("Колонка yookassa_payment_id уже существует")
+        else:
+            raise
+
+    # Добавляем настройки QR-оплаты
+    qr_settings = [
+        ('yookassa_qr_enabled', '0'),   # Выключено по умолчанию
+        ('yookassa_shop_id', ''),        # Shop ID магазина ЮКассы
+        ('yookassa_secret_key', ''),    # Секретный ключ ЮКассы
+    ]
+    for key, value in qr_settings:
+        conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+            (key, value)
+        )
+
+    logger.info("Миграция v6 применена")
+
+
 MIGRATIONS = {
     1: migration_1,
     2: migration_2,
     3: migration_3,
     4: migration_4,
     5: migration_5,
+    6: migration_6,
 }
 
 

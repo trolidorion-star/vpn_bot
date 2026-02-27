@@ -359,6 +359,78 @@ def is_cards_configured() -> bool:
     return bool(token and token.strip())
 
 
+def is_yookassa_qr_enabled() -> bool:
+    """Проверяет, включена ли QR-оплата через ЮКассу."""
+    return get_setting('yookassa_qr_enabled', '0') == '1'
+
+
+def is_yookassa_qr_configured() -> bool:
+    """
+    Проверяет, настроена ли QR-оплата через ЮКассу полностью.
+
+    Returns:
+        True если QR включена И есть shop_id и secret_key
+    """
+    if not is_yookassa_qr_enabled():
+        return False
+    shop_id = get_setting('yookassa_shop_id', '')
+    secret_key = get_setting('yookassa_secret_key', '')
+    return bool(shop_id and shop_id.strip() and secret_key and secret_key.strip())
+
+
+def get_yookassa_credentials() -> tuple[str, str]:
+    """
+    Возвращает учётные данные ЮКасса для прямого API.
+
+    Returns:
+        Кортеж (shop_id, secret_key)
+    """
+    shop_id = get_setting('yookassa_shop_id', '')
+    secret_key = get_setting('yookassa_secret_key', '')
+    return shop_id, secret_key
+
+
+def save_yookassa_payment_id(order_id: str, yookassa_payment_id: str) -> bool:
+    """
+    Сохраняет ID платежа ЮКасса в запись ордера.
+
+    Args:
+        order_id: Наш внутренний order_id
+        yookassa_payment_id: ID платежа в системе ЮКассы
+
+    Returns:
+        True если успешно
+    """
+    with get_db() as conn:
+        cursor = conn.execute(
+            "UPDATE payments SET yookassa_payment_id = ? WHERE order_id = ?",
+            (yookassa_payment_id, order_id)
+        )
+        success = cursor.rowcount > 0
+        if success:
+            logger.info(f"Сохранён yookassa_payment_id={yookassa_payment_id} для order_id={order_id}")
+        return success
+
+
+def find_order_by_yookassa_id(yookassa_payment_id: str) -> Optional[Dict[str, Any]]:
+    """
+    Находит ордер по ID платежа ЮКасса.
+
+    Args:
+        yookassa_payment_id: ID платежа в системе ЮКассы
+
+    Returns:
+        Словарь с данными ордера или None
+    """
+    with get_db() as conn:
+        cursor = conn.execute(
+            "SELECT * FROM payments WHERE yookassa_payment_id = ?",
+            (yookassa_payment_id,)
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
 def is_trial_enabled() -> bool:
     """Включена ли функция пробной подписки."""
     return get_setting('trial_enabled', '0') == '1'

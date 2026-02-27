@@ -2,18 +2,27 @@
 Сервис биллинга — обработка платежей.
 
 Проверка подписей, создание/продление ключей после оплаты.
+Создание QR-платежей через ЮКасса REST API.
 """
 import hmac
 import hashlib
 import logging
+import uuid
+import base64
+import aiohttp
+import qrcode
+import io
 from typing import Optional, Dict, Any, Tuple
 
 from database.requests import (
     find_order_by_order_id, complete_order, is_order_already_paid,
-    get_vpn_key_by_id, extend_vpn_key, get_setting
+    get_vpn_key_by_id, extend_vpn_key, get_setting,
+    get_yookassa_credentials
 )
 
 logger = logging.getLogger(__name__)
+
+YOOKASSA_API_URL = "https://api.yookassa.ru/v3/payments"
 
 # Алфавит для Base62 кодирования
 ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
@@ -366,3 +375,178 @@ def extract_item_id_from_url(crypto_item_url: str) -> Optional[str]:
             return parts[1]
     
     return None
+
+
+# ============================================================================
+# ЮКАССА QR-ОПЛАТА (прямой REST API без Telegram Payments)
+# ============================================================================
+
+async def create_yookassa_qr_payment(
+    amount_rub: float,
+    order_id: str,
+    description: str,
+    metadata: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    Создаёт платёж в ЮКасса REST API с подтверждением через QR-код.
+
+    Возвращает изображение QR-кода (PNG) по ссылке, которую можно
+    отправить пользователю прямо в Telegram как фото.
+
+    Args:
+        amount_rub: Сумма в рублях (например, 299.00)
+        order_id: Наш внутренний ордер (для metadata)
+        description: Описание платежа (показывается в форме оплаты)
+        metadata: Дополнительные метаданные (необязательно)
+
+    Returns:
+        Словарь с ключами:
+            - yookassa_payment_id: ID платежа в системе ЮКасса
+            - qr_image_url: URL изображения QR-кода (PNG)
+            - qr_url: Ссылка, зашитая в QR (для открытия в браузере)
+
+    Raises:
+        ValueError: Если учётные данные не настроены
+        aiohttp.ClientError: Если API недоступен
+        RuntimeError: Если API вернул ошибку
+    """
+    shop_id, secret_key = get_yookassa_credentials()
+    if not shop_id or not secret_key:
+        raise ValueError("ЮКасса: не настроены shop_id или secret_key")
+
+    # Заголовок Basic Auth: base64(shop_id:secret_key)
+    credentials = base64.b64encode(f"{shop_id}:{secret_key}".encode()).decode()
+
+    # Ключ идемпотентности — уникальный для этого ордера
+    idempotence_key = f"qr-{order_id}-{uuid.uuid4().hex[:8]}"
+
+    payload = {
+        "amount": {
+            "value": f"{amount_rub:.2f}",
+            "currency": "RUB"
+        },
+        "capture": True,
+        "confirmation": {
+            "type": "redirect",
+            "return_url": "https://t.me"
+        },
+        "description": description,
+        "receipt": {
+            "customer": {
+                "email": f"user_{order_id}@yadreno.vpn"
+            },
+            "items": [
+                {
+                    "description": description[:128],
+                    "quantity": "1.00",
+                    "amount": {
+                        "value": f"{amount_rub:.2f}",
+                        "currency": "RUB"
+                    },
+                    "vat_code": 1,
+                    "payment_mode": "full_prepayment",
+                    "payment_subject": "service"
+                }
+            ]
+        },
+        "metadata": {
+            "order_id": order_id,
+            **(metadata or {})
+        }
+    }
+
+    headers = {
+        "Authorization": f"Basic {credentials}",
+        "Idempotence-Key": idempotence_key,
+        "Content-Type": "application/json"
+    }
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            YOOKASSA_API_URL,
+            json=payload,
+            headers=headers
+        ) as response:
+            data = await response.json()
+
+            if response.status not in (200, 201):
+                error_desc = data.get('description', 'Неизвестная ошибка')
+                logger.error(f"ЮКасса API ошибка {response.status}: {error_desc} | payload={payload}")
+                raise RuntimeError(f"ЮКасса API ошибка: {error_desc}")
+
+            confirmation = data.get('confirmation', {})
+            qr_url = confirmation.get('confirmation_url', '')
+            
+            if not qr_url:
+                logger.error(f"ЮКасса API не вернул confirmation_url: {data}")
+                raise RuntimeError("ЮКасса API не вернул данные для QR-кода")
+
+            # Генерируем QR-код из строки оплаты через локальную библиотеку qrcode
+            
+            qr = qrcode.QRCode(
+                version=1,
+                error_correction=qrcode.constants.ERROR_CORRECT_L,
+                box_size=10,
+                border=4,
+            )
+            qr.add_data(qr_url)
+            qr.make(fit=True)
+            
+            img = qr.make_image(fill_color="black", back_color="white")
+            bio = io.BytesIO()
+            img.save(bio, format="PNG")
+            qr_image_data = bio.getvalue()
+
+            logger.info(
+                f"ЮКасса QR создан: payment_id={data['id']}, order_id={order_id}, "
+                f"amount={amount_rub} RUB"
+            )
+
+            return {
+                'yookassa_payment_id': data['id'],
+                'qr_image_data': qr_image_data,
+                'qr_url': qr_url,
+                'status': data.get('status', 'pending')
+            }
+
+
+async def check_yookassa_payment_status(yookassa_payment_id: str) -> str:
+    """
+    Проверяет статус платежа в ЮКасса REST API.
+
+    Args:
+        yookassa_payment_id: ID платежа в системе ЮКасса
+
+    Returns:
+        Строка статуса: 'pending', 'waiting_for_capture', 'succeeded', 'canceled'
+
+    Raises:
+        ValueError: Если учётные данные не настроены
+        aiohttp.ClientError: Если API недоступен
+        RuntimeError: Если API вернул ошибку
+    """
+    shop_id, secret_key = get_yookassa_credentials()
+    if not shop_id or not secret_key:
+        raise ValueError("ЮКасса: не настроены shop_id или secret_key")
+
+    credentials = base64.b64encode(f"{shop_id}:{secret_key}".encode()).decode()
+    headers = {
+        "Authorization": f"Basic {credentials}",
+        "Content-Type": "application/json"
+    }
+
+    url = f"{YOOKASSA_API_URL}/{yookassa_payment_id}"
+
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url, headers=headers) as response:
+            data = await response.json()
+
+            if response.status != 200:
+                error_desc = data.get('description', 'Неизвестная ошибка')
+                logger.error(f"ЮКасса статус ошибка {response.status}: {error_desc}")
+                raise RuntimeError(f"ЮКасса API ошибка: {error_desc}")
+
+            status = data.get('status', 'pending')
+            logger.debug(f"ЮКасса payment {yookassa_payment_id}: status={status}")
+            return status
+

@@ -18,7 +18,8 @@ from database.requests import (
     set_setting,
     is_crypto_enabled,
     is_stars_enabled,
-    is_cards_enabled
+    is_cards_enabled,
+    is_yookassa_qr_enabled
 )
 from bot.states.admin_states import (
     AdminStates,
@@ -89,21 +90,22 @@ async def show_payments_menu(callback: CallbackQuery, state: FSMContext):
         return
     
     await state.set_state(AdminStates.payments_menu)
-    
+
     stars = is_stars_enabled()
     crypto = is_crypto_enabled()
     cards = is_cards_enabled()
-    
+    qr = is_yookassa_qr_enabled()
+
     text = (
         "💳 *Настройки оплаты*\n\n"
         "Здесь можно включить/выключить способы оплаты и настроить их.\n\n"
     )
-    
+
     if stars:
         text += "🟢 *Telegram Stars*\n"
     else:
         text += "⚪ *Telegram Stars*\n"
-    
+
     if crypto:
         item_url = get_setting('crypto_item_url', '')
         if item_url:
@@ -113,15 +115,21 @@ async def show_payments_menu(callback: CallbackQuery, state: FSMContext):
             text += "🟢 *Крипто (@Ya_SellerBot)*\n"
     else:
         text += "⚪ *Крипто (@Ya_SellerBot)*\n"
-        
+
     if cards:
-        text += "🟢 *Оплата картами (ЮКасса)*\n"
+        text += "🟢 *Оплата картами (ЮКасса Telegram Payments)*\n"
     else:
-        text += "⚪ *Оплата картами (ЮКасса)*\n"
-    
+        text += "⚪ *Оплата картами (ЮКасса Telegram Payments)*\n"
+
+    if qr:
+        shop_id = get_setting('yookassa_shop_id', '')
+        text += f"🟢 *QR-оплата (ЮКасса прямая/СБП)* | Shop ID: `{shop_id or '—'}`\n"
+    else:
+        text += "⚪ *QR-оплата (ЮКасса прямая/СБП)*\n"
+
     await callback.message.edit_text(
         text,
-        reply_markup=payments_menu_kb(stars, crypto, cards),
+        reply_markup=payments_menu_kb(stars, crypto, cards, qr),
         parse_mode="Markdown",
         disable_web_page_preview=True
     )
@@ -802,6 +810,227 @@ async def cards_setup_token_value(message: Message, state: FSMContext):
             # мы просто выведем информацию в консоль или пропустим.
             # Для пользователя мы добавим текст в само сообщение.
             pass
-            
+
     fake = FakeCallback(menu_message, message.from_user)
     await show_cards_management_menu(fake, state)
+
+
+# ============================================================================
+# НАСТРОЙКА QR-ОПЛАТЫ ЮКАССА (прямой API)
+# ============================================================================
+
+def qr_management_kb(is_enabled: bool) -> "InlineKeyboardMarkup":
+    """Клавиатура управления QR-оплатой ЮКасса."""
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    from aiogram.types import InlineKeyboardButton
+    from bot.keyboards.admin import back_button, home_button
+
+    builder = InlineKeyboardBuilder()
+
+    toggle_text = "🔴 Выключить" if is_enabled else "🟢 Включить"
+    builder.row(InlineKeyboardButton(text=toggle_text, callback_data="admin_qr_mgmt_toggle"))
+    builder.row(InlineKeyboardButton(text="🏪 Изменить Shop ID", callback_data="admin_qr_edit_shop_id"))
+    builder.row(InlineKeyboardButton(text="🔐 Изменить Secret Key", callback_data="admin_qr_edit_secret"))
+    builder.row(back_button("admin_payments"), home_button())
+
+    return builder.as_markup()
+
+
+@router.callback_query(F.data == "admin_payments_qr")
+async def show_qr_management_menu(callback: CallbackQuery, state: FSMContext):
+    """Показывает меню управления QR-оплатой ЮКасса."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    await state.set_state(AdminStates.payments_menu)
+
+    from database.requests import is_yookassa_qr_enabled
+    is_enabled = is_yookassa_qr_enabled()
+    shop_id = get_setting('yookassa_shop_id', '')
+    secret_key = get_setting('yookassa_secret_key', '')
+
+    status_emoji = "🟢" if is_enabled else "⚪"
+    status_text = "включено" if is_enabled else "выключено"
+
+    shop_display = f"`{shop_id}`" if shop_id else "❌ Не задан"
+    secret_display = f"Установлен ✅ (`{secret_key[:4]}...{secret_key[-4:]}`)" if len(secret_key) >= 8 else "❌ Не задан"
+
+    text = (
+        "📱 *QR-оплата ЮКасса (прямой API)*\n\n"
+        "Позволяет принимать оплату картами и через СБП по QR-коду,\n"
+        "без Telegram Payments.\n\n"
+        "📋 *Как получить доступ:*\n"
+        "1. Зарегистрируйте магазин: [yookassa.ru](https://yookassa.ru/joinups/?source=sva)\n"
+        "2. Перейдите: Настройки → API-интеграция\n"
+        "3. Скопируйте Shop ID и сгенерируйте новый Secret Key\n\n"
+        f"{status_emoji} Статус: *{status_text}*\n"
+        f"🏪 Shop ID: {shop_display}\n"
+        f"🔑 Secret Key: {secret_display}\n\n"
+        "Выберите действие:"
+    )
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=qr_management_kb(is_enabled),
+        parse_mode="Markdown",
+        disable_web_page_preview=True
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_qr_mgmt_toggle")
+async def qr_mgmt_toggle(callback: CallbackQuery, state: FSMContext):
+    """Включает/выключает QR-оплату ЮКасса."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    from database.requests import is_yookassa_qr_enabled
+
+    # Нельзя включить без реквизитов
+    if not is_yookassa_qr_enabled():
+        shop_id = get_setting('yookassa_shop_id', '')
+        secret_key = get_setting('yookassa_secret_key', '')
+        if not shop_id or not secret_key:
+            await callback.answer("❌ Сначала укажите Shop ID и Secret Key!", show_alert=True)
+            return
+
+    current = is_yookassa_qr_enabled()
+    new_value = '0' if current else '1'
+    set_setting('yookassa_qr_enabled', new_value)
+
+    status = "включена ✅" if new_value == '1' else "выключена"
+    await callback.answer(f"QR-оплата {status}")
+    await show_qr_management_menu(callback, state)
+
+
+@router.callback_query(F.data == "admin_qr_edit_shop_id")
+async def qr_edit_shop_id(callback: CallbackQuery, state: FSMContext):
+    """Запрашивает Shop ID ЮКасса."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    await state.set_state(AdminStates.qr_setup_shop_id)
+    await state.update_data(last_menu_msg_id=callback.message.message_id)
+
+    current = get_setting('yookassa_shop_id', '')
+    current_display = f"\nТекущий: `{current}`" if current else ""
+
+    await callback.message.edit_text(
+        f"🏪 *Введите Shop ID ЮКасса*{current_display}\n\n"
+        "Найдите в разделе: *Настройки → API-интеграция* вашего магазина.\n"
+        "(Это числовой ID, например: `123456`)",
+        reply_markup=back_and_home_kb("admin_payments_qr"),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.qr_setup_shop_id)
+async def qr_setup_shop_id_handler(message: Message, state: FSMContext):
+    """Обрабатывает ввод Shop ID."""
+    shop_id = message.text.strip()
+
+    if not shop_id.isdigit() or len(shop_id) < 3:
+        await message.answer("❌ Некорректный Shop ID. Должен быть числом (например, `123456`).",
+                             parse_mode="Markdown")
+        return
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    set_setting('yookassa_shop_id', shop_id)
+
+    data = await state.get_data()
+    last_menu_msg_id = data.get('last_menu_msg_id')
+
+    class FakeCallback:
+        def __init__(self, msg, user):
+            self.message = msg
+            self.from_user = user
+            self.bot = msg.bot
+        async def answer(self, *args, **kwargs):
+            pass
+
+    menu_message = message
+    if last_menu_msg_id:
+        try:
+            menu_message = await message.bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=last_menu_msg_id,
+                text="⌛"
+            )
+        except Exception:
+            menu_message = await message.answer("⌛")
+
+    fake = FakeCallback(menu_message, message.from_user)
+    await show_qr_management_menu(fake, state)
+
+
+
+@router.callback_query(F.data == "admin_qr_edit_secret")
+async def qr_edit_secret(callback: CallbackQuery, state: FSMContext):
+    """Запрашивает Secret Key ЮКасса."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    await state.set_state(AdminStates.qr_setup_secret_key)
+    await state.update_data(last_menu_msg_id=callback.message.message_id)
+
+    await callback.message.edit_text(
+        "🔐 *Введите Secret Key ЮКасса*\n\n"
+        "Найдите в разделе: *Настройки → API-интеграция* вашего магазина.\n"
+        "_(Секретный ключ будет скрыт после сохранения)_",
+        reply_markup=back_and_home_kb("admin_payments_qr"),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.qr_setup_secret_key)
+async def qr_setup_secret_key_handler(message: Message, state: FSMContext):
+    """Обрабатывает ввод Secret Key."""
+    secret_key = message.text.strip()
+
+    if len(secret_key) < 16:
+        await message.answer("❌ Слишком короткий ключ. Попробуйте ещё раз.")
+        return
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    set_setting('yookassa_secret_key', secret_key)
+
+    data = await state.get_data()
+    last_menu_msg_id = data.get('last_menu_msg_id')
+
+    class FakeCallback:
+        def __init__(self, msg, user):
+            self.message = msg
+            self.from_user = user
+            self.bot = msg.bot
+        async def answer(self, *args, **kwargs):
+            pass
+
+    menu_message = message
+    if last_menu_msg_id:
+        try:
+            menu_message = await message.bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=last_menu_msg_id,
+                text="⌛"
+            )
+        except Exception:
+            menu_message = await message.answer("⌛")
+
+    fake = FakeCallback(menu_message, message.from_user)
+    await show_qr_management_menu(fake, state)
+
+
