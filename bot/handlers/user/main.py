@@ -77,8 +77,8 @@ def get_welcome_text(is_admin: bool = False) -> str:
     # %без_тарифов% — полностью отключает вывод тарифов (тег удаляется, тарифы не добавляются)
     # %тарифы%      — вставляет список тарифов в указанное место
     # без тегов     — список тарифов автоматически добавляется в конец
-    if "%без_тарифов%" in welcome_text:
-        return welcome_text.replace("%без_тарифов%", "")
+    if "%без\_тарифов%" in welcome_text:
+        return welcome_text.replace("%без\_тарифов%", "")
 
     if "%тарифы%" not in welcome_text:
         welcome_text = f"{welcome_text}\n\n%тарифы%"
