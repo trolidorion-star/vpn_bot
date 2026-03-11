@@ -610,14 +610,24 @@ def edit_crypto_kb(current_param: int, total_params: int) -> InlineKeyboardMarku
     return builder.as_markup()
 
 
-def crypto_management_kb(is_enabled: bool) -> InlineKeyboardMarkup:
+def crypto_management_kb(is_enabled: bool, integration_mode: str) -> InlineKeyboardMarkup:
     """
     Меню управления крипто-платежами.
     
     Args:
         is_enabled: Включены ли крипто-платежи сейчас
+        integration_mode: Текущий режим интеграции ('simple' или 'standard')
     """
     builder = InlineKeyboardBuilder()
+    
+    # Toggle режима интеграции
+    mode_text = "🔄 Режим: Простой (Счет)" if integration_mode == 'simple' else "🔄 Режим: Стандартный (Товар)"
+    builder.row(
+        InlineKeyboardButton(
+            text=mode_text,
+            callback_data="admin_crypto_mgmt_toggle_mode"
+        )
+    )
     
     # Toggle включения/выключения
     status_text = "🟢 Выключить" if is_enabled else "⚪ Включить"

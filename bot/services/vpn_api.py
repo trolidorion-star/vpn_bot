@@ -433,7 +433,7 @@ class XUIClient:
             "enable": enable,
             "tgId": tg_id,
             "subId": uuid.uuid4().hex,
-            "reset": 30,
+            "reset": 0,
         }
         
         # Протокол-зависимые поля
@@ -541,7 +541,9 @@ class XUIClient:
         Returns:
             True при успешном удалении
         """
-        await self._request("POST", f"/panel/api/inbounds/{inbound_id}/delClient/{client_uuid}")
+        import urllib.parse
+        encoded_uuid = urllib.parse.quote(client_uuid, safe='')
+        await self._request("POST", f"/panel/api/inbounds/{inbound_id}/delClient/{encoded_uuid}")
         return True
     
     async def reset_client_traffic(self, inbound_id: int, email: str) -> bool:
@@ -555,7 +557,9 @@ class XUIClient:
         Returns:
             True при успешном сбросе
         """
-        await self._request("POST", f"/panel/api/inbounds/{inbound_id}/resetClientTraffic/{email}")
+        import urllib.parse
+        encoded_email = urllib.parse.quote(email, safe='')
+        await self._request("POST", f"/panel/api/inbounds/{inbound_id}/resetClientTraffic/{encoded_email}")
         logger.info(f"Сброшен трафик клиента {email} в inbound {inbound_id}")
         return True
     
@@ -616,13 +620,169 @@ class XUIClient:
                     "enable": target_client.get('enable', True),
                     "tgId": target_client.get('tgId', ''),
                     "subId": target_client.get('subId', ''),
-                    "reset": target_client.get('reset', 30)
+                    "reset": target_client.get('reset', 0)
                 }]
             })
         }
         
-        await self._request("POST", f"/panel/api/inbounds/updateClient/{client_uuid}", data=update_data)
+        import urllib.parse
+        encoded_uuid = urllib.parse.quote(client_uuid, safe='')
+        await self._request("POST", f"/panel/api/inbounds/updateClient/{encoded_uuid}", data=update_data)
         logger.info(f"Обновлен лимит трафика клиента {email}: {total_gb} ГБ")
+        return True
+
+    async def disable_reset_for_all_clients(self) -> int:
+        """
+        Отключает автопродление (сброс трафика/дней) при наступлении 1-го числа месяца для всех клиентов.
+        Устанавливает поле reset = 0 для всех клиентов во всех inbounds.
+        
+        Returns:
+            Количество обновленных клиентов.
+        """
+        updated_count = 0
+        inbounds = await self.get_inbounds()
+        
+        for inbound in inbounds:
+            settings_raw = inbound.get('settings', '{}')
+            settings = json.loads(settings_raw) if isinstance(settings_raw, str) else settings_raw
+            clients = settings.get('clients', [])
+            
+            for client in clients:
+                if client.get('reset', 0) != 0:  # только если reset не 0
+                    
+                    # clientId — это id(uuid) для vless/vmess, password для trojan/shadowsocks
+                    client_id = client.get('id') or client.get('password')
+                    
+                    if client_id:
+                        # Формируем правильную структуру клиента для обновления, сохраняя нужные поля
+                        updated_client = {
+                            "id": client.get('id', ''),
+                            "password": client.get('password', ''),
+                            "flow": client.get('flow', ''),
+                            "email": client.get('email', ''),
+                            "limitIp": client.get('limitIp', 1),
+                            "totalGB": client.get('totalGB', 0),
+                            "expiryTime": client.get('expiryTime', 0),
+                            "enable": client.get('enable', True),
+                            "tgId": client.get('tgId', ''),
+                            "subId": client.get('subId', ''),
+                            "reset": 0  # Сбрасываем reset
+                        }
+                        
+                        # Удаляем пустые поля (важно для разных протоколов)
+                        updated_client = {k: v for k, v in updated_client.items() if v != ''}
+                        
+                        client_data = {
+                            "id": inbound['id'],
+                            "settings": json.dumps({"clients": [updated_client]})
+                        }
+                        
+                        try:
+                            # В 3x-ui мы отправляем POST /panel/api/inbounds/updateClient/:clientId
+                            # А в теле запроса передаем id инбаунда и новый объект clients
+                            import urllib.parse
+                            # Кодируем ID/пароль для URL, чтобы слеши в base64 (Shadowsocks) не ломали HTTP-маршрутизацию
+                            encoded_id = urllib.parse.quote(client_id, safe='')
+                            await self._request(
+                                "POST",
+                                f"/panel/api/inbounds/updateClient/{encoded_id}",
+                                data=client_data
+                            )
+                            updated_count += 1
+                            logger.info(f"Отключено автопродление (reset=0) для клиента {client.get('email', client_id)}")
+                        except Exception as e:
+                            logger.error(f"Ошибка при отключении автопродления для клиента {client.get('email', client_id)}: {e}")
+                            
+        return updated_count
+
+    async def extend_client_expiry(
+        self,
+        inbound_id: int,
+        client_uuid: str,
+        email: str,
+        days: int
+    ) -> bool:
+        """
+        Продлевает срок действия клиента на указанное количество дней.
+        Если срок уже истек, прибавляет дни к текущему времени.
+        
+        Args:
+            inbound_id: ID inbound-подключения
+            client_uuid: UUID клиента
+            email: Email/идентификатор клиента
+            days: Количество дней для продления
+            
+        Returns:
+            True при успешном обновлении
+        """
+        import time
+        
+        # Получаем текущие данные клиента
+        inbounds = await self.get_inbounds()
+        target_inbound = None
+        target_client = None
+        
+        for inbound in inbounds:
+            if inbound.get('id') == inbound_id:
+                target_inbound = inbound
+                settings = json.loads(inbound.get('settings', '{}'))
+                clients = settings.get('clients', [])
+                
+                for client in clients:
+                    if client.get('id') == client_uuid or client.get('password') == client_uuid:
+                        target_client = client
+                        break
+                break
+                
+        if not target_inbound or not target_client:
+            raise VPNAPIError(f"Клиент {email} не найден в inbound {inbound_id}")
+            
+        current_time_ms = int(time.time() * 1000)
+        current_expiry = target_client.get('expiryTime', 0)
+        
+        # Расчет нового времени истечения
+        extension_ms = days * 86400 * 1000
+        if current_expiry == 0:
+            # Бесконечный ключ остается бесконечным
+            new_expiry = 0
+        elif current_expiry < current_time_ms:
+            # Если ключ уже истек, прибавляем к текущему моменту
+            new_expiry = current_time_ms + extension_ms
+        else:
+            # Если еще активен, прибавляем к текущему сроку окончания
+            new_expiry = current_expiry + extension_ms
+            
+        target_client['expiryTime'] = new_expiry
+        
+        # Формируем данные для обновления
+        update_data = {
+            "id": inbound_id,
+            "settings": json.dumps({
+                "clients": [{
+                    "id": target_client.get('id', ''),
+                    "password": target_client.get('password', ''),
+                    "flow": target_client.get('flow', ''),
+                    "email": target_client.get('email', ''),
+                    "limitIp": target_client.get('limitIp', 1),
+                    "totalGB": target_client.get('totalGB', 0),
+                    "expiryTime": new_expiry,
+                    "enable": target_client.get('enable', True),
+                    "tgId": target_client.get('tgId', ''),
+                    "subId": target_client.get('subId', ''),
+                    "reset": target_client.get('reset', 0)
+                }]
+            })
+        }
+        
+        # Удаляем пустые поля (важно для разных протоколов, где id или password могут отсутствовать)
+        clients_array = json.loads(update_data["settings"])["clients"][0]
+        clients_array = {k: v for k, v in clients_array.items() if v != ''}
+        update_data["settings"] = json.dumps({"clients": [clients_array]})
+        
+        import urllib.parse
+        encoded_uuid = urllib.parse.quote(client_uuid, safe='')
+        await self._request("POST", f"/panel/api/inbounds/updateClient/{encoded_uuid}", data=update_data)
+        logger.info(f"Продлен ключ клиента {email} на {days} дней. Новый expiry: {new_expiry}")
         return True
 
     async def get_client_config(self, email: str) -> Optional[Dict[str, Any]]:
@@ -753,7 +913,7 @@ class XUIClient:
         """
         Скачивает резервную копию базы данных панели.
         
-        Endpoint: GET /panel/api/getDb
+        Endpoint: GET /panel/api/server/getDb (или фолбэки)
         
         Returns:
             Бинарные данные файла x-ui.db
@@ -767,24 +927,40 @@ class XUIClient:
         if not self.is_authenticated:
             await self.login()
         
-        url = f"{self.base_url}/panel/api/getDb"
-        
         headers = {
             "Accept": "application/octet-stream",
             "X-Requested-With": "XMLHttpRequest"
         }
         
-        try:
-            async with session.get(url, headers=headers) as response:
-                if response.status == 200:
-                    data = await response.read()
-                    logger.info(f"Скачан бэкап БД панели: {len(data)} байт")
-                    return data
-                else:
-                    text = await response.text()
-                    raise VPNAPIError(f"Ошибка скачивания бэкапа: HTTP {response.status}")
-        except aiohttp.ClientError as e:
-            raise VPNAPIError(f"Ошибка подключения при скачивании бэкапа: {e}")
+        # Разные версии X-UI / 3X-UI используют разные пути для скачивания БД
+        endpoints = [
+            "/panel/api/server/getDb",
+            "/panel/setting/getDb",
+            "/panel/api/getDb",
+            "/server/getDb"
+        ]
+        
+        last_status = None
+        for endpoint in endpoints:
+            url = f"{self.base_url}{endpoint}"
+            try:
+                async with session.get(url, headers=headers) as response:
+                    last_status = response.status
+                    if response.status == 200:
+                        data = await response.read()
+                        
+                        # Проверяем, что скачался действительно SQLite файл
+                        # SQLite файлы всегда начинаются с байтов 'SQLite format 3\000'
+                        if data.startswith(b'SQLite format 3\x00'):
+                            logger.info(f"Скачан бэкап БД панели ({endpoint}): {len(data)} байт")
+                            return data
+                        else:
+                            text = data[:100].decode(errors='ignore')
+                            logger.debug(f"Endpoint {endpoint} вернул не БД, а: {text}...")
+            except aiohttp.ClientError as e:
+                logger.debug(f"Ошибка HTTP при проверке {endpoint}: {e}")
+                
+        raise VPNAPIError(f"Ошибка скачивания бэкапа: ни один endpoint не вернул файл БД. Последний HTTP статус: {last_status}")
 
     async def close(self):
         """Закрывает сессию."""
@@ -941,3 +1117,96 @@ def format_traffic(bytes_count: int) -> str:
         return f"{bytes_count / 1024 ** 3:.2f} GB"
     else:
         return f"{bytes_count / 1024 ** 4:.2f} TB"
+
+async def reset_key_traffic_if_active(key_id: int) -> bool:
+    """
+    Сбрасывает израсходованный трафик ключа в панели 3X-UI,
+    если сервер активен.
+    
+    Args:
+        key_id: ID ключа (VPNKey.id)
+        
+    Returns:
+        True при успешном сбросе, иначе False.
+    """
+    from database.requests import get_vpn_key_by_id
+    
+    key = get_vpn_key_by_id(key_id)
+    if not key or not key.get('server_active'):
+        return False
+    
+    server_data = {
+        'id': key.get('server_id'),
+        'name': key.get('server_name'),
+        'host': key.get('host'),
+        'port': key.get('port'),
+        'web_base_path': key.get('web_base_path'),
+        'login': key.get('login'),
+        'password': key.get('password'),
+    }
+    
+    inbound_id = key.get('panel_inbound_id')
+    email = key.get('panel_email')
+    
+    # Фолбек для email (старые записи)
+    if not email:
+        if key.get('username'):
+            email = f"user_{key['username']}"
+        else:
+            email = f"user_{key['telegram_id']}"
+            
+    try:
+        client = get_client_from_server_data(server_data)
+        success = await client.reset_client_traffic(inbound_id, email)
+        if success:
+            logger.info(f"Трафик ключа {key_id} успешно сброшен при продлении.")
+        return success
+    except Exception as e:
+        logger.error(f"Не удалось сбросить трафик ключа {key_id} при продлении: {e}")
+        return False
+
+async def extend_key_on_server(key_id: int, days: int) -> bool:
+    """
+    Продлевает срок действия ключа в панели 3X-UI, если сервер активен.
+    
+    Args:
+        key_id: ID ключа (VPNKey.id)
+        days: Количество дней для продления
+        
+    Returns:
+        True при успешном продлении, иначе False.
+    """
+    from database.requests import get_vpn_key_by_id
+    
+    key = get_vpn_key_by_id(key_id)
+    if not key or not key.get('server_active'):
+        return False
+        
+    server_data = {
+        'id': key.get('server_id'),
+        'name': key.get('server_name'),
+        'host': key.get('host'),
+        'port': key.get('port'),
+        'web_base_path': key.get('web_base_path'),
+        'login': key.get('login'),
+        'password': key.get('password'),
+    }
+    
+    inbound_id = key.get('panel_inbound_id')
+    client_uuid = key.get('client_uuid')
+    email = key.get('panel_email')
+    
+    # Фолбек для email
+    if not email:
+        email = f"user_{key.get('username') or key.get('telegram_id')}"
+        
+    try:
+        client = get_client_from_server_data(server_data)
+        success = await client.extend_client_expiry(inbound_id, client_uuid, email, days)
+        if success:
+            logger.info(f"Срок действия ключа {key_id} успешно продлен на сервере на {days} дней.")
+        return success
+    except Exception as e:
+        logger.error(f"Не удалось продлить срок действия ключа {key_id} на сервере: {e}")
+        return False
+

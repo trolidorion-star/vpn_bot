@@ -22,63 +22,7 @@ router = Router()
 
 
 # ============================================================================
-# ОБРАБОТКА CALLBACK ОТ КРИПТОПРОЦЕССИНГА
-# ============================================================================
-
-@router.message(Command("start"), F.text.contains("bill"))
-async def handle_start_with_payment(message: Message, command: CommandObject, state: FSMContext):
-    """
-    Обрабатывает /start с параметром bill1-... (callback от криптопроцессинга).
-    Фильтруем по наличию "bill" в тексте, чтобы не перехватывать обычный /start.
-    """
-    # Получаем параметр команды
-    start_param = command.args
-    
-    if not start_param or not start_param.startswith('bill'):
-        return  # На всякий случай, хотя фильтр уже отсеял
-    
-    from bot.services.billing import process_crypto_payment
-    from database.requests import get_or_create_user
-    
-    # Гарантируем создание пользователя
-    user = get_or_create_user(message.from_user.id, message.from_user.username)
-    user_id = user['id']
-    
-    # Обрабатываем платёж
-    try:
-        success, response_text, order = process_crypto_payment(start_param, user_id=user_id)
-        
-        # Используем единую точку выхода UI
-        if success and order:
-            await finalize_payment_ui(message, state, response_text, order, user_id=user_id)
-        else:
-            from bot.keyboards.admin import home_only_kb
-            await message.answer(
-                response_text,
-                reply_markup=home_only_kb(),
-                parse_mode="Markdown"
-            )
-            
-    except Exception as e:
-        from bot.errors import TariffNotFoundError
-        if isinstance(e, TariffNotFoundError):
-            from database.requests import get_setting
-            from bot.keyboards.user import support_kb
-            
-            support_link = get_setting('support_channel_link', 'https://t.me/YadrenoChat')
-            await message.answer(
-                str(e),
-                reply_markup=support_kb(support_link),
-                parse_mode="Markdown"
-            )
-        else:
-            logger.exception(f"Ошибка платежа: {e}")
-            await message.answer("❌ Ошибка обработки", parse_mode="Markdown")
-
-
-
-# ============================================================================
-# ПРОДЛЕНИЕ: ВЫБОР СПОСОБА ОПЛАТЫ
+# ПРОДЛЕНИЕ: ВЫБОР СПОСОБА ОПЛАТЫ (STARS)
 # ============================================================================
 
 @router.callback_query(F.data.startswith("renew_stars_tariff:"))
@@ -110,6 +54,44 @@ async def renew_stars_select_tariff(callback: CallbackQuery):
         f"🔑 Ключ: *{escape_md(key['display_name'])}*\n\n"
         "Выберите тариф для продления:",
         reply_markup=renew_tariff_select_kb(tariffs, key_id, order_id=order_id),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+# ============================================================================
+# ПРОДЛЕНИЕ: ВЫБОР СПОСОБА ОПЛАТЫ (CRYPTO - ПРОСТОЙ РЕЖИМ)
+# ============================================================================
+
+@router.callback_query(F.data.startswith("renew_crypto_tariff:"))
+async def renew_crypto_select_tariff(callback: CallbackQuery):
+    """Выбор тарифа для продления (Crypto)."""
+    from database.requests import get_key_details_for_user, get_all_tariffs
+    from bot.keyboards.user import renew_tariff_select_kb
+    
+    parts = callback.data.split(':')
+    key_id = int(parts[1])
+    order_id = parts[2] if len(parts) > 2 else None
+    
+    telegram_id = callback.from_user.id
+    
+    key = get_key_details_for_user(key_id, telegram_id)
+    if not key:
+        await callback.answer("❌ Ключ не найден", show_alert=True)
+        return
+
+    # Получаем тарифы
+    tariffs = get_all_tariffs(include_hidden=False)
+    
+    if not tariffs:
+         await callback.answer("Нет доступных тарифов", show_alert=True)
+         return
+
+    await callback.message.edit_text(
+        f"💰 *Оплата криптовалютой*\n\n"
+        f"🔑 Ключ: *{escape_md(key['display_name'])}*\n\n"
+        "Выберите тариф для продления:",
+        reply_markup=renew_tariff_select_kb(tariffs, key_id, order_id=order_id, is_crypto=True),
         parse_mode="Markdown"
     )
     await callback.answer()
@@ -183,6 +165,86 @@ async def renew_stars_invoice(callback: CallbackQuery):
 
 
 # ============================================================================
+# ОПЛАТА CRYPTO ЗА ПРОДЛЕНИЕ (ПРОСТОЙ РЕЖИМ)
+# ============================================================================
+
+@router.callback_query(F.data.startswith("renew_pay_crypto:"))
+async def renew_crypto_invoice(callback: CallbackQuery):
+    """Инвойс для оплаты Crypto (за продление ключа)."""
+    from database.requests import (
+        get_tariff_by_id, get_user_internal_id, 
+        create_pending_order, get_key_details_for_user,
+        update_order_tariff, update_payment_type, get_setting
+    )
+    from bot.services.billing import build_crypto_payment_url, extract_item_id_from_url
+    
+    parts = callback.data.split(":")
+    key_id = int(parts[1])
+    tariff_id = int(parts[2])
+    order_id = parts[3] if len(parts) > 3 else None
+    
+    tariff = get_tariff_by_id(tariff_id)
+    key = get_key_details_for_user(key_id, callback.from_user.id)
+    
+    if not tariff or not key:
+        await callback.answer("Ошибка тарифа или ключа", show_alert=True)
+        return
+        
+    user_id = get_user_internal_id(callback.from_user.id)
+    if not user_id:
+        return
+
+    # Логика создания/обновления ордера
+    if order_id:
+         # Переиспользуем существующий
+         update_order_tariff(order_id, tariff_id)
+         update_payment_type(order_id, 'crypto')
+    else:
+         # Создаем новый
+         _, order_id = create_pending_order(
+            user_id=user_id,
+            tariff_id=tariff_id,
+            payment_type='crypto',
+            vpn_key_id=key_id
+        )
+
+    crypto_item_url = get_setting('crypto_item_url')
+    item_id = extract_item_id_from_url(crypto_item_url)
+    if not item_id:
+        await callback.answer("❌ Ошибка настройки крипто-платежей", show_alert=True)
+        return
+
+    crypto_url = build_crypto_payment_url(
+        item_id=item_id,
+        invoice_id=order_id,
+        tariff_external_id=None,
+        price_cents=tariff['price_cents']
+    )
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    from aiogram.types import InlineKeyboardButton
+
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="💰 Перейти к оплате", url=crypto_url))
+    cb_data = f"renew_crypto_tariff:{key_id}:{order_id}" if order_id else f"renew_crypto_tariff:{key_id}"
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data=cb_data))
+
+    price_usd = tariff['price_cents'] / 100
+    price_str = f"${price_usd:g}".replace('.', ',')
+
+    await callback.message.edit_text(
+        f"💰 *Продление ключа*\n\n"
+        f"🔑 Ключ: *{escape_md(key['display_name'])}*\n"
+        f"Тариф: *{tariff['name']}*\n"
+        f"Сумма к оплате: *{price_str}*\n\n"
+        "Нажмите кнопку ниже, чтобы перейти к генерации счета в @Ya\\_SellerBot.",
+        reply_markup=builder.as_markup(),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+# ============================================================================
 # ОБРАБОТКА TELEGRAM STARS
 # ============================================================================
 
@@ -214,7 +276,7 @@ async def successful_payment_handler(message: Message, state: FSMContext):
     
     # Обрабатываем платеж через единую функцию
     try:
-        success, text, order = process_payment_order(order_id)
+        success, text, order = await process_payment_order(order_id)
         
         # Завершаем UI
         if success and order:

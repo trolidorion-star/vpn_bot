@@ -5,8 +5,8 @@ def escape_md(text: str) -> str:
     """
     if not text:
         return ""
-    # Порядок важен, чтобы не экранировать уже экранированное (хотя тут простые замены)
-    return text.replace("_", "\\_").replace("*", "\\*").replace("`", "\\`").replace("[", "\\[")
+    # Порядок важен, чтобы не экранировать уже экранированное
+    return text.replace("_", "\\_").replace("*", "\\*").replace("`", "\\`").replace("[", "\\[").replace("]", "\\]")
 
 
 def escape_md2(text: str) -> str:

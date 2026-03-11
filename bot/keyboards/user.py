@@ -89,6 +89,8 @@ def support_kb(support_link: str) -> InlineKeyboardMarkup:
 
 def buy_key_kb(
     crypto_url: str = None,
+    crypto_mode: str = 'standard',
+    crypto_configured: bool = False,
     stars_enabled: bool = False,
     cards_enabled: bool = False,
     yookassa_qr_enabled: bool = False,
@@ -98,7 +100,9 @@ def buy_key_kb(
     Клавиатура для страницы «Купить ключ».
 
     Args:
-        crypto_url: URL для оплаты криптой (если настроен)
+        crypto_url: URL для оплаты криптой (только для стандартного режима)
+        crypto_mode: Режим интеграции с Ya.Seller ('simple' или 'standard')
+        crypto_configured: Настроена ли крипто-оплата
         stars_enabled: Показывать ли кнопку оплаты Stars
         cards_enabled: Показывать ли кнопку оплаты картой ЮКасса
         yookassa_qr_enabled: Показывать ли кнопку QR-оплаты через ЮКассу
@@ -107,11 +111,13 @@ def buy_key_kb(
     builder = InlineKeyboardBuilder()
 
     # Кнопки оплаты (показываем только включённые методы)
-    # USDT — внешняя ссылка
-    if crypto_url:
-        builder.row(
-            InlineKeyboardButton(text="💰 Оплатить USDT", url=crypto_url)
-        )
+    # USDT
+    if crypto_configured:
+        if crypto_mode == 'simple':
+            cb_data = f"pay_crypto:{order_id}" if order_id else "pay_crypto"
+            builder.row(InlineKeyboardButton(text="💰 Оплатить USDT", callback_data=cb_data))
+        elif crypto_url:
+            builder.row(InlineKeyboardButton(text="💰 Оплатить USDT", url=crypto_url))
 
     # Stars — переход к выбору тарифа
     if stars_enabled:
@@ -141,34 +147,43 @@ def buy_key_kb(
     return builder.as_markup()
 
 
-def tariff_select_kb(tariffs: list, back_callback: str = "buy_key", order_id: str = None, is_cards: bool = False) -> InlineKeyboardMarkup:
+def tariff_select_kb(tariffs: list, back_callback: str = "buy_key", order_id: str = None, is_cards: bool = False, is_crypto: bool = False) -> InlineKeyboardMarkup:
     """
-    Клавиатура выбора тарифа для оплаты Stars или Картами.
+    Клавиатура выбора тарифа для оплаты Stars, Картами или Криптой.
     
     Args:
         tariffs: Список тарифов из БД
         back_callback: Callback для кнопки «Назад»
         order_id: ID существующего ордера (для оптимизации)
         is_cards: True если выбор тарифа для оплаты картой
+        is_crypto: True если выбор тарифа для оплаты криптой (простой режим)
     """
     builder = InlineKeyboardBuilder()
     
     for tariff in tariffs:
-        if is_cards:
+        if is_crypto:
+            price_usd = tariff['price_cents'] / 100
+            price_str = f"{price_usd:g}".replace('.', ',')
+            price_display = f"${price_str}"
+            prefix = "crypto_pay"
+            emoji = '💰'
+        elif is_cards:
             price_rub = tariff.get('price_rub')
             if price_rub is None or price_rub <= 1:
                 continue
             price_display = f"{price_rub} ₽"
             prefix = "cards_pay"
+            emoji = '💳'
         else:
             price_display = f"{tariff['price_stars']} звёзд"
             prefix = "stars_pay"
+            emoji = '⭐'
             
         cb_data = f"{prefix}:{tariff['id']}:{order_id}" if order_id else f"{prefix}:{tariff['id']}"
         
         builder.row(
             InlineKeyboardButton(
-                text=f"{'💳' if is_cards else '⭐'} {tariff['name']} — {price_display}",
+                text=f"{emoji} {tariff['name']} — {price_display}",
                 callback_data=cb_data
             )
         )
@@ -251,13 +266,14 @@ def my_keys_list_kb(keys: list) -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def key_manage_kb(key_id: int, is_unconfigured: bool = False) -> InlineKeyboardMarkup:
+def key_manage_kb(key_id: int, is_unconfigured: bool = False, is_active: bool = True) -> InlineKeyboardMarkup:
     """
     Клавиатура управления ключом.
     
     Args:
         key_id: ID ключа
         is_unconfigured: True, если ключ не настроен (Draft)
+        is_active: True, если ключ активен (срок действия не истек)
     """
     builder = InlineKeyboardBuilder()
     
@@ -272,15 +288,26 @@ def key_manage_kb(key_id: int, is_unconfigured: bool = False) -> InlineKeyboardM
         )
     else:
         # Стандартные кнопки
-        builder.row(
-            InlineKeyboardButton(text="📋 Показать ключ", callback_data=f"key_show:{key_id}"),
-            InlineKeyboardButton(text="📈 Продлить", callback_data=f"key_renew:{key_id}")
-        )
-        
-        builder.row(
-            InlineKeyboardButton(text="🔄 Заменить", callback_data=f"key_replace:{key_id}"),
-            InlineKeyboardButton(text="✏️ Переименовать", callback_data=f"key_rename:{key_id}")
-        )
+        if is_active:
+            builder.row(
+                InlineKeyboardButton(text="📋 Показать ключ", callback_data=f"key_show:{key_id}"),
+                InlineKeyboardButton(text="📈 Продлить", callback_data=f"key_renew:{key_id}")
+            )
+            
+            builder.row(
+                InlineKeyboardButton(text="🔄 Заменить", callback_data=f"key_replace:{key_id}"),
+                InlineKeyboardButton(text="✏️ Переименовать", callback_data=f"key_rename:{key_id}")
+            )
+        else:
+            # Для неактивных ключей нет показа и замены, есть удаление
+            builder.row(
+                InlineKeyboardButton(text="📈 Продлить", callback_data=f"key_renew:{key_id}")
+            )
+            
+            builder.row(
+                InlineKeyboardButton(text="🗑️ Удалить", callback_data=f"key_delete:{key_id}"),
+                InlineKeyboardButton(text="✏️ Переименовать", callback_data=f"key_rename:{key_id}")
+            )
     
     # ТРЕТИЙ ряд (унифицированный): Инструкция и Мои ключи
     builder.row(
@@ -299,7 +326,7 @@ def key_show_kb(key_id: int = None) -> InlineKeyboardMarkup:
     return key_issued_kb()
 
 
-def renew_tariff_select_kb(tariffs: list, key_id: int, order_id: str = None, is_cards: bool = False) -> InlineKeyboardMarkup:
+def renew_tariff_select_kb(tariffs: list, key_id: int, order_id: str = None, is_cards: bool = False, is_crypto: bool = False) -> InlineKeyboardMarkup:
     """
     Клавиатура выбора тарифа для продления ключа (для Stars или Карт).
     
@@ -308,19 +335,28 @@ def renew_tariff_select_kb(tariffs: list, key_id: int, order_id: str = None, is_
         key_id: ID ключа для продления
         order_id: ID ордера (для оптимизации)
         is_cards: True если выбор тарифа для оплаты картой
+        is_crypto: True если выбор тарифа для оплаты криптой (простой режим)
     """
     builder = InlineKeyboardBuilder()
     
     for tariff in tariffs:
-        if is_cards:
+        if is_crypto:
+            price_usd = tariff['price_cents'] / 100
+            price_str = f"{price_usd:g}".replace('.', ',')
+            price_display = f"${price_str}"
+            prefix = "renew_pay_crypto"
+            emoji = '💰'
+        elif is_cards:
             price_rub = tariff.get('price_rub')
             if price_rub is None or price_rub <= 1:
                 continue
             price_display = f"{price_rub} ₽"
             prefix = "renew_pay_cards"
+            emoji = '💳'
         else:
             price_display = f"{tariff['price_stars']} звёзд"
             prefix = "renew_pay_stars"
+            emoji = '⭐'
             
         cb_data = f"{prefix}:{key_id}:{tariff['id']}"
         if order_id:
@@ -328,7 +364,7 @@ def renew_tariff_select_kb(tariffs: list, key_id: int, order_id: str = None, is_
             
         builder.row(
             InlineKeyboardButton(
-                text=f"{'💳' if is_cards else '⭐'} {tariff['name']} — {price_display}",
+                text=f"{emoji} {tariff['name']} — {price_display}",
                 callback_data=cb_data
             )
         )
@@ -345,6 +381,8 @@ def renew_tariff_select_kb(tariffs: list, key_id: int, order_id: str = None, is_
 def renew_payment_method_kb(
     key_id: int,
     crypto_url: str = None,
+    crypto_mode: str = 'standard',
+    crypto_configured: bool = False,
     stars_enabled: bool = False,
     cards_enabled: bool = False,
     yookassa_qr_enabled: bool = False
@@ -355,17 +393,24 @@ def renew_payment_method_kb(
     Args:
         key_id: ID ключа
         crypto_url: URL для оплаты криптой (с placeholder тарифом)
+        crypto_mode: Режим интеграции с Ya.Seller ('simple' или 'standard')
+        crypto_configured: Настроена ли крипто-оплата
         stars_enabled: Доступна ли оплата Stars
         cards_enabled: Доступна ли оплата Картами
         yookassa_qr_enabled: Доступна ли QR-оплата через ЮКассу
     """
     builder = InlineKeyboardBuilder()
 
-    # USDT — внешняя ссылка (если настроено)
-    if crypto_url:
-        builder.row(
-            InlineKeyboardButton(text="💰 Оплатить USDT", url=crypto_url)
-        )
+    # USDT
+    if crypto_configured:
+        if crypto_mode == 'simple':
+            builder.row(
+                InlineKeyboardButton(text="💰 Оплатить USDT", callback_data=f"renew_crypto_tariff:{key_id}")
+            )
+        elif crypto_url:
+            builder.row(
+                InlineKeyboardButton(text="💰 Оплатить USDT", url=crypto_url)
+            )
 
     # Stars — переход к выбору тарифа
     if stars_enabled:

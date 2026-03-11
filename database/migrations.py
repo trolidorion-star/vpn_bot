@@ -11,7 +11,7 @@ from .connection import get_db
 logger = logging.getLogger(__name__)
 
 # Текущая версия схемы БД
-LATEST_VERSION = 6
+LATEST_VERSION = 9
 
 
 def get_current_version() -> int:
@@ -410,6 +410,122 @@ def migration_6(conn: sqlite3.Connection) -> None:
     logger.info("Миграция v6 применена")
 
 
+def migration_7(conn: sqlite3.Connection) -> None:
+    """
+    Миграция v7: Режим интеграции с криптопроцессингом (Ya.Seller).
+    
+    Добавляет настройку `crypto_integration_mode` (simple / standard).
+    Если крипта уже была настроена, то ставим standard, иначе - simple (по умолчанию для новых).
+    """
+    logger.info("Применение миграции v7 (Режим интеграции крипты)...")
+
+    # Проверяем, была ли настроена крипта (наличие URL или ключа)
+    cursor = conn.execute("SELECT value FROM settings WHERE key = 'crypto_item_url'")
+    row = cursor.fetchone()
+    
+    has_old_crypto = False
+    if row and row['value']:
+        has_old_crypto = True
+        
+    mode = "standard" if has_old_crypto else "simple"
+
+    conn.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+        ('crypto_integration_mode', mode)
+    )
+
+    logger.info(f"Миграция v7 применена (установлен режим: {mode})")
+
+
+def migration_8(conn: sqlite3.Connection) -> None:
+    """
+    Миграция v8: Замена старого текста уведомления об истечении ключа на новый с {keyname}.
+    """
+    logger.info("Применение миграции v8 (Обновление текста уведомления с {keyname})...")
+    
+    current_text = None
+    cursor = conn.execute("SELECT value FROM settings WHERE key = 'notification_text'")
+    row = cursor.fetchone()
+    
+    if row and row['value']:
+        current_text = row['value']
+        if "⚠️ *Ваш VPN-ключ скоро истекает!*" in current_text:
+            new_text = current_text.replace(
+                "⚠️ *Ваш VPN-ключ скоро истекает!*",
+                "⚠️ *Ваш VPN-ключ {keyname} скоро истекает!*"
+            )
+            
+            conn.execute(
+                "UPDATE settings SET value = ? WHERE key = 'notification_text'",
+                (new_text,)
+            )
+
+    logger.info("Миграция v8 применена")
+
+def migration_9(conn: sqlite3.Connection) -> None:
+    """
+    Миграция v9: Отключение автопродления (сброса трафика и дней) для всех существующих ключей.
+    
+    Вызывает API-метод панели X-UI для каждого сервера и устанавливает reset = 0 
+    для всех клиентов, у которых он был не равен 0.
+    Сама БД при этом не меняется, но механизм миграций используется для
+    однократного выполнения этого действия на всех серверах при обновлении.
+    """
+    logger.info("Применение миграции v9 (Отключение автопродления ключей на серверах)...")
+    
+    # Для выполнения асинхронных HTTP-запросов из синхронного кода миграций
+    import asyncio
+    
+    # Получаем все активные серверы синхронно, пока соединение открыто
+    cursor = conn.execute("SELECT * FROM servers WHERE is_active = 1")
+    servers = [dict(row) for row in cursor.fetchall()]
+    
+    if not servers:
+        logger.info("Нет активных серверов для отключения автопродления.")
+        return
+    
+    async def process_servers(servers_list):
+        from bot.services.vpn_api import XUIClient
+        
+        total_updated = 0
+        for server in servers_list:
+            logger.info(f"Подключение к серверу {server['name']} для отключения автопродления...")
+            client = None
+            try:
+                client = XUIClient(server)
+                # Логинимся
+                await client.login()
+                
+                # Запускаем отключение
+                updated = await client.disable_reset_for_all_clients()
+                total_updated += updated
+                
+                logger.info(f"На сервере {server['name']} отключено автопродление для {updated} клиентов.")
+            except Exception as e:
+                logger.error(f"Ошибка при работе с сервером {server['name']}: {e}")
+            finally:
+                if client and client.session:
+                    await client.session.close()
+                    
+        logger.info(f"Всего отключено автопродление для {total_updated} клиентов на всех серверах.")
+
+    # Создаем новый event loop или используем текущий
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            # Если мы уже в event loop, создаем задачу
+            loop.create_task(process_servers(servers))
+        else:
+            loop.run_until_complete(process_servers(servers))
+    except RuntimeError:
+        # Если event loop не существует, создаем новый
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(process_servers(servers))
+        loop.close()
+
+    logger.info("Миграция v9 применена")
+
 MIGRATIONS = {
     1: migration_1,
     2: migration_2,
@@ -417,6 +533,9 @@ MIGRATIONS = {
     4: migration_4,
     5: migration_5,
     6: migration_6,
+    7: migration_7,
+    8: migration_8,
+    9: migration_9,
 }
 
 

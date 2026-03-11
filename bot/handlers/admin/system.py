@@ -248,10 +248,27 @@ async def edit_texts_menu(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith("edit_text:"))
 async def edit_text_start(callback: CallbackQuery, state: FSMContext):
     """Начало редактирования конкретного текста."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
     from database.requests import get_setting
     from bot.keyboards.admin import cancel_kb
     
     key = callback.data.split(":")[1]
+    
+    # Белый список допустимых ключей — защита от инъекции произвольного ключа настроек
+    # (HIGH-3: без этого admin мог передать edit_text:crypto_secret_key и прочитать/изменить ключ)
+    ALLOWED_KEYS = {
+        'main_page_text',
+        'help_page_text',
+        'news_channel_link',
+        'support_channel_link',
+    }
+    
+    if key not in ALLOWED_KEYS:
+        await callback.answer("⛔ Недопустимый параметр", show_alert=True)
+        return
     
     # Названия для заголовка
     titles = {

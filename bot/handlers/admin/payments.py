@@ -19,7 +19,9 @@ from database.requests import (
     is_crypto_enabled,
     is_stars_enabled,
     is_cards_enabled,
-    is_yookassa_qr_enabled
+    is_yookassa_qr_enabled,
+    get_crypto_integration_mode,
+    set_crypto_integration_mode
 )
 from bot.states.admin_states import (
     AdminStates,
@@ -37,7 +39,7 @@ from bot.keyboards.admin import (
     cards_management_kb,
     back_and_home_kb
 )
-from bot.utils.text import escape_markdown_url
+from bot.utils.text import escape_markdown_url, escape_md
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +112,7 @@ async def show_payments_menu(callback: CallbackQuery, state: FSMContext):
         item_url = get_setting('crypto_item_url', '')
         if item_url:
             safe_url = escape_markdown_url(item_url)
-            text += f"🟢 *Крипто (@Ya_SellerBot)*\n[Ссылка на товар]({safe_url})\n"
+            text += f"🟢 *Крипто (@Ya_SellerBot)*\n[{item_url}]({safe_url})\n"
         else:
             text += "🟢 *Крипто (@Ya_SellerBot)*\n"
     else:
@@ -191,21 +193,29 @@ async def start_crypto_setup(callback: CallbackQuery, state: FSMContext):
     bot_username = callback.bot.my_username if hasattr(callback.bot, 'my_username') else "YOUR_BOT"
     callback_url = f"https://t.me/{bot_username}"
     
+    mode = get_crypto_integration_mode()
+    
+    instructions = (
+        "*Режим «Простой» (рекомендуется):*\n"
+        "1️⃣ В @Ya\\_SellerBot выберите «Управление» → «Товары» → «Добавить»\n"
+        "2️⃣ Выберите тип позиции: *Счет*\n"
+        "3️⃣ Укажите Обратную ссылку (Интеграция → Изменить): \n"
+        f"`{callback_url}`\n\n"
+        "При покупке бот будет генерировать уникальный счет с указанием точной суммы в USDT. В админке не нужно привязывать ID из Я.Селлера к тарифам.\n\n"
+    ) if mode == 'simple' else (
+        "*Режим «Стандартный»:*\n"
+        "1️⃣ Создайте обычный *Товар* в @Ya\\_SellerBot\n"
+        "2️⃣ Добавьте в него тарифы (под номерами 1-9)\n"
+        "3️⃣ В настройках позиции укажите Обратную ссылку: \n"
+        f"`{callback_url}`\n\n"
+        "4️⃣ Обязательно добавьте ID тарифов (1-9) из бота Ya.Seller в каждый тариф нашего VPN-бота.\n\n"
+    )
+
     text = (
         "💰 *Настройка крипто-платежей*\n\n"
         "Для приёма криптовалюты мы используем @Ya\\_SellerBot.\n\n"
-        "*Инструкция:*\n"
-        "1️⃣ Создайте товар в @Ya\\_SellerBot\n"
-        "2️⃣ Добавьте тарифы (помните номера 1-9!)\n"
-        "3️⃣ Перейдите: Позиция → Уведомления → Обратная ссылка\n"
-        "4️⃣ Вставьте туда эту ссылку:\n\n"
-        f"`{callback_url}`\n\n"
-        "💡 _Ya.Seller автоматически добавит параметры платежа:_\n"
-        f"`{callback_url}?start=bill1-данные-подпись`\n\n"
-        "5️⃣ Скопируйте ссылку на товар из бота\n\n"
-        "📚 [Подробная документация](https://yadreno.ru/seller/integration.php)\n\n"
-        "---\n\n"
-        "Теперь *вставьте ссылку на товар* из @Ya\\_SellerBot:"
+        f"{instructions}"
+        "🔗 *Теперь скопируйте ссылку на позицию из бота и отправьте её мне:*"
     )
     
     await callback.message.edit_text(
@@ -247,7 +257,7 @@ async def process_crypto_url(message: Message, state: FSMContext):
         
         safe_url = escape_markdown_url(url)
         await message.answer(
-            f"✅ Ссылка обновлена!\n[Ссылка на товар]({safe_url})",
+            f"✅ Ссылка обновлена!\n[{url}]({safe_url})",
             parse_mode="Markdown",
             disable_web_page_preview=True
         )
@@ -274,7 +284,7 @@ async def process_crypto_url(message: Message, state: FSMContext):
         
         safe_url = escape_markdown_url(url)
         await message.answer(
-            f"✅ Ссылка принята!\n[Ссылка на товар]({safe_url})\n\n"
+            f"✅ Ссылка принята!\n[{url}]({safe_url})\n\n"
             "Теперь введите *Секретный ключ*:\n"
             "Найти его можно в @Ya\\_SellerBot: Профиль → Ключ подписи",
             reply_markup=crypto_setup_kb(2),
@@ -338,7 +348,7 @@ async def process_crypto_secret(message: Message, state: FSMContext):
         
         await message.answer(
             "✅ *Все данные введены!*\n\n"
-            f"📦 Товар: [Ссылка на товар]({safe_url})\n"
+            f"📦 Товар: [{item_url}]({safe_url})\n"
             f"🔐 Ключ: `{'•' * 16}`\n\n"
             "Сохранить и включить крипто-платежи?",
             reply_markup=crypto_setup_confirm_kb(),
@@ -411,32 +421,62 @@ async def show_crypto_management_menu(callback: CallbackQuery, state: FSMContext
     
     is_enabled = is_crypto_enabled()
     item_url = get_setting('crypto_item_url', '')
+    mode = get_crypto_integration_mode()
     
     status_emoji = "🟢" if is_enabled else "⚪"
     status_text = "включены" if is_enabled else "выключены"
+    
+    mode_title = "Простой (Счет)" if mode == 'simple' else "Стандартный (Товар)"
+    
+    mode_description = (
+        "ℹ️ *В Простом (Счет) режиме* бот генерирует ссылку на оплату с указанием точной суммы в долларах (из настроек тарифа). В Ya.Seller позиция обязательно должна иметь тип «Счет». Настраивать ID тарифов (external\\_id) не требуется.\n\n"
+    ) if mode == 'simple' else (
+        "ℹ️ *В Стандартном режиме* бот отправляет покупателя на одну ссылку-товар, где он выбирает тариф. Вам нужно обязательно заполнить поле «ID тарифа из Ya.Seller» для каждого тарифа.\n\n"
+    )
     
     if item_url:
         safe_url = escape_markdown_url(item_url)
         text = (
             "💰 *Управление крипто-платежами*\n\n"
             f"{status_emoji} Статус: *{status_text}*\n"
-            f"📦 Товар: [Ссылка на товар]({safe_url})\n\n"
+            f"📦 Ссылка/Товар: [{item_url}]({safe_url})\n"
+            f"⚙️ Текущий режим: *{mode_title}*\n\n"
+            f"{mode_description}"
             "Выберите действие:"
         )
     else:
         text = (
             "💰 *Управление крипто-платежами*\n\n"
             f"{status_emoji} Статус: *{status_text}*\n"
-            "📦 Товар: —\n\n"
+            "📦 Ссылка/Товар: —\n"
+            f"⚙️ Текущий режим: *{mode_title}*\n\n"
+            f"{mode_description}"
             "Выберите действие:"
         )
     
     await callback.message.edit_text(
         text,
-        reply_markup=crypto_management_kb(is_enabled),
-        parse_mode="Markdown"
+        reply_markup=crypto_management_kb(is_enabled, mode),
+        parse_mode="Markdown",
+        disable_web_page_preview=True
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == "admin_crypto_mgmt_toggle_mode")
+async def crypto_mgmt_toggle_mode(callback: CallbackQuery, state: FSMContext):
+    """Переключает режим интеграции с криптой (simple/standard)."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+    
+    current_mode = get_crypto_integration_mode()
+    new_mode = 'standard' if current_mode == 'simple' else 'simple'
+    set_crypto_integration_mode(new_mode)
+    
+    await callback.answer(f"Режим переключен на: {new_mode}")
+    # Обновляем меню
+    await show_crypto_management_menu(callback, state)
 
 
 @router.callback_query(F.data == "admin_crypto_mgmt_toggle")
@@ -469,18 +509,40 @@ async def crypto_mgmt_edit_url(callback: CallbackQuery, state: FSMContext):
     
     current_url = get_setting('crypto_item_url', '')
     
+    bot_username = callback.bot.my_username if hasattr(callback.bot, 'my_username') else "YOUR_BOT"
+    callback_url = f"https://t.me/{bot_username}"
+    mode = get_crypto_integration_mode()
+    
+    instructions = (
+        "*Режим «Простой» (Счет):*\n"
+        "1️⃣ В @Ya\\_SellerBot выберите «Управление» → «Товары» → «Добавить»\n"
+        "2️⃣ Выберите тип позиции: *Счет*\n"
+        "3️⃣ В настройках позиции (🔔 Уведомления - 🔗 Обратная ссылка) укажите ссылку: \n"
+        f"`{callback_url}`\n\n"
+        "При покупке бот будет генерировать уникальный счет с указанием точной суммы в USDT.\n\n"
+    ) if mode == 'simple' else (
+        "*Режим «Стандартный» (Товар):*\n"
+        "1️⃣ Создайте обычный *Товар* в @Ya\\_SellerBot\n"
+        "2️⃣ Добавьте в него тарифы (под номерами 1-9)\n"
+        "3️⃣ В настройках позиции (🔔 Уведомления - 🔗 Обратная ссылка) укажите ссылку: \n"
+        f"`{callback_url}`\n\n"
+        "4️⃣ Обязательно добавьте ID тарифов (1-9) из бота Ya.Seller в каждый тариф нашего VPN-бота.\n\n"
+    )
+    
     if current_url:
         safe_url = escape_markdown_url(current_url)
         text = (
-            "🔗 *Изменение ссылки на товар*\n\n"
-            f"Текущая ссылка: [Ссылка на товар]({safe_url})\n\n"
-            "Введите новую ссылку на товар из @Ya\\_SellerBot:"
+            "🔗 *Изменение ссылки*\n\n"
+            f"{instructions}"
+            f"Текущая ссылка: [{current_url}]({safe_url})\n\n"
+            "🔗 *Введите новую ссылку из @Ya_SellerBot:*"
         )
     else:
         text = (
-            "🔗 *Изменение ссылки на товар*\n\n"
+            "🔗 *Изменение ссылки*\n\n"
+            f"{instructions}"
             "Текущая ссылка: —\n\n"
-            "Введите новую ссылку на товар из @Ya\\_SellerBot:"
+            "🔗 *Введите новую ссылку из @Ya_SellerBot:*"
         )
     
     await callback.message.edit_text(
@@ -607,6 +669,9 @@ async def crypto_edit_next(callback: CallbackQuery, state: FSMContext):
 @router.message(AdminStates.edit_crypto)
 async def edit_crypto_value(message: Message, state: FSMContext):
     """Обрабатывает ввод нового значения крипто-настройки."""
+    if not is_admin(message.from_user.id):
+        return
+    
     data = await state.get_data()
     param_index = data.get('edit_crypto_param', 0)
     

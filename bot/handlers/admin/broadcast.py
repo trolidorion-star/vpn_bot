@@ -111,6 +111,9 @@ async def show_broadcast_menu(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "noop")
 async def noop_callback(callback: CallbackQuery):
     """Пустой обработчик для разделителя."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer()
+        return
     await callback.answer()
 
 
@@ -322,6 +325,9 @@ async def broadcast_start(callback: CallbackQuery):
 @router.callback_query(F.data == "broadcast_in_progress")
 async def broadcast_in_progress_callback(callback: CallbackQuery):
     """Уведомление о том, что рассылка уже идёт."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
     await callback.answer("⏳ Рассылка уже идёт, дождитесь завершения", show_alert=True)
 
 
@@ -536,7 +542,7 @@ async def broadcast_notify_text(callback: CallbackQuery, state: FSMContext):
         "Текущий текст:\n"
         f"```\n{current_text}\n```\n\n"
         "Отправьте новый текст.\n"
-        "Используйте `{days}` для вставки количества оставшихся дней."
+        "Используйте `{days}` для вставки количества оставшихся дней, а `{keyname}` для имени ключа."
     )
     
     await callback.message.edit_text(

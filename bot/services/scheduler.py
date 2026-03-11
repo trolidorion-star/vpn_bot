@@ -248,7 +248,7 @@ async def check_and_send_expiry_notifications(bot: Bot) -> None:
     try:
         days = int(get_setting('notification_days', '3'))
         notification_text = get_setting('notification_text', 
-            '⚠️ *Ваш VPN-ключ скоро истекает!*\n\n'
+            '⚠️ *Ваш VPN-ключ {keyname} скоро истекает!*\n\n'
             'Через {days} дней закончится срок действия вашего ключа.\n\n'
             'Продлите подписку, чтобы сохранить доступ к VPN без перерыва!'
         )
@@ -260,18 +260,26 @@ async def check_and_send_expiry_notifications(bot: Bot) -> None:
             vpn_key_id = key_info['vpn_key_id']
             user_telegram_id = key_info['user_telegram_id']
             days_left = key_info['days_left']
+            keyname = key_info.get('custom_name', f"Key #{vpn_key_id}")
             
             # Проверяем, отправляли ли мы сегодня
             if is_notification_sent_today(vpn_key_id):
                 continue
             
-            # Формируем текст с подстановкой дней
-            text = notification_text.format(days=days_left)
+            # Формируем текст с подстановкой дней и имени ключа
+            text = notification_text.format(days=days_left, keyname=keyname)
+            
+            # Клавиатура с кнопками "Мои ключи" и "На главную"
+            builder = InlineKeyboardBuilder()
+            builder.row(InlineKeyboardButton(text="🔑 Мои ключи", callback_data="my_keys"))
+            builder.row(InlineKeyboardButton(text="🈴 На главную", callback_data="start"))
+            kb = builder.as_markup()
             
             try:
                 await bot.send_message(
                     chat_id=user_telegram_id,
                     text=text,
+                    reply_markup=kb,
                     parse_mode="Markdown"
                 )
                 log_notification_sent(vpn_key_id)

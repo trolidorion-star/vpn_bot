@@ -213,35 +213,37 @@ TARIFF_PARAMS = [
 ]
 
 
-def get_tariff_param_by_index(index: int, include_crypto: bool = True) -> dict:
+def get_tariff_param_by_index(index: int, include_crypto: bool = True, crypto_mode: str = 'standard') -> dict:
     """
     Получает параметр тарифа по индексу.
     
     Args:
         index: Индекс параметра
         include_crypto: Включать параметры для крипто-платежей
+        crypto_mode: Режим интеграции с криптой
     """
-    params = get_tariff_params_list(include_crypto)
+    params = get_tariff_params_list(include_crypto, crypto_mode)
     if 0 <= index < len(params):
         return params[index]
     return params[0] if params else TARIFF_PARAMS[0]
 
 
-def get_tariff_params_list(include_crypto: bool = True) -> list:
+def get_tariff_params_list(include_crypto: bool = True, crypto_mode: str = 'standard') -> list:
     """
     Возвращает список параметров тарифа.
     
     Args:
         include_crypto: Включать параметры для крипто-платежей
+        crypto_mode: Режим интеграции с криптой
     """
-    if include_crypto:
+    if include_crypto and crypto_mode == 'standard':
         return TARIFF_PARAMS
     return [p for p in TARIFF_PARAMS if not p.get('crypto_only')]
 
 
-def get_total_tariff_params(include_crypto: bool = True) -> int:
+def get_total_tariff_params(include_crypto: bool = True, crypto_mode: str = 'standard') -> int:
     """Возвращает общее количество параметров тарифа."""
-    return len(get_tariff_params_list(include_crypto))
+    return len(get_tariff_params_list(include_crypto, crypto_mode))
 
 
 # ============================================================================

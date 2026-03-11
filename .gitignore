@@ -7,8 +7,8 @@ config.py
 logs/
 tests/
 results.md
-TZ.md
 AGENTS.md
+.agents/
 **/__pycache__/
 .vscode
 

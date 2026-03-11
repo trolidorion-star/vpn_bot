@@ -140,7 +140,7 @@ def parse_crypto_callback(start_param: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-def process_payment_order(order_id: str) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+async def process_payment_order(order_id: str) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
     """
     Универсальная обработка успешного ордера (Crypto или Stars).
     Закрывает ордер, продлевает ключ или создаёт черновик.
@@ -181,6 +181,12 @@ def process_payment_order(order_id: str) -> Tuple[bool, str, Optional[Dict[str, 
         days = order.get('period_days') or order.get('duration_days')
         if days and extend_vpn_key(order['vpn_key_id'], days):
             logger.info(f"Ключ {order['vpn_key_id']} продлён на {days} дней (order={order_id})")
+            
+            # Сброс трафика и продление на сервере
+            from bot.services.vpn_api import reset_key_traffic_if_active, extend_key_on_server
+            await reset_key_traffic_if_active(order['vpn_key_id'])
+            await extend_key_on_server(order['vpn_key_id'], days)
+            
             return True, f"✅ Оплата прошла успешно!\n\nВаш ключ продлён на {days} дней.", order
         else:
             logger.error(f"Не удалось продлить ключ {order['vpn_key_id']} после оплаты!")
@@ -209,7 +215,7 @@ def process_payment_order(order_id: str) -> Tuple[bool, str, Optional[Dict[str, 
             return True, "✅ Оплата принята, но произошла ошибка при создании ключа. Обратитесь в поддержку.", order
 
 
-def process_crypto_payment(start_param: str, user_id: Optional[int] = None) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
+async def process_crypto_payment(start_param: str, user_id: Optional[int] = None) -> Tuple[bool, str, Optional[Dict[str, Any]]]:
     """
     Обрабатывает платёж от криптопроцессинга (parse + verify + confirm).
     """
@@ -234,8 +240,22 @@ def process_crypto_payment(start_param: str, user_id: Optional[int] = None) -> T
     is_internal_order = order_id.startswith("00")
     order = find_order_by_order_id(order_id)
     
-    # Если это внутренний ордер, но пользователь оплатил другой тариф (выбрал в UI процессинга)
-    if order and parsed.get('tariff') and parsed['tariff'] != '_':
+    from database.requests import get_crypto_integration_mode
+    crypto_mode = get_crypto_integration_mode()
+    
+    if order and crypto_mode == 'simple':
+        # Простая интеграция: строго сверяем сумму, переданную в Ya.Seller с тарифом
+        from database.requests import get_tariff_by_id
+        order_tariff = get_tariff_by_id(order['tariff_id'])
+        if order_tariff:
+            expected_cents = order_tariff['price_cents']
+            received_cents = parsed.get('price', 0)
+            if received_cents < expected_cents:
+                logger.error(f"Ордер {order_id}: Сумма платежа недостаточна. Ожидалось {expected_cents}, получено {received_cents}")
+                return False, "❌ Сумма платежа не совпадает с тарифом.", None
+    
+    # Если это внутренний ордер (и стандартный режим), но пользователь оплатил другой тариф (выбрал в UI процессинга)
+    elif order and parsed.get('tariff') and parsed['tariff'] != '_':
         try:
             tariff_ext_id = int(parsed['tariff'])
             from database.requests import get_tariff_by_external_id, update_order_tariff
@@ -306,7 +326,7 @@ def process_crypto_payment(start_param: str, user_id: Optional[int] = None) -> T
              return False, "❌ Ошибка сохранения внешнего заказа.", None
     
     # Delegate to unified logic
-    return process_payment_order(order_id)
+    return await process_payment_order(order_id)
 
 
 def build_crypto_payment_url(

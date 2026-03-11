@@ -333,12 +333,30 @@ def is_crypto_configured() -> bool:
     Проверяет, настроены ли крипто-платежи полностью.
     
     Returns:
-        True если крипто включены И есть ссылка на товар
+        True если крипто включены И есть ссылка на товар (для стандартного режима) или просто включены
     """
     if not is_crypto_enabled():
         return False
     crypto_item_url = get_setting('crypto_item_url')
     return bool(crypto_item_url and crypto_item_url.strip())
+
+
+def get_crypto_integration_mode() -> str:
+    """
+    Возвращает текущий режим интеграции с Ya.Seller.
+    Возможные значения: 'simple' или 'standard'.
+    """
+    # Если настройка не задана (миграция почему-то не прошла), то по умолчанию "standard",
+    # чтобы не сломать текущим пользователям
+    return get_setting('crypto_integration_mode', 'standard')
+
+def set_crypto_integration_mode(mode: str) -> None:
+    """
+    Устанавливает режим интеграции с Ya.Seller.
+    """
+    if mode not in ('simple', 'standard'):
+        raise ValueError("Invalid crypto integration mode")
+    set_setting('crypto_integration_mode', mode)
 
 
 def is_cards_enabled() -> bool:
@@ -814,7 +832,7 @@ def get_expiring_keys(days: int) -> List[Dict[str, Any]]:
         days: Количество дней до истечения
     
     Returns:
-        Список словарей: vpn_key_id, user_telegram_id, expires_at, days_left
+        Список словарей: vpn_key_id, user_telegram_id, expires_at, custom_name, days_left
     """
     with get_db() as conn:
         cursor = conn.execute("""
@@ -822,6 +840,7 @@ def get_expiring_keys(days: int) -> List[Dict[str, Any]]:
                 vk.id as vpn_key_id,
                 u.telegram_id as user_telegram_id,
                 vk.expires_at,
+                vk.custom_name,
                 CAST((julianday(vk.expires_at) - julianday('now')) AS INTEGER) as days_left
             FROM vpn_keys vk
             JOIN users u ON vk.user_id = u.id
@@ -1754,6 +1773,31 @@ def is_order_already_paid(order_id: str) -> bool:
         )
         row = cursor.fetchone()
         return row and row['status'] == 'paid'
+
+
+def delete_vpn_key(key_id: int) -> bool:
+    """
+    Удаляет VPN-ключ из базы данных.
+    Также удаляет связь с платежами и логи уведомлений, чтобы не нарушать FOREIGN KEY.
+    
+    Args:
+        key_id: ID ключа
+    
+    Returns:
+        True если успешно
+    """
+    with get_db() as conn:
+        # Убираем привязку в истории оплат (чтобы сохранить саму историю)
+        conn.execute("UPDATE payments SET vpn_key_id = NULL WHERE vpn_key_id = ?", (key_id,))
+        # Удаляем логи уведомлений
+        conn.execute("DELETE FROM notification_log WHERE vpn_key_id = ?", (key_id,))
+        
+        # Удаляем сам ключ
+        cursor = conn.execute("DELETE FROM vpn_keys WHERE id = ?", (key_id,))
+        success = cursor.rowcount > 0
+        if success:
+            logger.info(f"Ключ ID {key_id} удален из БД")
+        return success
 
 
 def get_user_keys_for_display(telegram_id: int) -> List[Dict[str, Any]]:

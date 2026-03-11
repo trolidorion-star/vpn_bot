@@ -122,13 +122,13 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
         
         # Обрабатываем платеж (вернет (success, text, order))
         try:
-            success, text, order = process_crypto_payment(args, user_id=user['id'])
+            success, text, order = await process_crypto_payment(args, user_id=user['id'])
             
             if success and order:
-                # Используем единый финализатор UI
-                await finalize_payment_ui(message, state, text, order)
+                # Используем единый финализатор UI (передаём telegram_id!)
+                await finalize_payment_ui(message, state, text, order, user_id=message.from_user.id)
             else:
-                 # Обычная ошибка (возвращенная текстом)
+                # Обычная ошибка (возвращенная текстом)
                  await message.answer(text, parse_mode="Markdown")
                  
         except Exception as e:
@@ -531,7 +531,7 @@ async def show_key_details(telegram_id: int, key_id: int, send_function, prepend
     
     key = get_key_details_for_user(key_id, telegram_id)
     if not key:
-        await send_function("❌ Ключ не найден")
+        await send_function("❌ Ключ не найден или вы не являетесь его владельцем.")
         return
     
     # Статус
@@ -620,9 +620,54 @@ async def show_key_details(telegram_id: int, key_id: int, send_function, prepend
     
     await send_function(
         msg_text,
-        reply_markup=key_manage_kb(key_id, is_unconfigured=is_unconfigured),
+        reply_markup=key_manage_kb(key_id, is_unconfigured=is_unconfigured, is_active=key['is_active']),
         parse_mode="Markdown"
     )
+
+@router.callback_query(F.data.startswith("key_delete:"))
+async def key_delete_handler(callback: CallbackQuery):
+    """Удаление истекшего ключа пользователем."""
+    key_id = int(callback.data.split(":")[1])
+    telegram_id = callback.fromuser.id if hasattr(callback, 'fromuser') else callback.from_user.id
+    
+    from database.requests import get_key_details_for_user, delete_vpn_key
+    from bot.services.vpn_api import get_client
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    key = get_key_details_for_user(key_id, telegram_id)
+    if not key:
+        await callback.answer("❌ Ключ не найден или вы не являетесь его владельцем.", show_alert=True)
+        return
+        
+    if key['is_active']:
+        await callback.answer("❌ Активные ключи нельзя удалить.", show_alert=True)
+        return
+        
+    # Удаляем с сервера VPN
+    if key.get('server_id') and key.get('panel_inbound_id') and key.get('client_uuid'):
+        try:
+            client = await get_client(key['server_id'])
+            # Метод delete_client существует в XUIClient и принимает (inbound_id, client_uuid)
+            await client.delete_client(key['panel_inbound_id'], key['client_uuid'])
+            logger.info(f"Клиент {key.get('panel_email', 'unknown')} удален с сервера 3X-UI")
+        except Exception as e:
+            logger.warning(f"Не удалось удалить клиента {key.get('panel_email', 'unknown')} с сервера 3X-UI: {e}")
+            # Продолжаем удаление из БД даже при ошибке на сервере VPN
+    
+    # Удаляем из БД
+    success = delete_vpn_key(key_id)
+    if success:
+        await callback.answer(f"✅ Ключ {key['display_name']} успешно удален.", show_alert=True)
+        # Возвращаемся к списку ключей
+        # Пытаемся отредактировать сообщение. 
+        try:
+            await show_my_keys(telegram_id, callback.message.edit_text)
+        except Exception:
+            await callback.message.delete()
+            await show_my_keys(telegram_id, callback.message.answer)
+    else:
+        await callback.answer("❌ Ошибка при удалении ключа из БД.", show_alert=True)
 
 @router.callback_query(F.data.startswith("key:"))
 async def key_details_handler(callback: CallbackQuery):
@@ -656,7 +701,7 @@ async def key_show_handler(callback: CallbackQuery):
     
     key = get_key_details_for_user(key_id, telegram_id)
     if not key:
-        await callback.answer("❌ Ключ не найден", show_alert=True)
+        await callback.answer("❌ Ключ не найден или вы не являетесь его владельцем.", show_alert=True)
         return
     
     if not key['client_uuid']:
@@ -687,7 +732,7 @@ async def key_renew_select_payment(callback: CallbackQuery):
     from database.requests import (
         get_all_tariffs, get_key_details_for_user, get_user_internal_id,
         is_crypto_configured, is_stars_enabled, is_cards_enabled, get_setting,
-        create_pending_order
+        create_pending_order, get_crypto_integration_mode
     )
     from bot.services.billing import build_crypto_payment_url, extract_item_id_from_url
     from bot.keyboards.user import renew_payment_method_kb, back_and_home_kb
@@ -698,7 +743,7 @@ async def key_renew_select_payment(callback: CallbackQuery):
     # Проверяем принадлежность ключа
     key = get_key_details_for_user(key_id, telegram_id)
     if not key:
-        await callback.answer("❌ Ключ не найден", show_alert=True)
+        await callback.answer("❌ Ключ не найден или вы не являетесь его владельцем.", show_alert=True)
         return
     
     # Получаем методы оплаты
@@ -721,6 +766,8 @@ async def key_renew_select_payment(callback: CallbackQuery):
 
     # Подготовка URL для крипты
     crypto_url = None
+    crypto_mode = get_crypto_integration_mode()
+
     if crypto_configured:
         # Для генерации ссылки нужен PENDING ORDER.
         # Создаём его с placeholder-тарифом (первым активным), т.к. реальный выберет пользователь в Ya.Seller
@@ -737,23 +784,31 @@ async def key_renew_select_payment(callback: CallbackQuery):
                     vpn_key_id=key_id
                 )
                  
-                 item_url = get_setting('crypto_item_url')
-                 item_id = extract_item_id_from_url(item_url)
-                 
-                 if item_id:
-                     crypto_url = build_crypto_payment_url(
-                        item_id=item_id,
-                        invoice_id=order_id,
-                        tariff_external_id=None, # Не фиксируем тариф, юзер выберет сам
-                        price_cents=None
-                     )
+                 if crypto_mode == 'standard':
+                     item_url = get_setting('crypto_item_url')
+                     item_id = extract_item_id_from_url(item_url)
+                     
+                     if item_id:
+                         crypto_url = build_crypto_payment_url(
+                            item_id=item_id,
+                            invoice_id=order_id,
+                            tariff_external_id=None, # Не фиксируем тариф, юзер выберет сам
+                            price_cents=None
+                         )
     
     await callback.message.edit_text(
         f"💳 *Продление ключа*\n\n"
         f"🔑 Ключ: *{key['display_name']}*\n\n"
         "Выберите способ оплаты:",
-        reply_markup=renew_payment_method_kb(key_id, crypto_url, stars_enabled, cards_enabled,
-                                             yookassa_qr_enabled=yookassa_qr),
+        reply_markup=renew_payment_method_kb(
+            key_id=key_id, 
+            crypto_url=crypto_url,
+            crypto_mode=crypto_mode,
+            crypto_configured=crypto_configured,
+            stars_enabled=stars_enabled, 
+            cards_enabled=cards_enabled,
+            yookassa_qr_enabled=yookassa_qr
+        ),
         parse_mode="Markdown"
     )
     await callback.answer()
@@ -775,7 +830,7 @@ async def key_replace_start_handler(callback: CallbackQuery, state: FSMContext):
     
     key = get_key_details_for_user(key_id, telegram_id)
     if not key:
-        await callback.answer("❌ Ключ не найден", show_alert=True)
+        await callback.answer("❌ Ключ не найден или вы не являетесь его владельцем.", show_alert=True)
         return
     
     # 0. Проверяем, активен ли ключ
@@ -948,7 +1003,7 @@ async def key_replace_execute(callback: CallbackQuery, state: FSMContext):
                 if is_same_server:
                     # Если тот же сервер, ошибка удаления критична, КРОМЕ случая "не найден"
                     # Обычно 3x-ui пишет что-то вроде "Client not found" или success: false
-                    if "not found" in error_msg.lower() or "не найден" in error_msg.lower():
+                    if "not found" in error_msg.lower() or "не найден" in error_msg.lower() or "no client remained" in error_msg.lower():
                          logger.info("Ключ не найден на сервере, считаем удаленным.")
                     else:
                         # Реальная ошибка (нет связи, авторизация и т.д.)
@@ -1018,11 +1073,11 @@ async def key_replace_execute(callback: CallbackQuery, state: FSMContext):
         await send_key_with_qr(callback, updated_key, key_issued_kb(), is_new=True)
         
     except Exception as e:
-        logger.error(f"Ошибка при замене ключа: {e}")
-        # Если ошибка, но мы уже удалили старый ключ (на том же сервере)...
-        # Это сложный кейс, но транзакционность между API и БД не гарантирована.
+        # Детали ошибки (IP-адреса серверов, логины и т.д.) логируем только серверно,
+        # пользователю показываем безопасное сообщение без технических деталей (HIGH-4)
+        logger.error(f"Ошибка при замене ключа (user={callback.from_user.id}, key={key_id}): {e}")
         await callback.message.edit_text(
-            f"❌ Произошла ошибка при замене ключа: {e}\n\n"
+            "❌ Произошла ошибка при замене ключа.\n\n"
             "Попробуйте позже или обратитесь в поддержку."
         )
 
@@ -1038,7 +1093,7 @@ async def key_rename_start_handler(callback: CallbackQuery, state: FSMContext):
     
     key = get_key_details_for_user(key_id, telegram_id)
     if not key:
-        await callback.answer("❌ Ключ не найден", show_alert=True)
+        await callback.answer("❌ Ключ не найден или вы не являетесь его владельцем.", show_alert=True)
         return
     
     await state.set_state(RenameKey.waiting_for_name)
@@ -1129,7 +1184,7 @@ async def buy_key_handler(callback: CallbackQuery):
     from database.requests import (
         is_crypto_configured, is_stars_enabled, is_cards_enabled, get_setting,
         get_user_internal_id, get_all_tariffs, create_pending_order,
-        is_yookassa_qr_configured
+        is_yookassa_qr_configured, get_crypto_integration_mode
     )
     from bot.services.billing import build_crypto_payment_url, extract_item_id_from_url
     from bot.keyboards.user import buy_key_kb
@@ -1138,12 +1193,13 @@ async def buy_key_handler(callback: CallbackQuery):
     telegram_id = callback.from_user.id
 
     # Проверяем какие методы оплаты доступны
+    crypto_configured = is_crypto_configured()
+    crypto_mode = get_crypto_integration_mode()
     crypto_url = None
-    existing_order_id = None  # Сохраняем ID ордера для переиспользования в Stars
+    existing_order_id = None  # Сохраняем ID ордера для переиспользования в Stars/Cards и Crypto simple
 
-    if is_crypto_configured():
-        # Для крипто-оплаты создаём pending order с первым активным тарифом
-        # (или можно использовать специальный placeholder тариф)
+    if crypto_configured:
+        # Создаём pending order
         user_id = get_user_internal_id(telegram_id)
         if user_id:
             _, order_id = create_pending_order(
@@ -1154,24 +1210,25 @@ async def buy_key_handler(callback: CallbackQuery):
             )
             existing_order_id = order_id
 
-            # Формируем ссылку с invoice
-            crypto_item_url = get_setting('crypto_item_url')
-            item_id = extract_item_id_from_url(crypto_item_url)
+            if crypto_mode == 'standard':
+                # Формируем ссылку с invoice для стандартного режима
+                crypto_item_url = get_setting('crypto_item_url')
+                item_id = extract_item_id_from_url(crypto_item_url)
 
-            if item_id:
-                crypto_url = build_crypto_payment_url(
-                    item_id=item_id,
-                    invoice_id=order_id,
-                    tariff_external_id=None,  # Пользователь выберет в боте
-                    price_cents=None  # Цена определяется в Ya.Seller
-                )
+                if item_id:
+                    crypto_url = build_crypto_payment_url(
+                        item_id=item_id,
+                        invoice_id=order_id,
+                        tariff_external_id=None,  # Пользователь выберет в боте Ya.Seller
+                        price_cents=None
+                    )
 
     stars_enabled = is_stars_enabled()
     cards_enabled = is_cards_enabled()
     yookassa_qr = is_yookassa_qr_configured()
     
     # Если нет ни одного метода оплаты — показываем заглушку
-    if not crypto_url and not stars_enabled and not cards_enabled and not yookassa_qr:
+    if not crypto_configured and not stars_enabled and not cards_enabled and not yookassa_qr:
         await callback.message.edit_text(
             "💳 *Купить ключ*\n\n"
             "😔 К сожалению, сейчас оплата недоступна.\n\n"
@@ -1202,9 +1259,15 @@ _Приобретая ключ, вы соглашаетесь с этими ус
     try:
         await callback.message.edit_text(
             text,
-            reply_markup=buy_key_kb(crypto_url=crypto_url, stars_enabled=stars_enabled,
-                                    cards_enabled=cards_enabled, yookassa_qr_enabled=yookassa_qr,
-                                    order_id=existing_order_id),
+            reply_markup=buy_key_kb(
+                crypto_url=crypto_url, 
+                crypto_mode=crypto_mode, 
+                crypto_configured=crypto_configured, 
+                stars_enabled=stars_enabled,
+                cards_enabled=cards_enabled, 
+                yookassa_qr_enabled=yookassa_qr,
+                order_id=existing_order_id
+            ),
             parse_mode="Markdown"
         )
     except Exception:
@@ -1214,9 +1277,15 @@ _Приобретая ключ, вы соглашаетесь с этими ус
             pass
         await callback.message.answer(
             text,
-            reply_markup=buy_key_kb(crypto_url=crypto_url, stars_enabled=stars_enabled,
-                                    cards_enabled=cards_enabled, yookassa_qr_enabled=yookassa_qr,
-                                    order_id=existing_order_id),
+            reply_markup=buy_key_kb(
+                crypto_url=crypto_url, 
+                crypto_mode=crypto_mode, 
+                crypto_configured=crypto_configured, 
+                stars_enabled=stars_enabled,
+                cards_enabled=cards_enabled, 
+                yookassa_qr_enabled=yookassa_qr,
+                order_id=existing_order_id
+            ),
             parse_mode="Markdown"
         )
         
@@ -1240,6 +1309,106 @@ async def help_stub(callback: CallbackQuery):
         
     await callback.answer()
 
+
+
+# ============================================================================
+# ОПЛАТА CRYPTO (ПРОСТОЙ РЕЖИМ)
+# ============================================================================
+
+@router.callback_query(F.data.startswith("pay_crypto"))
+async def pay_crypto_select_tariff(callback: CallbackQuery):
+    """Выбор тарифа для оплаты Crypto."""
+    from database.requests import get_all_tariffs
+    from bot.keyboards.user import tariff_select_kb
+    from bot.keyboards.admin import home_only_kb
+    
+    order_id = None
+    if ":" in callback.data:
+        order_id = callback.data.split(":")[1]
+
+    tariffs = get_all_tariffs(include_hidden=False)
+    
+    if not tariffs:
+        await callback.message.edit_text(
+            "💰 *Оплата криптовалютой*\n\n"
+            "😔 Нет доступных тарифов.\n\n"
+            "Попробуйте позже или обратитесь в поддержку.",
+            reply_markup=home_only_kb(),
+            parse_mode="Markdown"
+        )
+        await callback.answer()
+        return
+    
+    await callback.message.edit_text(
+        "💰 *Оплата криптовалютой*\n\n"
+        "Выберите тариф:",
+        reply_markup=tariff_select_kb(tariffs, order_id=order_id, is_crypto=True),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("crypto_pay:"))
+async def pay_crypto_invoice(callback: CallbackQuery):
+    """Создание ссылки на оплату Crypto (Простой режим)."""
+    from database.requests import get_tariff_by_id, update_order_tariff, get_setting, get_user_internal_id, create_pending_order
+    from bot.services.billing import build_crypto_payment_url, extract_item_id_from_url
+    
+    parts = callback.data.split(":")
+    tariff_id = int(parts[1])
+    order_id = parts[2] if len(parts) > 2 else None
+    
+    tariff = get_tariff_by_id(tariff_id)
+    if not tariff:
+        await callback.answer("❌ Тариф не найден", show_alert=True)
+        return
+        
+    if order_id:
+        update_order_tariff(order_id, tariff_id, payment_type='crypto')
+    else:
+        user_id = get_user_internal_id(callback.from_user.id)
+        if not user_id:
+            await callback.answer("❌ Ошибка пользователя", show_alert=True)
+            return
+        _, order_id = create_pending_order(
+            user_id=user_id,
+            tariff_id=tariff_id,
+            payment_type='crypto',
+            vpn_key_id=None 
+        )
+
+    crypto_item_url = get_setting('crypto_item_url')
+    item_id = extract_item_id_from_url(crypto_item_url)
+    if not item_id:
+        await callback.answer("❌ Ошибка настройки крипто-платежей", show_alert=True)
+        return
+
+    crypto_url = build_crypto_payment_url(
+        item_id=item_id,
+        invoice_id=order_id,
+        tariff_external_id=None,
+        price_cents=tariff['price_cents']
+    )
+
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    from aiogram.types import InlineKeyboardButton
+    
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="💰 Перейти к оплате", url=crypto_url))
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"pay_crypto:{order_id}"))
+
+    price_usd = tariff['price_cents'] / 100
+    price_str = f"${price_usd:g}".replace('.', ',')
+
+    await callback.message.edit_text(
+        f"💰 *Оплата криптовалютой*\n\n"
+        f"Тариф: *{tariff['name']}*\n"
+        f"Сумма к оплате: *{price_str}*\n\n"
+        "Нажмите кнопку ниже, чтобы перейти к генерации счета в @Ya\\_SellerBot.",
+        reply_markup=builder.as_markup(),
+        parse_mode="Markdown"
+    )
+    await callback.answer()
 
 
 # ============================================================================
