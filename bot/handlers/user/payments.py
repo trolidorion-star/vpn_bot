@@ -1016,7 +1016,7 @@ async def check_yookassa_payment(callback: CallbackQuery, state: FSMContext):
         update_payment_type(order_id, 'yookassa_qr')
 
         try:
-            success, text, updated_order = process_payment_order(order_id)
+            success, text, updated_order = await process_payment_order(order_id)
             if success and updated_order:
                 try:
                     await callback.message.delete()
