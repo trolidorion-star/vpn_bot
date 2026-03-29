@@ -109,7 +109,11 @@ async def process_new_key_final(callback: CallbackQuery, state: FSMContext, serv
         panel_email = generate_unique_email(user_fake_dict)
         client = await get_client(server_id)
         days = order.get('period_days') or order.get('duration_days') or 30
-        limit_gb = int(DEFAULT_TOTAL_GB / 1024 ** 3)
+        # Лимит трафика из тарифа (0 = безлимит на панели)
+        from database.requests import get_tariff_by_id as _get_tariff_for_limit
+        _tariff_data = _get_tariff_for_limit(order['tariff_id'])
+        tariff_traffic_gb = (_tariff_data.get('traffic_limit_gb', 0) or 0) if _tariff_data else 0
+        limit_gb = tariff_traffic_gb if tariff_traffic_gb > 0 else int(DEFAULT_TOTAL_GB / 1024 ** 3)
         flow = await client.get_inbound_flow(inbound_id)
         res = await client.add_client(inbound_id=inbound_id, email=panel_email, total_gb=limit_gb, expire_days=days, limit_ip=1, enable=True, tg_id=str(telegram_id), flow=flow)
         client_uuid = res['uuid']

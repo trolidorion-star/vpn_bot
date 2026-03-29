@@ -122,9 +122,10 @@ async def process_key_extend(message: Message, state: FSMContext):
     success = extend_vpn_key(key_id, days)
     if success:
         await message.answer(f'✅ Ключ продлён на {days} дней!')
-        from bot.services.vpn_api import reset_key_traffic_if_active, extend_key_on_server
+        from bot.services.vpn_api import reset_key_traffic_if_active, extend_key_on_server, restore_key_traffic_limit
         await reset_key_traffic_if_active(key_id)
         await extend_key_on_server(key_id, days)
+        await restore_key_traffic_limit(key_id)
         key = get_vpn_key_by_id(key_id)
         if key:
             await state.set_state(AdminStates.key_view)

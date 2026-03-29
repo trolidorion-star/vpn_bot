@@ -178,6 +178,8 @@ async def pay_with_balance_handler(callback: CallbackQuery, state: FSMContext):
             extend_vpn_key(key_id, days)
             await reset_key_traffic_if_active(key_id)
             await extend_key_on_server(key_id, days)
+            from bot.services.vpn_api import restore_key_traffic_limit
+            await restore_key_traffic_limit(key_id)
             logger.info(f'Ключ {key_id} продлён на {days} дней за баланс {actual_deduct} коп')
         else:
             traffic_limit_bytes = (tariff.get('traffic_limit_gb', 0) or 0) * 1024 ** 3

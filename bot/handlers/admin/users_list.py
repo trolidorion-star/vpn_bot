@@ -27,7 +27,7 @@ async def show_users_menu(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AdminStates.users_menu)
     await state.update_data(users_filter='all', users_page=0)
     stats = get_users_stats()
-    text = f"👥 *Пользователи*\n\n📊 *Статистика:*\n👤 Всего: *{stats['total']}*\n✅ С активными ключами: *{stats['active']}*\n❌ Без активных ключей: *{stats['inactive']}*\n🆕 Никогда не покупали: *{stats['never_paid']}*\n🚫 Ключ истёк: *{stats['expired']}*\n\nОтправьте `telegram_id` пользователя или нажмите кнопку ниже."
+    text = f"👥 *Пользователи*\n\n📊 *Статистика:*\n👤 Всего: *{stats['total']}*\n✅ С активными ключами: *{stats['active']}*\n❌ Без активных ключей: *{stats['inactive']}*\n🆕 Никогда не покупали: *{stats['never_paid']}*\n🚫 Ключ истёк: *{stats['expired']}*\n\nОтправьте `telegram_id`, `@username` или `panel_email` из панели."
     await callback.message.edit_text(text, reply_markup=users_menu_kb(stats), parse_mode='Markdown')
     await callback.answer()
 
@@ -87,7 +87,7 @@ async def request_user_selection(callback: CallbackQuery, state: FSMContext):
         return
     await state.set_state(AdminStates.waiting_user_id)
     reply_keyboard = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text='👤 Выбрать пользователя', request_users=KeyboardButtonRequestUsers(request_id=1, user_is_bot=False, max_quantity=1))]], resize_keyboard=True, one_time_keyboard=True)
-    await callback.message.answer('🔍 *Поиск пользователя*\n\nОтправьте:\n• telegram\\_id (число)\n• @username\n• Или нажмите кнопку «👤 Выбрать пользователя» ниже', reply_markup=reply_keyboard, parse_mode='Markdown')
+    await callback.message.answer('🔍 *Поиск пользователя*\n\nОтправьте:\n• telegram\\_id (число)\n• @username\n• panel\\_email (email клиента из панели)\n• Или нажмите кнопку «👤 Выбрать пользователя» ниже', reply_markup=reply_keyboard, parse_mode='Markdown')
     await callback.message.edit_text(callback.message.text, reply_markup=users_input_cancel_kb(), parse_mode='Markdown')
     await callback.answer()
 
@@ -104,10 +104,10 @@ async def handle_users_shared(message: Message, state: FSMContext):
 
 @router.message(AdminStates.waiting_user_id, F.text)
 async def process_user_search_input(message: Message, state: FSMContext):
-    """Обработка ввода telegram_id или @username."""
+    """Обработка ввода telegram_id, @username или panel_email."""
     if not is_admin(message.from_user.id):
         return
-    from database.requests import get_user_by_username
+    from database.requests import get_user_by_username, get_user_by_panel_email
     from bot.utils.text import get_message_text_for_storage
     text = get_message_text_for_storage(message, 'plain')
     user = None
@@ -121,10 +121,16 @@ async def process_user_search_input(message: Message, state: FSMContext):
         username = text.lstrip('@')
         user = get_user_by_username(username)
         if not user:
-            await message.answer(f'❌ Пользователь @{username} не найден в базе', reply_markup=users_input_cancel_kb(), parse_mode='Markdown')
-            return
+            # Пробуем найти по panel_email (email в панели 3X-UI)
+            user = get_user_by_panel_email(text)
+            if not user:
+                await message.answer(f'❌ Пользователь @{username} не найден в базе', reply_markup=users_input_cancel_kb(), parse_mode='Markdown')
+                return
     else:
-        await message.answer('❌ Введите telegram\\_id (число) или @username', reply_markup=users_input_cancel_kb(), parse_mode='Markdown')
-        return
+        # Произвольный текст — пробуем как panel_email
+        user = get_user_by_panel_email(text)
+        if not user:
+            await message.answer('❌ Введите telegram\\_id (число), @username или panel\\_email из панели', reply_markup=users_input_cancel_kb(), parse_mode='Markdown')
+            return
     await message.answer('✅ Найден!', reply_markup=ReplyKeyboardRemove())
     await _show_user_view(message, state, user['telegram_id'])

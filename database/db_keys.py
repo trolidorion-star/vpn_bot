@@ -30,6 +30,7 @@ __all__ = [
     'get_key_details_for_user',
     'update_key_custom_name',
     'add_days_to_first_active_key',
+    'get_user_by_panel_email',
 ]
 
 def get_user_vpn_keys(user_id: int) -> List[Dict[str, Any]]:
@@ -584,3 +585,23 @@ def add_days_to_first_active_key(user_id: int, days: int) -> bool:
         
         logger.info(f"Ключ {key_id} пользователя {user_id} продлён на {days} дней (реферальное вознаграждение)")
         return True
+
+def get_user_by_panel_email(email: str) -> Optional[Dict[str, Any]]:
+    """
+    Находит пользователя-владельца ключа по panel_email из панели 3X-UI.
+    
+    Args:
+        email: Email (идентификатор клиента) в панели прокси
+    
+    Returns:
+        Словарь с данными пользователя или None
+    """
+    with get_db() as conn:
+        cursor = conn.execute("""
+            SELECT u.* FROM users u
+            JOIN vpn_keys vk ON u.id = vk.user_id
+            WHERE LOWER(vk.panel_email) = LOWER(?)
+            LIMIT 1
+        """, (email,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
