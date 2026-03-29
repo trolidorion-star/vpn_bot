@@ -263,7 +263,7 @@ def check_for_updates() -> Tuple[bool, int, str, bool, Optional[Dict[str, str]],
     if success_log and log_output:
         log_text += "Последние изменения:\n```\n" + log_output + "\n```"
     
-    return True, commits_behind, log_text, has_blocking, blocking_commit
+    return True, commits_behind, log_text, has_blocking, blocking_commit, is_beta_only
 
 
 def pull_updates() -> Tuple[bool, str]:
