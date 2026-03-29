@@ -140,7 +140,7 @@ def update_tariff(tariff_id: int, **fields) -> bool:
         True если обновление успешно
     """
     allowed_fields = {'name', 'duration_days', 'price_cents', 'price_stars', 'price_rub',
-                      'external_id', 'display_order', 'is_active', 'group_id'}
+                      'external_id', 'display_order', 'is_active', 'group_id', 'traffic_limit_gb'}
     fields = {k: v for k, v in fields.items() if k in allowed_fields}
     
     if not fields:
