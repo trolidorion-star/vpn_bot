@@ -6,6 +6,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from bot.utils.text import escape_md
 from config import ADMIN_IDS
+from bot.handlers.user.payments.base import finalize_payment_ui
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -192,7 +193,7 @@ async def qr_pay_create(callback: CallbackQuery):
         from aiogram.types import BufferedInputFile
         photo = BufferedInputFile(qr_image_data, filename='qr.png')
         await callback.message.delete()
-        await callback.message.answer_photo(photo=photo, caption=text, reply_markup=yookassa_qr_kb(order_id, back_callback='pay_qr'), parse_mode='Markdown')
+        await callback.message.answer_photo(photo=photo, caption=text, reply_markup=yookassa_qr_kb(order_id, back_callback='pay_qr', qr_url=qr_url), parse_mode='Markdown')
     except (ValueError, RuntimeError) as e:
         logger.error(f'Ошибка создания QR ЮКасса: {e}')
         await callback.message.edit_text(f'❌ *Ошибка создания QR*\n\n_{e}_\n\nПопробуйте другой способ оплаты.', reply_markup=home_only_kb(), parse_mode='Markdown')
@@ -331,7 +332,7 @@ async def renew_qr_create(callback: CallbackQuery):
         from aiogram.types import BufferedInputFile
         photo = BufferedInputFile(qr_image_data, filename='qr.png')
         await callback.message.delete()
-        await callback.message.answer_photo(photo=photo, caption=text, reply_markup=yookassa_qr_kb(order_id, back_callback=f'renew_qr_tariff:{key_id}'), parse_mode='Markdown')
+        await callback.message.answer_photo(photo=photo, caption=text, reply_markup=yookassa_qr_kb(order_id, back_callback=f'renew_qr_tariff:{key_id}', qr_url=qr_url), parse_mode='Markdown')
     except (ValueError, RuntimeError) as e:
         logger.error(f'Ошибка QR ЮКасса (продление): {e}')
         await callback.message.edit_text(f'❌ *Ошибка создания QR*\n\n_{e}_', reply_markup=home_only_kb(), parse_mode='Markdown')

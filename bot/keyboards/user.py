@@ -816,15 +816,22 @@ def trial_sub_kb() -> InlineKeyboardMarkup:
 # QR-ОПЛАТА ЮКАССА (direct API)
 # ============================================================================
 
-def yookassa_qr_kb(order_id: str, back_callback: str = "buy_key") -> InlineKeyboardMarkup:
+def yookassa_qr_kb(order_id: str, back_callback: str = "buy_key", qr_url: str = None) -> InlineKeyboardMarkup:
     """
     Клавиатура страницы QR-оплаты ЮКассы.
 
     Args:
         order_id: Наш внутренний order_id
         back_callback: Каллбэк для кнопки «Назад»
+        qr_url: Ссылка на оплату (URL)
     """
     builder = InlineKeyboardBuilder()
+    
+    if qr_url:
+        builder.row(
+            InlineKeyboardButton(text="💳 Оплатить", url=qr_url)
+        )
+        
     builder.row(
         InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_yookassa_qr:{order_id}")
     )

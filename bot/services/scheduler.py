@@ -670,27 +670,6 @@ async def sync_traffic_stats(bot: Bot) -> None:
                         # Формула: сколько осталось на сервере → вычитаем из нашего лимита
                         remaining_on_server = max(0, total_on_server - used_on_server)
                         traffic_used = max(0, traffic_limit - remaining_on_server)
-                        
-                        # Автоисправление: если totalGB на сервере расходится
-                        # с ожидаемым remaining (traffic_limit - traffic_used из БД) > 1 МБ
-                        db_traffic_used = key.get('traffic_used', 0) or 0
-                        expected_remaining = max(0, traffic_limit - db_traffic_used)
-                        divergence = abs(total_on_server - expected_remaining)
-                        if divergence > 1024 * 1024:  # > 1 МБ
-                            try:
-                                correct_remaining = max(0, traffic_limit - db_traffic_used)
-                                inbound_id = key.get('panel_inbound_id')
-                                client_uuid = key.get('client_uuid')
-                                if inbound_id and client_uuid:
-                                    await client.update_client_limit(
-                                        inbound_id=inbound_id,
-                                        client_uuid=client_uuid,
-                                        email=email,
-                                        total_gb_bytes=correct_remaining
-                                    )
-                                    logger.info(f"Автоисправление totalGB для {email}: {total_on_server} → {correct_remaining}")
-                            except Exception as fix_e:
-                                logger.warning(f"Не удалось автоисправить totalGB для {email}: {fix_e}")
                     else:
                         # Безлимит или нет данных — прямой учёт
                         traffic_used = used_on_server

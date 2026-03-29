@@ -12,6 +12,8 @@ from bot.utils.text import escape_md
 from bot.states.admin_states import AdminStates
 from bot.keyboards.admin import users_menu_kb, users_list_kb, user_view_kb, user_ban_confirm_kb, key_view_kb, add_key_server_kb, add_key_inbound_kb, add_key_step_kb, add_key_confirm_kb, users_input_cancel_kb, key_action_cancel_kb, back_and_home_kb, home_only_kb
 from bot.services.vpn_api import get_client_from_server_data, VPNAPIError, format_traffic
+from bot.handlers.admin.users_manage import format_user_display, _show_user_view_edit
+from bot.handlers.admin.users_list import show_users_menu
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -210,8 +212,10 @@ async def process_change_traffic_limit(message: Message, state: FSMContext):
         else:
             email = f"user_{key['telegram_id']}"
     try:
+        from database.requests import update_key_traffic_limit
         client = get_client_from_server_data(server_data)
         await client.update_client_traffic_limit(inbound_id=inbound_id, client_uuid=client_uuid, email=email, total_gb=traffic_gb)
+        update_key_traffic_limit(key_id, traffic_gb * (1024**3))
         traffic_text = f'{traffic_gb} ГБ' if traffic_gb > 0 else 'без лимита'
         await message.answer(f'✅ Лимит трафика успешно обновлён: {traffic_text}!')
         await state.set_state(AdminStates.key_view)

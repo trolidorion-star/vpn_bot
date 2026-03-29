@@ -6,6 +6,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from bot.utils.text import escape_md
 from config import ADMIN_IDS
+from bot.handlers.user.payments.base import _format_price_compact, _is_cards_via_yookassa_direct
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -313,7 +314,7 @@ async def pay_qr_balance_handler(callback: CallbackQuery, state: FSMContext):
         photo = BufferedInputFile(qr_image_data, filename='qr.png')
         back_cb = f'key_renew:{key_id}' if key_id else 'buy_key'
         await callback.message.delete()
-        await callback.message.answer_photo(photo=photo, caption=text, reply_markup=yookassa_qr_kb(order_id, back_callback=back_cb), parse_mode='Markdown')
+        await callback.message.answer_photo(photo=photo, caption=text, reply_markup=yookassa_qr_kb(order_id, back_callback=back_cb, qr_url=qr_url), parse_mode='Markdown')
     except (ValueError, RuntimeError) as e:
         logger.error(f'Ошибка создания QR ЮКасса: {e}')
         await callback.message.edit_text(f'❌ *Ошибка создания QR*\n\n_{e}_\n\nПопробуйте другой способ оплаты.', reply_markup=home_only_kb(), parse_mode='Markdown')
