@@ -129,7 +129,7 @@ async def finalize_payment_ui(message: Message, state: FSMContext, text: str, or
 async def renew_invoice_cancel_handler(callback: CallbackQuery):
     """Отмена инвойса и возврат к выбору способа оплаты."""
     from bot.keyboards.user import renew_payment_method_kb
-    from database.requests import get_key_details_for_user, get_all_tariffs, is_crypto_configured, is_stars_enabled, is_cards_enabled, get_user_internal_id, create_pending_order, get_setting
+    from database.requests import get_key_details_for_user, get_all_tariffs, is_crypto_configured, is_stars_enabled, is_cards_enabled, get_user_internal_id, create_pending_order, get_setting, is_yookassa_qr_configured, get_crypto_integration_mode, is_referral_enabled, get_referral_reward_type, get_user_balance
     from bot.services.billing import build_crypto_payment_url, extract_item_id_from_url
     parts = callback.data.split(':')
     key_id = int(parts[1])
@@ -142,22 +142,49 @@ async def renew_invoice_cancel_handler(callback: CallbackQuery):
     if not key:
         await callback.answer('❌ Ключ не найден', show_alert=True)
         return
+        
     crypto_configured = is_crypto_configured()
     stars_enabled = is_stars_enabled()
     cards_enabled = is_cards_enabled()
-    if not crypto_configured and (not stars_enabled) and (not cards_enabled):
+    yookassa_qr_enabled = is_yookassa_qr_configured()
+    
+    if not crypto_configured and (not stars_enabled) and (not cards_enabled) and (not yookassa_qr_enabled):
         await callback.message.answer('😔 Способы оплаты временно недоступны.', parse_mode='Markdown')
         return
+
     crypto_url = None
-    if crypto_configured:
+    crypto_mode = get_crypto_integration_mode()
+    user_id = get_user_internal_id(telegram_id)
+    
+    if crypto_configured and user_id:
         tariffs = get_all_tariffs(include_hidden=False)
         if tariffs:
-            user_id = get_user_internal_id(telegram_id)
-            if user_id:
-                (_, order_id) = create_pending_order(user_id=user_id, tariff_id=tariffs[0]['id'], payment_type='crypto', vpn_key_id=key_id)
+            (_, order_id) = create_pending_order(user_id=user_id, tariff_id=tariffs[0]['id'], payment_type='crypto', vpn_key_id=key_id)
+            if crypto_mode == 'standard':
                 item_url = get_setting('crypto_item_url')
                 item_id = extract_item_id_from_url(item_url)
                 if item_id:
                     crypto_url = build_crypto_payment_url(item_id=item_id, invoice_id=order_id, tariff_external_id=None, price_cents=None)
-    await callback.message.answer(f"💳 *Продление ключа*\n\n🔑 Ключ: *{key['display_name']}*\n\nВыберите способ оплаты:", reply_markup=renew_payment_method_kb(key_id, crypto_url, stars_enabled, cards_enabled), parse_mode='Markdown')
+                    
+    show_balance_button = False
+    if is_referral_enabled() and get_referral_reward_type() == 'balance':
+        if user_id:
+            balance_cents = get_user_balance(user_id)
+            if balance_cents > 0:
+                show_balance_button = True
+
+    await callback.message.answer(
+        f"💳 *Продление ключа*\n\n🔑 Ключ: *{key['display_name']}*\n\nВыберите способ оплаты:",
+        reply_markup=renew_payment_method_kb(
+            key_id=key_id,
+            crypto_url=crypto_url,
+            crypto_mode=crypto_mode,
+            crypto_configured=crypto_configured,
+            stars_enabled=stars_enabled,
+            cards_enabled=cards_enabled,
+            yookassa_qr_enabled=yookassa_qr_enabled,
+            show_balance_button=show_balance_button
+        ),
+        parse_mode='Markdown'
+    )
     await callback.answer()

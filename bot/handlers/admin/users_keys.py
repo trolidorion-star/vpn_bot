@@ -1,6 +1,6 @@
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from aiogram import Router, F, Bot
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, KeyboardButtonRequestUsers, UsersShared, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -375,15 +375,15 @@ async def add_key_back(callback: CallbackQuery, state: FSMContext):
     else:
         await cancel_add_key(callback, state)
 
-@router.callback_query(F.data == 'admin_sync_keys')
-async def sync_keys_with_panel(callback: CallbackQuery, state: FSMContext):
-    """Принудительная синхронизация всех ключей БД → панель."""
+@router.callback_query(F.data == 'admin_sync_db_to_panel')
+async def sync_db_to_panel(callback: CallbackQuery, state: FSMContext):
+    """Выгрузка данных из БД в панель (БД → Панель)."""
     if not is_admin(callback.from_user.id):
         await callback.answer('⛔ Доступ запрещён', show_alert=True)
         return
     
-    await callback.answer('🔄 Запуск синхронизации...')
-    await callback.message.edit_text('⏳ *Синхронизация ключей с панелью...*\n\nЭто может занять некоторое время.', parse_mode='Markdown')
+    await callback.answer('📤 Запуск выгрузки...')
+    await callback.message.edit_text('⏳ *Выгрузка данных в панель (БД → Панель)...*\n\nЭто может занять некоторое время.', parse_mode='Markdown')
     
     import json
     from database.requests import get_all_active_keys_with_server, get_all_servers
@@ -468,8 +468,8 @@ async def sync_keys_with_panel(callback: CallbackQuery, state: FSMContext):
             logger.error(f"Ошибка подключения к серверу {server.get('name', server_id)}: {e}")
     
     result = (
-        f"✅ *Синхронизация завершена*\n\n"
-        f"🔧 Исправлено: *{fixed}*\n"
+        f"✅ *Выгрузка в панель завершена*\n\n"
+        f"📤 Отправлено: *{fixed}*\n"
         f"✅ Без расхождений: *{ok}*\n"
     )
     if errors > 0:
@@ -478,4 +478,146 @@ async def sync_keys_with_panel(callback: CallbackQuery, state: FSMContext):
     
     await callback.message.edit_text(result, reply_markup=back_and_home_kb('admin_users'), parse_mode='Markdown')
 
+    await callback.answer()
+
+
+@router.callback_query(F.data == 'admin_sync_panel_to_db')
+async def sync_panel_to_db(callback: CallbackQuery, state: FSMContext):
+    """Загрузка данных из панели в БД (Панель → БД)."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer('⛔ Доступ запрещён', show_alert=True)
+        return
+    
+    await callback.answer('📥 Запуск загрузки...')
+    await callback.message.edit_text('⏳ *Загрузка данных из панели (Панель → БД)...*\n\nЭто может занять некоторое время.', parse_mode='Markdown')
+    
+    import json
+    from database.requests import get_all_active_keys_with_server, get_all_servers
+    from database.db_keys import update_key_traffic_limit, update_key_traffic
+    from datetime import datetime
+    
+    keys = get_all_active_keys_with_server()
+    if not keys:
+        await callback.message.edit_text('✅ Нет активных ключей для загрузки.', reply_markup=back_and_home_kb('admin_users'), parse_mode='Markdown')
+        return
+    
+    # Группируем по серверам
+    keys_by_server = {}
+    for key in keys:
+        sid = key['server_id']
+        if sid not in keys_by_server:
+            keys_by_server[sid] = []
+        keys_by_server[sid].append(key)
+    
+    servers = get_all_servers()
+    server_map = {s['id']: s for s in servers}
+    
+    updated = 0
+    errors = 0
+    skipped = 0
+    
+    for server_id, server_keys in keys_by_server.items():
+        server = server_map.get(server_id)
+        if not server or not server.get('is_active'):
+            continue
+        try:
+            client = get_client_from_server_data(server)
+            inbounds = await client.get_inbounds()
+            
+            # Собираем данные из панели: email → {expiryTime, totalGB, up, down}
+            panel_map = {}
+            for inbound in inbounds:
+                settings = json.loads(inbound.get('settings', '{}'))
+                # Собираем трафик из clientStats
+                client_stats = {}
+                for stat in inbound.get('clientStats', []):
+                    client_stats[stat.get('email', '')] = {
+                        'up': stat.get('up', 0),
+                        'down': stat.get('down', 0)
+                    }
+                
+                for cl in settings.get('clients', []):
+                    email = cl.get('email', '')
+                    stats = client_stats.get(email, {'up': 0, 'down': 0})
+                    panel_map[email] = {
+                        'expiryTime': cl.get('expiryTime', 0),
+                        'totalGB': cl.get('totalGB', 0),
+                        'traffic_used': stats['up'] + stats['down']
+                    }
+            
+            for key in server_keys:
+                email = key.get('panel_email')
+                if not email or email not in panel_map:
+                    skipped += 1
+                    continue
+                
+                panel = panel_map[email]
+                changed = False
+                
+                try:
+                    # Обновляем expires_at из панели
+                    panel_ms = panel['expiryTime']
+                    max_expires = datetime.now() + timedelta(days=99999)
+                    
+                    if panel_ms == 0:
+                        # Бесконечный ключ на панели → ставим максимум
+                        panel_dt = max_expires
+                    else:
+                        panel_dt = datetime.fromtimestamp(panel_ms / 1000)
+                        # Ограничиваем слишком далёкие даты
+                        if panel_dt > max_expires:
+                            panel_dt = max_expires
+                    
+                    panel_expires_str = panel_dt.strftime('%Y-%m-%d %H:%M:%S')
+                    
+                    db_expires = key.get('expires_at')
+                    if db_expires:
+                        db_dt = datetime.fromisoformat(str(db_expires))
+                        # Обновляем если разница больше суток
+                        if abs((panel_dt - db_dt).total_seconds()) > 86400:
+                            from database.connection import get_db
+                            with get_db() as conn:
+                                conn.execute(
+                                    "UPDATE vpn_keys SET expires_at = ? WHERE id = ?",
+                                    (panel_expires_str, key['id'])
+                                )
+                            changed = True
+                    
+                    # Обновляем traffic_limit из панели
+                    panel_total_bytes = panel['totalGB']
+                    db_limit = key.get('traffic_limit', 0) or 0
+                    if panel_total_bytes != db_limit:
+                        update_key_traffic_limit(key['id'], panel_total_bytes)
+                        changed = True
+                    
+                    # Обновляем traffic_used из панели
+                    panel_traffic = panel['traffic_used']
+                    db_traffic = key.get('traffic_used', 0) or 0
+                    if panel_traffic != db_traffic:
+                        update_key_traffic(key['id'], panel_traffic)
+                        changed = True
+                    
+                    if changed:
+                        updated += 1
+                    else:
+                        skipped += 1
+                        
+                except Exception as e:
+                    errors += 1
+                    logger.error(f"Ошибка обновления ключа {key['id']} ({email}): {e}")
+                    
+        except Exception as e:
+            errors += len(server_keys)
+            logger.error(f"Ошибка подключения к серверу {server.get('name', server_id)}: {e}")
+    
+    result = (
+        f"✅ *Загрузка из панели завершена*\n\n"
+        f"📥 Обновлено: *{updated}*\n"
+        f"✅ Без расхождений: *{skipped}*\n"
+    )
+    if errors > 0:
+        result += f"❌ Ошибок: *{errors}*\n"
+    result += f"\n📊 Всего ключей: *{len(keys)}*"
+    
+    await callback.message.edit_text(result, reply_markup=back_and_home_kb('admin_users'), parse_mode='Markdown')
     await callback.answer()

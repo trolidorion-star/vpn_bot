@@ -259,7 +259,7 @@ def balance_payment_kb(
     return builder.as_markup()
 
 
-def tariff_select_kb(tariffs: list, back_callback: str = "buy_key", order_id: str = None, is_cards: bool = False, is_crypto: bool = False, is_balance: bool = False, groups_data: list = None) -> InlineKeyboardMarkup:
+def tariff_select_kb(tariffs: list, back_callback: str = "buy_key", order_id: str = None, is_cards: bool = False, is_crypto: bool = False, is_balance: bool = False, is_qr: bool = False, groups_data: list = None) -> InlineKeyboardMarkup:
     """
     Клавиатура выбора тарифа для оплаты Stars, Картами, Криптой или Балансом.
     
@@ -270,6 +270,7 @@ def tariff_select_kb(tariffs: list, back_callback: str = "buy_key", order_id: st
         is_cards: True если выбор тарифа для оплаты картой
         is_crypto: True если выбор тарифа для оплаты криптой (простой режим)
         is_balance: True если выбор тарифа для оплаты с баланса
+        is_qr: True если выбор тарифа для QR-оплаты (ЮКасса)
         groups_data: Список dict с ключами 'group' и 'tariffs' для группировки.
                      Если None — tariffs отображаются без группировки.
     """
@@ -291,6 +292,13 @@ def tariff_select_kb(tariffs: list, back_callback: str = "buy_key", order_id: st
                 price_display = f"{price_rub} ₽"
                 prefix = "cards_pay"
                 emoji = '💳'
+            elif is_qr:
+                price_rub = tariff.get('price_rub')
+                if price_rub is None or price_rub <= 0:
+                    continue
+                price_display = f"{price_rub} ₽"
+                prefix = "qr_pay"
+                emoji = '📱'
             elif is_balance:
                 price_rub = tariff.get('price_rub')
                 if price_rub is None or price_rub <= 1:
@@ -480,7 +488,7 @@ def key_show_kb(key_id: int = None) -> InlineKeyboardMarkup:
     return key_issued_kb()
 
 
-def renew_tariff_select_kb(tariffs: list, key_id: int, order_id: str = None, is_cards: bool = False, is_crypto: bool = False, is_balance: bool = False) -> InlineKeyboardMarkup:
+def renew_tariff_select_kb(tariffs: list, key_id: int, order_id: str = None, is_cards: bool = False, is_crypto: bool = False, is_balance: bool = False, is_qr: bool = False) -> InlineKeyboardMarkup:
     """
     Клавиатура выбора тарифа для продления ключа (для Stars, Карт или Баланса).
     
@@ -491,6 +499,7 @@ def renew_tariff_select_kb(tariffs: list, key_id: int, order_id: str = None, is_
         is_cards: True если выбор тарифа для оплаты картой
         is_crypto: True если выбор тарифа для оплаты криптой (простой режим)
         is_balance: True если выбор тарифа для оплаты с баланса
+        is_qr: True если выбор тарифа для QR-оплаты (ЮКасса)
     """
     builder = InlineKeyboardBuilder()
     
@@ -508,6 +517,13 @@ def renew_tariff_select_kb(tariffs: list, key_id: int, order_id: str = None, is_
             price_display = f"{price_rub} ₽"
             prefix = "renew_pay_cards"
             emoji = '💳'
+        elif is_qr:
+            price_rub = tariff.get('price_rub')
+            if price_rub is None or price_rub <= 0:
+                continue
+            price_display = f"{price_rub} ₽"
+            prefix = "renew_pay_qr"
+            emoji = '📱'
         elif is_balance:
             price_rub = tariff.get('price_rub')
             if price_rub is None or price_rub <= 1:
@@ -842,59 +858,8 @@ def yookassa_qr_kb(order_id: str, back_callback: str = "buy_key", qr_url: str = 
     return builder.as_markup()
 
 
-def renew_yookassa_qr_tariff_kb(tariffs: list, key_id: int) -> InlineKeyboardMarkup:
-    """
-    Клавиатура выбора тарифа для QR-оплаты при продлении ключа.
-
-    Args:
-        tariffs: Список активных тарифов
-        key_id: ID ключа для продления
-    """
-    builder = InlineKeyboardBuilder()
-
-    for tariff in tariffs:
-        price_rub = tariff.get('price_rub')
-        if price_rub is None or price_rub <= 0:
-            continue
-        builder.row(
-            InlineKeyboardButton(
-                text=f"📱 {tariff['name']} — {price_rub} ₽",
-                callback_data=f"renew_pay_qr:{key_id}:{tariff['id']}"
-            )
-        )
-
-    builder.row(
-        InlineKeyboardButton(text="⬅️ Назад", callback_data=f"key_renew:{key_id}"),
-        InlineKeyboardButton(text="🈴 На главную", callback_data="start")
-    )
-    return builder.as_markup()
-
-
-def qr_tariff_select_kb(tariffs: list) -> InlineKeyboardMarkup:
-    """
-    Клавиатура выбора тарифа для QR-оплаты нового ключа.
-
-    Args:
-        tariffs: Список активных тарифов
-    """
-    builder = InlineKeyboardBuilder()
-
-    for tariff in tariffs:
-        price_rub = tariff.get('price_rub')
-        if price_rub is None or price_rub <= 0:
-            continue
-        builder.row(
-            InlineKeyboardButton(
-                text=f"📱 {tariff['name']} — {price_rub} ₽",
-                callback_data=f"qr_pay:{tariff['id']}"
-            )
-        )
-
-    builder.row(
-        InlineKeyboardButton(text="⬅️ Назад", callback_data="buy_key"),
-        InlineKeyboardButton(text="🈴 На главную", callback_data="start")
-    )
-    return builder.as_markup()
+# renew_yookassa_qr_tariff_kb и qr_tariff_select_kb удалены —
+# QR-оплата теперь использует общие renew_tariff_select_kb(is_qr=True) и tariff_select_kb(is_qr=True)
 
 
 def referral_menu_kb() -> InlineKeyboardMarkup:

@@ -145,7 +145,7 @@ async def renew_cards_invoice(callback: CallbackQuery):
 async def pay_qr_select_tariff(callback: CallbackQuery):
     """Выбор тарифа для QR-оплаты (Новый ключ)."""
     from database.requests import get_all_tariffs
-    from bot.keyboards.user import qr_tariff_select_kb
+    from bot.keyboards.user import tariff_select_kb
     from bot.keyboards.admin import home_only_kb
     tariffs = get_all_tariffs(include_hidden=False)
     rub_tariffs = [t for t in tariffs if t.get('price_rub') and t['price_rub'] > 0]
@@ -153,7 +153,7 @@ async def pay_qr_select_tariff(callback: CallbackQuery):
         await callback.message.edit_text('📱 *QR-оплата*\n\n😔 Для QR-оплаты не настроены цены в рублях.\nОбратитесь к администратору.', reply_markup=home_only_kb(), parse_mode='Markdown')
         await callback.answer()
         return
-    await callback.message.edit_text('📱 *QR-оплата (Карта/СБП)*\n\nВыберите тариф:\n\n_Оплата через ЮКассу — поддерживает банковские карты и СБП._', reply_markup=qr_tariff_select_kb(rub_tariffs), parse_mode='Markdown')
+    await callback.message.edit_text('📱 *QR-оплата (Карта/СБП)*\n\nВыберите тариф:\n\n_Оплата через ЮКассу — поддерживает банковские карты и СБП._', reply_markup=tariff_select_kb(rub_tariffs, is_qr=True), parse_mode='Markdown')
     await callback.answer()
 
 @router.callback_query(F.data.startswith('qr_pay:'))
@@ -249,7 +249,17 @@ async def check_yookassa_payment(callback: CallbackQuery, state: FSMContext):
                             deduct_from_balance(user_internal_id, actual_deduct)
                             logger.info(f'Списано {actual_deduct} коп с баланса user {user_internal_id} при частичной QR-оплате')
                 await state.update_data(balance_to_deduct=0, remaining_cents=0)
-                await process_referral_reward(user_internal_id, days, remaining_cents, 'yookassa_qr')
+                # Определяем сумму для реферального вознаграждения:
+                # Если это частичная оплата (был баланс) — используем remaining_cents (сумму QR-платежа)
+                # Если это обычная оплата — берём полную цену тарифа из ордера
+                if remaining_cents > 0:
+                    referral_amount = remaining_cents
+                else:
+                    # Обычная QR-оплата без частичной — берём цену тарифа в копейках рублей
+                    from database.requests import get_tariff_by_id
+                    _tariff = get_tariff_by_id(updated_order.get('tariff_id'))
+                    referral_amount = int((_tariff.get('price_rub', 0) or 0) * 100) if _tariff else 0
+                await process_referral_reward(user_internal_id, days, referral_amount, 'yookassa_qr')
                 try:
                     await callback.message.delete()
                 except Exception:
@@ -275,20 +285,21 @@ async def check_yookassa_payment(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data.startswith('renew_qr_tariff:'))
 async def renew_qr_select_tariff(callback: CallbackQuery):
     """Выбор тарифа для QR-оплаты при продлении ключа."""
-    from database.requests import get_key_details_for_user, get_all_tariffs
-    from bot.keyboards.user import renew_yookassa_qr_tariff_kb
+    from database.requests import get_key_details_for_user
+    from bot.keyboards.user import renew_tariff_select_kb
     from bot.utils.text import escape_md
+    from bot.utils.groups import get_tariffs_for_renewal
     key_id = int(callback.data.split(':')[1])
     key = get_key_details_for_user(key_id, callback.from_user.id)
     if not key:
         await callback.answer('❌ Ключ не найден', show_alert=True)
         return
-    tariffs = get_all_tariffs(include_hidden=False)
+    tariffs = get_tariffs_for_renewal(key.get('tariff_id', 0))
     rub_tariffs = [t for t in tariffs if t.get('price_rub') and t['price_rub'] > 0]
     if not rub_tariffs:
         await callback.answer('😔 Нет тарифов с ценой в рублях', show_alert=True)
         return
-    await callback.message.edit_text(f"📱 *QR-оплата (Карта/СБП)*\n\n🔑 Ключ: *{escape_md(key['display_name'])}*\n\nВыберите тариф для продления:", reply_markup=renew_yookassa_qr_tariff_kb(rub_tariffs, key_id), parse_mode='Markdown')
+    await callback.message.edit_text(f"📱 *QR-оплата (Карта/СБП)*\n\n🔑 Ключ: *{escape_md(key['display_name'])}*\n\nВыберите тариф для продления:", reply_markup=renew_tariff_select_kb(rub_tariffs, key_id, is_qr=True), parse_mode='Markdown')
     await callback.answer()
 
 @router.callback_query(F.data.startswith('renew_pay_qr:'))

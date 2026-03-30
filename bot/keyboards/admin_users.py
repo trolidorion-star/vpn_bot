@@ -16,7 +16,8 @@ def users_menu_kb(stats: Dict[str, int]) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text=f"📋 Все пользователи ({stats.get('total', 0)})", callback_data='admin_users_list'))
     builder.row(InlineKeyboardButton(text='🔍 Выбрать пользователя', callback_data='admin_users_select'))
-    builder.row(InlineKeyboardButton(text='🔄 Синхронизировать ключи с панелью', callback_data='admin_sync_keys'))
+    builder.row(InlineKeyboardButton(text='📤 Выгрузить в панель (БД → Панель)', callback_data='admin_sync_db_to_panel'))
+    builder.row(InlineKeyboardButton(text='📥 Загрузить из панели (Панель → БД)', callback_data='admin_sync_panel_to_db'))
     builder.row(back_button('admin_panel'), home_button())
     return builder.as_markup()
 

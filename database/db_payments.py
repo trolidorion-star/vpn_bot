@@ -540,7 +540,7 @@ def get_referral_stats(user_id: int) -> List[Dict[str, Any]]:
         cursor = conn.execute("""
             SELECT 
                 level,
-                COUNT(*) as count,
+                COUNT(*) as paying_count,
                 COALESCE(SUM(total_reward_cents), 0) as total_reward_cents,
                 COALESCE(SUM(total_reward_days), 0) as total_reward_days
             FROM referral_stats
@@ -548,7 +548,41 @@ def get_referral_stats(user_id: int) -> List[Dict[str, Any]]:
             GROUP BY level
             ORDER BY level
         """, (user_id,))
-        return [dict(row) for row in cursor.fetchall()]
+        rewards = {row['level']: dict(row) for row in cursor.fetchall()}
+        
+        # Общее количество приглашенных по уровням
+        # Используем рекурсивный CTE (WITH RECURSIVE) для получения дерева рефералов
+        cursor = conn.execute("""
+            WITH RECURSIVE referral_tree(id, level) AS (
+                SELECT id, 1 
+                FROM users 
+                WHERE referred_by = ?
+                UNION ALL
+                SELECT u.id, rt.level + 1 
+                FROM users u
+                JOIN referral_tree rt ON u.referred_by = rt.id
+                WHERE rt.level < 10
+            )
+            SELECT level, COUNT(*) as total_count 
+            FROM referral_tree 
+            GROUP BY level
+        """, (user_id,))
+        counts = {row['level']: row['total_count'] for row in cursor.fetchall()}
+        
+        result = []
+        # Объединяем данные (и те, где есть вознаграждения, и те, где есть только регистрации)
+        all_levels = set(list(rewards.keys()) + list(counts.keys()))
+        for level in sorted(all_levels):
+            rew = rewards.get(level, {
+                'level': level,
+                'total_reward_cents': 0,
+                'total_reward_days': 0
+            })
+            # Заменяем 'count' на 'total_count', чтобы показывать всех приглашённых
+            rew['count'] = counts.get(level, 0)
+            result.append(rew)
+            
+        return result
 
 def update_referral_stat(
     referrer_id: int, 
