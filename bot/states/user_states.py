@@ -3,6 +3,7 @@ from aiogram.fsm.state import State, StatesGroup
 class UserStates(StatesGroup):
     # Example state
     waiting_for_vpn_key = State()
+    waiting_support_ticket_message = State()
 
 class RenameKey(StatesGroup):
     waiting_for_name = State()

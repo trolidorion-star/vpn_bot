@@ -29,11 +29,16 @@ __all__ = [
     'set_user_referrer',
     'get_user_referrer',
     'ensure_user_referral_code',
+    'mark_referral_first_payment_rewarded',
     'get_user_balance',
     'add_to_balance',
     'deduct_from_balance',
     'get_user_referral_coefficient',
     'set_user_referral_coefficient',
+    'count_direct_referrals',
+    'count_direct_paid_referrals',
+    'get_direct_referrals_conversion_stats',
+    'get_direct_referrals_with_purchase_info',
 ]
 
 def _generate_referral_code() -> str:
@@ -404,6 +409,107 @@ def set_user_referrer(user_id: int, referrer_id: int) -> bool:
             logger.info(f"Пользователь {user_id} привязан к рефереру {referrer_id}")
         return success
 
+def count_direct_referrals(referrer_id: int) -> int:
+    """
+    РџРѕР»СѓС‡РёС‚СЊ РєРѕР»РёС‡РµСЃС‚РІРѕ РїСЂСЏРјС‹С… СЂРµС„РµСЂР°Р»РѕРІ (С‚РѕР»СЊРєРѕ 1-С‹Р№ СѓСЂРѕРІРµРЅСЊ).
+    
+    Args:
+        referrer_id: Р’РЅСѓС‚СЂРµРЅРЅРёР№ ID СЂРµС„РµСЂРµСЂР°
+    
+    Returns:
+        РљРѕР»РёС‡РµСЃС‚РІРѕ РїРѕР»СЊР·РѕРІР°С‚РµР»РµР№ СЃ referred_by = referrer_id
+    """
+    with get_db() as conn:
+        cursor = conn.execute(
+            "SELECT COUNT(*) AS cnt FROM users WHERE referred_by = ?",
+            (referrer_id,),
+        )
+        row = cursor.fetchone()
+        return row["cnt"] if row else 0
+
+
+def count_direct_paid_referrals(referrer_id: int) -> int:
+    """
+    Количество прямых рефералов, у которых есть хотя бы одна успешная оплата.
+    """
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            SELECT COUNT(DISTINCT u.id) AS cnt
+            FROM users u
+            JOIN payments p ON p.user_id = u.id
+            WHERE u.referred_by = ?
+              AND p.status = 'paid'
+            """,
+            (referrer_id,),
+        )
+        row = cursor.fetchone()
+        return row["cnt"] if row else 0
+
+
+def get_direct_referrals_conversion_stats(referrer_id: int) -> Dict[str, Any]:
+    """
+    Сводная конверсия по прямым рефералам: перешли/оплатили/конверсия.
+    """
+    total = count_direct_referrals(referrer_id)
+    paid = count_direct_paid_referrals(referrer_id)
+    unpaid = max(0, total - paid)
+    conversion_percent = (paid / total * 100.0) if total > 0 else 0.0
+    return {
+        "total": total,
+        "paid": paid,
+        "unpaid": unpaid,
+        "conversion_percent": conversion_percent,
+    }
+
+def get_direct_referrals_with_purchase_info(referrer_id: int, limit: int = 10) -> List[Dict[str, Any]]:
+    """
+    РџРѕР»СѓС‡РёС‚СЊ РїСЂСЏРјС‹С… СЂРµС„РµСЂР°Р»РѕРІ СЃ РёРЅС„РѕСЂРјР°С†РёРµР№ Рѕ РїРѕСЃР»РµРґРЅРµР№ РѕРїР»Р°С‡РµРЅРЅРѕР№ РїРѕРґРїРёСЃРєРµ.
+    
+    Args:
+        referrer_id: Р’РЅСѓС‚СЂРµРЅРЅРёР№ ID СЂРµС„РµСЂРµСЂР°
+        limit: РњР°РєСЃРёРјСѓРј Р·Р°РїРёСЃРµР№
+    
+    Returns:
+        РЎРїРёСЃРѕРє СЃР»РѕРІР°СЂРµР№:
+        - telegram_id
+        - username
+        - created_at
+        - last_paid_at
+        - last_tariff_name
+    """
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            SELECT
+                u.id,
+                u.telegram_id,
+                u.username,
+                u.created_at,
+                (
+                    SELECT p.paid_at
+                    FROM payments p
+                    WHERE p.user_id = u.id AND p.status = 'paid'
+                    ORDER BY p.paid_at DESC
+                    LIMIT 1
+                ) AS last_paid_at,
+                (
+                    SELECT t.name
+                    FROM payments p
+                    LEFT JOIN tariffs t ON t.id = p.tariff_id
+                    WHERE p.user_id = u.id AND p.status = 'paid'
+                    ORDER BY p.paid_at DESC
+                    LIMIT 1
+                ) AS last_tariff_name
+            FROM users u
+            WHERE u.referred_by = ?
+            ORDER BY u.created_at DESC
+            LIMIT ?
+            """,
+            (referrer_id, limit),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
 def get_user_referrer(user_id: int) -> Optional[int]:
     """
     Получить ID пригласившего пользователя (referred_by).
@@ -458,6 +564,28 @@ def ensure_user_referral_code(user_id: int) -> str:
         )
         logger.info(f"Сгенерирован referral_code для user_id {user_id}: {referral_code}")
         return referral_code
+
+
+def mark_referral_first_payment_rewarded(user_id: int) -> bool:
+    """
+    Атомарно помечает, что по пользователю уже начислен реферальный бонус
+    за первую оплату.
+
+    Returns:
+        True, если флаг был установлен впервые (можно начислять бонус).
+        False, если флаг уже был установлен ранее.
+    """
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE users
+            SET referral_first_payment_rewarded = 1
+            WHERE id = ?
+              AND COALESCE(referral_first_payment_rewarded, 0) = 0
+            """,
+            (user_id,),
+        )
+        return cursor.rowcount > 0
 
 def get_user_balance(user_id: int) -> int:
     """

@@ -45,6 +45,10 @@ class AdminStates(StatesGroup):
     # ========== Реферальная система ==========
     referral_menu = State()          # Главное меню реферальной системы
     referral_level_edit = State()    # Редактирование уровня
+    referral_bonus_edit = State()    # Редактирование фиксированного бонуса за реферала
+    trial_hours_edit = State()       # Редактирование длительности trial в часах
+    flash_sale_menu = State()        # Меню акции/скидок
+    flash_sale_edit = State()        # Ввод значения для полей акции
     waiting_balance_amount = State()    # Ввод суммы баланса
     waiting_coefficient = State()        # Ввод коэффициента
     
@@ -52,6 +56,7 @@ class AdminStates(StatesGroup):
     waiting_for_message = State()    # Ожидание нового сообщения (единое для всех редакторов)
     waiting_for_link_url = State()   # Ожидание ввода URL ссылки
     waiting_for_link_button_name = State()  # Ожидание ввода названия кнопки-ссылки
+    waiting_support_ticket_reply = State()  # Ожидание ответа админа по тикету
     
     # ========== Управление тарифами ==========
     tariffs_list = State()           # Список тарифов

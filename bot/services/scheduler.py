@@ -24,7 +24,8 @@ from config import ADMIN_IDS, GITHUB_REPO_URL
 from database.requests import (
     get_all_servers, get_users_stats, get_keys_stats,
     get_daily_payments_stats, get_new_users_count_today,
-    get_setting, get_expiring_keys, is_notification_sent_today, log_notification_sent
+    get_setting, get_expiring_keys, is_notification_sent_today, log_notification_sent,
+    list_tickets_waiting_admin_reply, mark_ticket_sla_reminded
 )
 from bot.services.vpn_api import get_client_from_server_data, VPNAPIError, format_traffic
 from bot.utils.git_utils import check_for_updates
@@ -327,6 +328,91 @@ async def check_and_send_expiry_notifications(bot: Bot) -> None:
     
     except Exception as e:
         logger.error(f"Ошибка в check_and_send_expiry_notifications: {e}")
+
+
+async def check_support_ticket_sla(bot: Bot) -> None:
+    """
+    Проверяет тикеты поддержки, где пользователь ждёт ответа дольше SLA,
+    и отправляет напоминания администраторам.
+    """
+    try:
+        from bot.utils.text import escape_html
+
+        enabled = get_setting("support_sla_enabled", "1") == "1"
+        if not enabled:
+            return
+
+        response_minutes = int(get_setting("support_sla_response_minutes", "30") or "30")
+        remind_every_minutes = int(get_setting("support_sla_remind_every_minutes", "30") or "30")
+
+        response_minutes = max(1, response_minutes)
+        remind_every_minutes = max(1, remind_every_minutes)
+
+        tickets = list_tickets_waiting_admin_reply(
+            response_minutes=response_minutes,
+            remind_every_minutes=remind_every_minutes,
+            limit=30,
+        )
+        if not tickets:
+            return
+
+        for ticket in tickets:
+            ticket_id = ticket["id"]
+            username = ticket.get("username") or "no_username"
+            user_tg_id = ticket.get("user_telegram_id")
+            last_message = (ticket.get("last_message_text") or "").strip()
+            if len(last_message) > 180:
+                last_message = last_message[:180] + "..."
+
+            text = (
+                f"⏰ <b>SLA-напоминание по тикету #{ticket_id}</b>\n\n"
+                f"Пользователь ждёт ответа дольше <b>{response_minutes} мин</b>.\n"
+                f"User ID: <code>{user_tg_id}</code>\n"
+                f"Username: @{escape_html(str(username))}\n\n"
+                f"<b>Последнее сообщение:</b>\n{escape_html(last_message) if last_message else '—'}"
+            )
+
+            builder = InlineKeyboardBuilder()
+            builder.row(
+                InlineKeyboardButton(
+                    text=f"🎫 Открыть тикет #{ticket_id}",
+                    callback_data=f"admin_ticket_view:{ticket_id}",
+                )
+            )
+            kb = builder.as_markup()
+
+            for admin_id in ADMIN_IDS:
+                try:
+                    await bot.send_message(
+                        chat_id=admin_id,
+                        text=text,
+                        parse_mode="HTML",
+                        reply_markup=kb,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        f"Не удалось отправить SLA-напоминание админу {admin_id} по тикету #{ticket_id}: {e}"
+                    )
+
+            mark_ticket_sla_reminded(ticket_id)
+
+    except Exception as e:
+        logger.error(f"Ошибка проверки SLA тикетов: {e}")
+
+
+async def run_support_sla_scheduler(bot: Bot) -> None:
+    """Фоновая задача SLA-проверки тикетов поддержки (каждые 5 минут)."""
+    logger.info("🕐 Планировщик SLA тикетов поддержки запущен")
+    try:
+        # Небольшая задержка после старта бота
+        await asyncio.sleep(20)
+        while True:
+            await check_support_ticket_sla(bot)
+            await asyncio.sleep(300)
+    except asyncio.CancelledError:
+        logger.info("Планировщик SLA тикетов поддержки остановлен")
+    except Exception as e:
+        logger.error(f"Ошибка в планировщике SLA тикетов: {e}")
 
 
 def get_seconds_until(target_hour: int, target_minute: int = 0) -> int:

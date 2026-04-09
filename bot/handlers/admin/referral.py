@@ -20,6 +20,7 @@ from database.requests import (
     get_referral_levels,
     update_referral_level,
     update_referral_setting,
+    get_setting,
 )
 from bot.states.admin_states import AdminStates
 from bot.utils.admin import is_admin
@@ -43,6 +44,7 @@ async def show_referral_menu(callback: CallbackQuery, state: FSMContext):
     
     enabled = is_referral_enabled()
     reward_type = get_referral_reward_type()
+    fixed_bonus_rub = int(get_setting('referral_fixed_bonus_rub', '50') or '50')
     levels = get_referral_levels()
     from bot.utils.message_editor import get_message_data
     conditions_data = get_message_data('referral_conditions_text', '')
@@ -70,6 +72,9 @@ async def show_referral_menu(callback: CallbackQuery, state: FSMContext):
         status = "✅" if is_enabled else "⚪"
         text += f"{status} Уровень {level_num}: {percent}%\n"
     
+    if reward_type == 'balance':
+        text += f"\n💵 Фиксированный бонус за реферала: <b>{fixed_bonus_rub} ₽</b>\n"
+
     if conditions_text:
         text += f"\n📝 Текст условий задан\n"
     
@@ -77,7 +82,7 @@ async def show_referral_menu(callback: CallbackQuery, state: FSMContext):
     
     await safe_edit_or_send(callback.message, 
         text,
-        reply_markup=referral_main_kb(enabled, reward_type, levels)
+        reply_markup=referral_main_kb(enabled, reward_type, levels, fixed_bonus_rub)
     )
     await callback.answer()
 
@@ -126,6 +131,62 @@ async def referral_toggle_type(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Режим: На баланс")
     
     await show_referral_menu(callback, state)
+
+
+@router.callback_query(F.data == "admin_referral_bonus")
+async def referral_bonus_start(callback: CallbackQuery, state: FSMContext):
+    """Запрос нового фиксированного бонуса за реферала (в рублях)."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    current_value = int(get_setting('referral_fixed_bonus_rub', '50') or '50')
+    await state.set_state(AdminStates.referral_bonus_edit)
+
+    text = (
+        "💵 <b>Фиксированный бонус за реферала</b>\n\n"
+        f"Текущее значение: <b>{current_value} ₽</b>\n\n"
+        "Введите новое значение в рублях (1-100000):"
+    )
+    await safe_edit_or_send(
+        callback.message,
+        text,
+        reply_markup=referral_back_kb()
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.referral_bonus_edit)
+async def referral_bonus_input(message: Message, state: FSMContext):
+    """Сохранение фиксированного бонуса за реферала."""
+    if not is_admin(message.from_user.id):
+        return
+
+    from bot.utils.text import get_message_text_for_storage
+    raw = get_message_text_for_storage(message, 'plain').strip().replace(',', '.')
+
+    if not raw.replace('.', '', 1).isdigit():
+        await safe_edit_or_send(message, "❌ Введите число от 1 до 100000")
+        return
+
+    value = int(float(raw))
+    if value < 1 or value > 100000:
+        await safe_edit_or_send(message, "❌ Значение должно быть от 1 до 100000")
+        return
+
+    update_referral_setting('referral_fixed_bonus_rub', str(value))
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    await state.set_state(AdminStates.referral_menu)
+    await safe_edit_or_send(
+        message,
+        f"✅ Фиксированный бонус обновлён: <b>{value} ₽</b>",
+        reply_markup=back_and_home_kb('admin_referral')
+    )
 
 
 @router.callback_query(F.data.regexp(r"^admin_referral_level:(\d+)$"))

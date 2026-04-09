@@ -47,6 +47,7 @@ def admin_main_menu_kb() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text='⚙️ Настройки бота', callback_data='admin_bot_settings'),
         InlineKeyboardButton(text='📥 Скачать логи', callback_data='admin_logs_menu')
     )
+    builder.row(InlineKeyboardButton(text='🎫 Тикеты поддержки', callback_data='admin_support_tickets'))
     builder.row(InlineKeyboardButton(text='🤍 Поддержка автора', callback_data='admin_author_support', style='success'))
     builder.row(home_button())
     return builder.as_markup()
@@ -108,8 +109,7 @@ def author_support_kb() -> InlineKeyboardMarkup:
     """Клавиатура для экрана поддержки автора."""
     builder = InlineKeyboardBuilder()
     builder.row(
-        InlineKeyboardButton(text='💳 Карты РФ', url='https://yoomoney.ru/fundraise/1GJ73GGRJBC.260318'),
-        InlineKeyboardButton(text='💰 USDT', url='https://t.me/Ya_SellerBot?start=item-40')
+        InlineKeyboardButton(text='🎫 Тикеты поддержки', callback_data='admin_support_tickets')
     )
     builder.row(back_button('admin_panel'), home_button())
     return builder.as_markup()

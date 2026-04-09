@@ -6,7 +6,7 @@ from aiogram.types import Message, CallbackQuery, ReplyKeyboardMarkup, KeyboardB
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
 from config import ADMIN_IDS
-from database.requests import get_users_stats, get_all_users_paginated, get_user_by_telegram_id, toggle_user_ban, get_user_vpn_keys, get_user_payments_stats, get_vpn_key_by_id, extend_vpn_key, create_vpn_key_admin, get_active_servers, get_all_tariffs, get_user_balance, get_user_referral_coefficient, add_to_balance, deduct_from_balance, set_user_referral_coefficient
+from database.requests import get_users_stats, get_all_users_paginated, get_user_by_telegram_id, toggle_user_ban, get_user_vpn_keys, get_user_payments_stats, get_vpn_key_by_id, extend_vpn_key, create_vpn_key_admin, get_active_servers, get_all_tariffs, get_user_balance, get_user_referral_coefficient, add_to_balance, deduct_from_balance, set_user_referral_coefficient, count_direct_referrals, count_direct_paid_referrals, get_direct_referrals_with_purchase_info
 from bot.utils.admin import is_admin
 from bot.utils.text import escape_html, safe_edit_or_send
 from bot.states.admin_states import AdminStates
@@ -66,6 +66,9 @@ def _format_user_card(user: dict) -> tuple[str, any]:
     balance_cents = get_user_balance(user['id'])
     referral_coefficient = get_user_referral_coefficient(user['id'])
     vpn_keys = get_user_vpn_keys(user['id'])
+    direct_referrals_count = count_direct_referrals(user['id'])
+    direct_paid_referrals_count = count_direct_paid_referrals(user['id'])
+    direct_referrals = get_direct_referrals_with_purchase_info(user['id'], limit=5)
     
     lines = []
     if is_banned:
@@ -99,6 +102,23 @@ def _format_user_card(user: dict) -> tuple[str, any]:
     balance_rub = balance_cents / 100
     lines.append(f'💰 Баланс: <b>{balance_rub:.2f} ₽</b>')
     lines.append(f'📊 Реферальный коэффициент: <b>{referral_coefficient}x</b>')
+    lines.append(f'🧲 Прямые рефералы: <b>{direct_referrals_count}</b>')
+    lines.append(f'💳 Оплатили подписку: <b>{direct_paid_referrals_count}</b>')
+    if direct_referrals_count > 0:
+        conversion = (direct_paid_referrals_count / direct_referrals_count) * 100
+        lines.append(f'📈 Конверсия: <b>{conversion:.1f}%</b>')
+    if direct_referrals:
+        lines.append('  <b>Последние приглашённые:</b>')
+        for ref in direct_referrals:
+            username_ref = ref.get('username')
+            if username_ref:
+                user_display_ref = f"@{escape_html(username_ref)}"
+            else:
+                user_display_ref = f"ID {ref.get('telegram_id')}"
+            tariff_name = escape_html(ref.get('last_tariff_name') or 'нет оплат')
+            lines.append(
+                f"  • {user_display_ref} | <code>{ref.get('telegram_id')}</code> | {tariff_name}"
+            )
     lines.append('')
     if vpn_keys:
         lines.append(f'🔑 <b>VPN-ключи ({len(vpn_keys)}):</b>')

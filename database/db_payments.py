@@ -38,6 +38,7 @@ __all__ = [
     'get_referral_reward_type',
     'get_referral_conditions_text',
     'update_referral_setting',
+    'get_user_paid_payments_count',
 ]
 
 def save_yookassa_payment_id(order_id: str, yookassa_payment_id: str) -> bool:
@@ -198,6 +199,21 @@ def get_daily_payments_stats() -> Dict[str, Any]:
             'paid_rub': total_rub,
             'pending_count': 0 
         }
+
+
+def get_user_paid_payments_count(user_id: int) -> int:
+    """Количество успешных оплат пользователя."""
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM payments
+            WHERE user_id = ? AND status = 'paid'
+            """,
+            (user_id,),
+        )
+        row = cursor.fetchone()
+        return int(row['cnt']) if row else 0
 
 def get_key_payments_history(key_id: int) -> List[Dict[str, Any]]:
     """

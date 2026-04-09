@@ -72,6 +72,7 @@ __all__ = [
     'trial_settings_kb',
     'trial_tariff_select_kb',
     'trial_edit_text_cancel_kb',
+    'flash_sale_menu_kb',
     'referral_main_kb',
     'referral_level_kb',
     'referral_back_kb',

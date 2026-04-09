@@ -28,7 +28,7 @@ def _add_column(conn: sqlite3.Connection, table: str, column_def: str) -> None:
 
 
 # Текущая версия схемы БД
-LATEST_VERSION = 16
+LATEST_VERSION = 21
 
 
 def get_current_version() -> int:
@@ -1361,6 +1361,156 @@ def migration_16(conn: sqlite3.Connection) -> None:
     logger.info("Миграция v16 применена")
 
 
+def migration_17(conn: sqlite3.Connection) -> None:
+    """
+    Migration v17:
+    - Adds support tickets tables.
+    - Adds help links for privacy policy and terms of service.
+    """
+    logger.info("Applying migration v17 (support tickets + legal links)...")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS support_tickets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            user_telegram_id INTEGER NOT NULL,
+            username TEXT,
+            status TEXT NOT NULL DEFAULT 'open',
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_support_tickets_status ON support_tickets(status)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_support_tickets_user_id ON support_tickets(user_id)"
+    )
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS support_ticket_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticket_id INTEGER NOT NULL,
+            sender_role TEXT NOT NULL,
+            sender_telegram_id INTEGER NOT NULL,
+            text TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (ticket_id) REFERENCES support_tickets(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_support_ticket_messages_ticket_id ON support_ticket_messages(ticket_id)"
+    )
+
+    legal_settings = [
+        ("privacy_policy_link", "https://telegra.ph/Politika-konfidencialnosti-04-01-26"),
+        ("terms_of_service_link", "https://telegra.ph/Polzovatelskoe-soglashenie-04-01-19"),
+    ]
+    for key, value in legal_settings:
+        conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+            (key, value),
+        )
+
+    logger.info("Migration v17 applied")
+
+
+def migration_18(conn: sqlite3.Connection) -> None:
+    """
+    Migration v18:
+    - Adds fixed referral bonus setting for balance mode.
+    """
+    logger.info("Applying migration v18 (fixed referral bonus setting)...")
+
+    conn.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+        ("referral_fixed_bonus_rub", "50"),
+    )
+
+    logger.info("Migration v18 applied")
+
+
+def migration_19(conn: sqlite3.Connection) -> None:
+    """
+    Migration v19:
+    - Adds flash sale settings with timer.
+    """
+    logger.info("Applying migration v19 (flash sale settings)...")
+
+    defaults = [
+        ("flash_sale_enabled", "0"),
+        ("flash_sale_price_rub", "249"),
+        ("flash_sale_base_price_rub", "300"),
+        ("flash_sale_duration_hours", "24"),
+        ("flash_sale_auto_restart", "0"),
+        ("flash_sale_started_at", ""),
+        ("flash_sale_promo_code", "FLASH24"),
+    ]
+    for key, value in defaults:
+        conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+            (key, value),
+        )
+
+    logger.info("Migration v19 applied")
+
+
+def migration_20(conn: sqlite3.Connection) -> None:
+    """
+    Migration v20:
+    - Adds trial duration override in hours (default 1 hour).
+    """
+    logger.info("Applying migration v20 (trial hours override)...")
+
+    conn.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+        ("trial_duration_hours_override", "1"),
+    )
+
+    logger.info("Migration v20 applied")
+
+
+def migration_21(conn: sqlite3.Connection) -> None:
+    """
+    Migration v21:
+    - Adds support SLA reminder fields/settings.
+    - Adds one-time referral reward marker for first paid referral purchase.
+    """
+    logger.info("Applying migration v21 (support SLA + referral first-payment marker)...")
+
+    # support_tickets.last_sla_reminded_at
+    try:
+        conn.execute("ALTER TABLE support_tickets ADD COLUMN last_sla_reminded_at DATETIME")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" not in str(e):
+            raise
+
+    # users.referral_first_payment_rewarded
+    try:
+        conn.execute("ALTER TABLE users ADD COLUMN referral_first_payment_rewarded INTEGER DEFAULT 0")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" not in str(e):
+            raise
+
+    support_sla_settings = [
+        ("support_sla_enabled", "1"),
+        ("support_sla_response_minutes", "30"),
+        ("support_sla_remind_every_minutes", "30"),
+    ]
+    for key, value in support_sla_settings:
+        conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+            (key, value),
+        )
+
+    logger.info("Migration v21 applied")
+
+
 MIGRATIONS = {
     1: migration_1,
     2: migration_2,
@@ -1378,6 +1528,11 @@ MIGRATIONS = {
     14: migration_14,
     15: migration_15,
     16: migration_16,
+    17: migration_17,
+    18: migration_18,
+    19: migration_19,
+    20: migration_20,
+    21: migration_21,
 }
 
 

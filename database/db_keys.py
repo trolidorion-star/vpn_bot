@@ -31,6 +31,7 @@ __all__ = [
     'get_key_details_for_user',
     'update_key_custom_name',
     'add_days_to_first_active_key',
+    'set_key_expiration_hours',
     'get_user_by_panel_email',
 ]
 
@@ -613,6 +614,32 @@ def add_days_to_first_active_key(user_id: int, days: int) -> bool:
         
         logger.info(f"Ключ {key_id} пользователя {user_id} продлён на {days} дней (реферальное вознаграждение)")
         return True
+
+def set_key_expiration_hours(key_id: int, hours: int) -> bool:
+    """
+    Установить срок действия ключа как now + N часов.
+
+    Args:
+        key_id: ID ключа
+        hours: Количество часов (>=1)
+
+    Returns:
+        True если ключ обновлён
+    """
+    if hours < 1:
+        return False
+
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE vpn_keys
+            SET expires_at = datetime('now', '+' || ? || ' hours')
+            WHERE id = ?
+            """,
+            (hours, key_id),
+        )
+        return cursor.rowcount > 0
+
 
 def get_user_by_panel_email(email: str) -> Optional[Dict[str, Any]]:
     """

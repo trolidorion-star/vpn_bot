@@ -15,6 +15,7 @@ from aiogram.filters import StateFilter
 from bot.states.admin_states import AdminStates
 from bot.utils.admin import is_admin
 from bot.utils.text import escape_html, safe_edit_or_send
+from bot.keyboards.admin import back_and_home_kb
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ async def show_trial_menu(callback: CallbackQuery):
 
     enabled = is_trial_enabled()
     tariff_id = get_trial_tariff_id()
+    trial_hours = int(get_setting('trial_duration_hours_override', '1') or '1')
     tariff_name = None
 
     if tariff_id:
@@ -51,7 +53,8 @@ async def show_trial_menu(callback: CallbackQuery):
         "🎁 <b>Пробная подписка</b>\n\n"
         "Управление функцией пробного доступа для новых пользователей.\n\n"
         f"📌 <b>Статус:</b> {escape_html(status_text)}\n"
-        f"📋 <b>Тариф:</b> {tariff_text}\n\n"
+        f"📋 <b>Тариф:</b> {tariff_text}\n"
+        f"⏱ <b>Длительность trial:</b> {trial_hours} ч\n\n"
         "❓ <b>Как работает:</b>\n"
         "• Если включено и тариф задан — кнопка «🎁 Пробная подписка» появляется на главной у пользователей, которые ещё не использовали пробный период.\n"
         "• При активации — пользователю выдаётся ключ с выбранным тарифом.\n"
@@ -60,7 +63,7 @@ async def show_trial_menu(callback: CallbackQuery):
 
     await safe_edit_or_send(callback.message, 
         text,
-        reply_markup=trial_settings_kb(enabled, tariff_name)
+        reply_markup=trial_settings_kb(enabled, tariff_name, trial_hours)
     )
     await callback.answer()
 
@@ -179,3 +182,57 @@ async def admin_trial_set_tariff(callback: CallbackQuery):
 
     await callback.answer(f"✅ Тариф «{tariff['name']}» выбран", show_alert=False)
     await show_trial_menu(callback)
+
+
+@router.callback_query(F.data == "admin_trial_edit_hours")
+async def admin_trial_edit_hours_start(callback: CallbackQuery, state: FSMContext):
+    """Запрашивает новую длительность trial в часах."""
+    if not is_admin(callback.from_user.id):
+        return
+
+    from database.requests import get_setting
+
+    current_hours = int(get_setting('trial_duration_hours_override', '1') or '1')
+    await state.set_state(AdminStates.trial_hours_edit)
+
+    await safe_edit_or_send(
+        callback.message,
+        "⏱ <b>Длительность пробной подписки</b>\n\n"
+        f"Текущее значение: <b>{current_hours} ч</b>\n\n"
+        "Введите новое значение в часах (1-168):",
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.trial_hours_edit)
+async def admin_trial_edit_hours_save(message: Message, state: FSMContext):
+    """Сохраняет длительность trial в часах."""
+    if not is_admin(message.from_user.id):
+        return
+
+    from database.requests import set_setting
+    from bot.utils.text import get_message_text_for_storage
+
+    raw = get_message_text_for_storage(message, 'plain').strip()
+    if not raw.isdigit():
+        await safe_edit_or_send(message, "❌ Введите целое число часов (1-168)")
+        return
+
+    hours = int(raw)
+    if hours < 1 or hours > 168:
+        await safe_edit_or_send(message, "❌ Допустимый диапазон: 1-168 часов")
+        return
+
+    set_setting('trial_duration_hours_override', str(hours))
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    await state.clear()
+    await safe_edit_or_send(
+        message,
+        f"✅ Длительность trial обновлена: <b>{hours} ч</b>",
+        reply_markup=back_and_home_kb('admin_trial'),
+    )

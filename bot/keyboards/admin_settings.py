@@ -12,11 +12,33 @@ def bot_settings_kb() -> InlineKeyboardMarkup:
     builder.row(InlineKeyboardButton(text='🔄 Обновления', callback_data='admin_update_bot'))
     builder.row(InlineKeyboardButton(text='✏️ Изменить тексты', callback_data='admin_edit_texts'))
     builder.row(InlineKeyboardButton(text='🔗 Реферальная система', callback_data='admin_referral'))
+    builder.row(InlineKeyboardButton(text='🔥 Акция и скидки', callback_data='admin_flash_sale'))
     builder.row(InlineKeyboardButton(text='🛑 Остановить бота', callback_data='admin_stop_bot'))
     builder.row(back_button('admin_panel'), home_button())
     return builder.as_markup()
 
-def trial_settings_kb(enabled: bool, tariff_name: Optional[str]=None) -> InlineKeyboardMarkup:
+
+def flash_sale_menu_kb(enabled: bool, auto_restart: bool) -> InlineKeyboardMarkup:
+    """Клавиатура управления флеш-акцией."""
+    builder = InlineKeyboardBuilder()
+    toggle_text = "🟢 Выключить акцию" if enabled else "⚪ Включить акцию"
+    auto_text = "🔁 Автоперезапуск: ВКЛ" if auto_restart else "⏹ Автоперезапуск: ВЫКЛ"
+
+    builder.row(InlineKeyboardButton(text=toggle_text, callback_data="admin_flash_sale_toggle"))
+    builder.row(InlineKeyboardButton(text=auto_text, callback_data="admin_flash_sale_toggle_auto"))
+    builder.row(InlineKeyboardButton(text="💵 Акционная цена (₽)", callback_data="admin_flash_sale_edit_price"))
+    builder.row(InlineKeyboardButton(text="🏷 Базовая цена (₽)", callback_data="admin_flash_sale_edit_base"))
+    builder.row(InlineKeyboardButton(text="⏱ Длительность (часы)", callback_data="admin_flash_sale_edit_duration"))
+    builder.row(InlineKeyboardButton(text="🎫 Промокод", callback_data="admin_flash_sale_edit_promo"))
+    builder.row(InlineKeyboardButton(text="♻️ Перезапустить таймер", callback_data="admin_flash_sale_restart"))
+    builder.row(back_button("admin_bot_settings"), home_button())
+    return builder.as_markup()
+
+def trial_settings_kb(
+    enabled: bool,
+    tariff_name: Optional[str] = None,
+    trial_hours: Optional[int] = None,
+) -> InlineKeyboardMarkup:
     """
     Клавиатура управления пробной подпиской.
     
@@ -33,6 +55,13 @@ def trial_settings_kb(enabled: bool, tariff_name: Optional[str]=None) -> InlineK
     builder.row(InlineKeyboardButton(text='✏️ Изменить текст', callback_data='admin_trial_edit_text'))
     tariff_label = tariff_name if tariff_name else 'не задан'
     builder.row(InlineKeyboardButton(text=f'📋 Тариф: {tariff_label}', callback_data='admin_trial_select_tariff'))
+    if trial_hours is not None:
+        builder.row(
+            InlineKeyboardButton(
+                text=f'⏱ Длительность trial: {trial_hours} ч',
+                callback_data='admin_trial_edit_hours'
+            )
+        )
     builder.row(back_button('admin_panel'), home_button())
     return builder.as_markup()
 
@@ -63,7 +92,12 @@ def trial_edit_text_cancel_kb() -> InlineKeyboardMarkup:
     builder.row(InlineKeyboardButton(text='❌ Отмена', callback_data='admin_trial'))
     return builder.as_markup()
 
-def referral_main_kb(enabled: bool, reward_type: str, levels: List[Dict[str, Any]]) -> InlineKeyboardMarkup:
+def referral_main_kb(
+    enabled: bool,
+    reward_type: str,
+    levels: List[Dict[str, Any]],
+    fixed_bonus_rub: int = 50
+) -> InlineKeyboardMarkup:
     """
     Главное меню реферальной системы.
     
@@ -80,6 +114,13 @@ def referral_main_kb(enabled: bool, reward_type: str, levels: List[Dict[str, Any
     else:
         type_text = '💰 Режим: На баланс'
     builder.row(InlineKeyboardButton(text=type_text, callback_data='admin_referral_toggle_type'))
+    if reward_type == 'balance':
+        builder.row(
+            InlineKeyboardButton(
+                text=f'💵 Бонус за реферала: {fixed_bonus_rub} ₽',
+                callback_data='admin_referral_bonus'
+            )
+        )
     for level in levels:
         level_num = level['level_number']
         percent = level['percent']

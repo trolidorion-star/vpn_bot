@@ -91,10 +91,8 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
         except Exception as e:
             from bot.errors import TariffNotFoundError
             if isinstance(e, TariffNotFoundError):
-                from bot.database.requests import get_setting
                 from bot.keyboards.user import support_kb
-                support_link = get_setting('support_channel_link', 'https://t.me/YadrenoChat')
-                await safe_edit_or_send(message, str(e), reply_markup=support_kb(support_link), force_new=True)
+                await safe_edit_or_send(message, str(e), reply_markup=support_kb(), force_new=True)
             else:
                 logger.exception(f'Ошибка обработки платежа: {e}')
                 await safe_edit_or_send(message, '❌ Произошла ошибка при обработке платежа.', force_new=True)
@@ -158,18 +156,30 @@ async def show_help(message: 'Message', is_callback: bool = False):
     help_data = get_message_data('help_page_text', '❓ <b>Справка</b>')
     help_photo = help_data.get('photo_file_id')
     default_news = 'https://t.me/YadrenoRu'
-    default_support = 'https://t.me/YadrenoChat'
+    default_privacy = 'https://telegra.ph/Politika-konfidencialnosti-04-01-26'
+    default_terms = 'https://telegra.ph/Polzovatelskoe-soglashenie-04-01-19'
     news_link = get_setting('news_channel_link', default_news)
-    support_link = get_setting('support_channel_link', default_support)
+    privacy_link = get_setting('privacy_policy_link', default_privacy)
+    terms_link = get_setting('terms_of_service_link', default_terms)
     if not news_link or not news_link.startswith(('http://', 'https://')):
         news_link = default_news
-    if not support_link or not support_link.startswith(('http://', 'https://')):
-        support_link = default_support
+    if not privacy_link or not privacy_link.startswith(('http://', 'https://')):
+        privacy_link = default_privacy
+    if not terms_link or not terms_link.startswith(('http://', 'https://')):
+        terms_link = default_terms
     news_hidden = get_setting('news_hidden', '0') == '1'
     support_hidden = get_setting('support_hidden', '0') == '1'
     news_name = get_setting('news_button_name', 'Новости')
     support_name = get_setting('support_button_name', 'Поддержка')
-    kb = help_kb(news_link, support_link, news_hidden=news_hidden, support_hidden=support_hidden, news_name=news_name, support_name=support_name)
+    kb = help_kb(
+        news_link,
+        news_hidden=news_hidden,
+        support_hidden=support_hidden,
+        news_name=news_name,
+        support_name=support_name,
+        privacy_link=privacy_link,
+        terms_link=terms_link,
+    )
     if is_callback:
         await send_editor_message(message, data=help_data, default_text='❓ <b>Справка</b>', reply_markup=kb)
     else:

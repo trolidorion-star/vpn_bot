@@ -45,7 +45,7 @@ async def show_trial_subscription(callback: CallbackQuery):
 @router.callback_query(F.data == 'trial_activate')
 async def activate_trial_subscription(callback: CallbackQuery, state: FSMContext):
     """Активирует пробную подписку: создаёт ключ через стандартный механизм."""
-    from database.requests import is_trial_enabled, get_trial_tariff_id, has_used_trial, get_tariff_by_id, get_or_create_user, mark_trial_used, create_initial_vpn_key, create_pending_order, complete_order
+    from database.requests import is_trial_enabled, get_trial_tariff_id, has_used_trial, get_tariff_by_id, get_or_create_user, mark_trial_used, create_initial_vpn_key, create_pending_order, complete_order, set_key_expiration_hours, get_setting
     from bot.handlers.user.payments.keys_config import start_new_key_config
     from bot.keyboards.admin import home_only_kb
     user_id = callback.from_user.id
@@ -70,6 +70,9 @@ async def activate_trial_subscription(callback: CallbackQuery, state: FSMContext
     duration_days = tariff['duration_days']
     traffic_limit_bytes = (tariff.get('traffic_limit_gb', 0) or 0) * 1024 ** 3
     key_id = create_initial_vpn_key(internal_user_id, tariff_id, duration_days, traffic_limit=traffic_limit_bytes)
+    trial_hours_override = int(get_setting('trial_duration_hours_override', '1') or '1')
+    if trial_hours_override > 0:
+        set_key_expiration_hours(key_id, trial_hours_override)
     (_, order_id) = create_pending_order(user_id=internal_user_id, tariff_id=tariff_id, payment_type='trial', vpn_key_id=key_id)
     complete_order(order_id)
     await state.update_data(new_key_order_id=order_id, new_key_id=key_id)

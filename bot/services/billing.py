@@ -23,7 +23,8 @@ from database.requests import (
     is_referral_enabled, get_referral_reward_type, get_active_referral_levels,
     get_user_referrer, get_user_referral_coefficient, get_user_balance,
     add_to_balance, deduct_from_balance, add_days_to_first_active_key,
-    update_referral_stat
+    update_referral_stat, get_user_paid_payments_count,
+    mark_referral_first_payment_rewarded
 )
 from bot.services.exchange_rate import get_usd_rub_rate
 
@@ -646,45 +647,55 @@ async def process_referral_reward(
     if not levels:
         return
     
-    usd_rub_rate = await get_usd_rub_rate()
-    amount_rub_cents = convert_to_rub_cents(amount_raw, payment_type, usd_rub_rate)
-    
-    current_user_id = payer_id
-    
     from bot.services.user_locks import user_locks
-    
+
+    if reward_type == 'balance':
+        # В режиме "баланс" даём фиксированный бонус только прямому пригласившему.
+        direct_referrer_id = get_user_referrer(payer_id)
+        if not direct_referrer_id:
+            return
+
+        # Бонус за реферала начисляется только за первую успешную оплату этого пользователя.
+        # Если оплата уже не первая, бонус повторно не начисляем.
+        if get_user_paid_payments_count(payer_id) != 1:
+            return
+        if not mark_referral_first_payment_rewarded(payer_id):
+            return
+
+        fixed_bonus_rub = int(get_setting('referral_fixed_bonus_rub', '50') or '50')
+        fixed_bonus_cents = max(0, fixed_bonus_rub * 100)
+        if fixed_bonus_cents <= 0:
+            return
+
+        async with user_locks[direct_referrer_id]:
+            add_to_balance(direct_referrer_id, fixed_bonus_cents)
+
+        update_referral_stat(
+            direct_referrer_id, payer_id, 1,
+            fixed_bonus_cents, 0
+        )
+        return
+
+    current_user_id = payer_id
+
     for level_num, percent in levels:
         referrer_id = get_user_referrer(current_user_id)
         if not referrer_id:
             break
-        
+
         coefficient = get_user_referral_coefficient(referrer_id)
-        
-        if reward_type == 'balance':
-            base_reward = amount_rub_cents * (percent / 100)
-            final_reward = int(base_reward * coefficient)
-            final_reward = round(final_reward / 100) * 100
-            
-            if final_reward > 0:
-                async with user_locks[referrer_id]:
-                    add_to_balance(referrer_id, final_reward)
-            
-            reward_days = 0
-        else:
-            base_days = period_days * (percent / 100)
-            final_days = base_days * coefficient
-            reward_days = math.ceil(final_days)
-            
-            if reward_days > 0:
-                add_days_to_first_active_key(referrer_id, reward_days)
-            
-            final_reward = 0
-        
+        base_days = period_days * (percent / 100)
+        final_days = base_days * coefficient
+        reward_days = math.ceil(final_days)
+
+        if reward_days > 0:
+            add_days_to_first_active_key(referrer_id, reward_days)
+
         update_referral_stat(
             referrer_id, payer_id, level_num,
-            final_reward, reward_days
+            0, reward_days
         )
-        
+
         current_user_id = referrer_id
 
 
@@ -782,8 +793,7 @@ async def complete_payment_flow(
         from bot.errors import TariffNotFoundError
         if isinstance(e, TariffNotFoundError):
             from bot.keyboards.user import support_kb
-            support_link = get_setting('support_channel_link', 'https://t.me/YadrenoChat')
-            await message.answer(str(e), reply_markup=support_kb(support_link), parse_mode='HTML')
+            await message.answer(str(e), reply_markup=support_kb(), parse_mode='HTML')
         else:
             logger.exception(f'Ошибка обработки {payment_type} платежа: {e}')
             await message.answer('❌ Произошла ошибка при обработке платежа.', parse_mode='HTML')

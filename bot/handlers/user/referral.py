@@ -17,6 +17,9 @@ from database.requests import (
     get_user_balance,
     ensure_user_referral_code,
     get_active_referral_levels,
+    count_direct_referrals,
+    count_direct_paid_referrals,
+    get_direct_referrals_with_purchase_info,
 )
 from bot.keyboards.user import referral_menu_kb
 from bot.utils.text import safe_edit_or_send, escape_html
@@ -43,7 +46,7 @@ DEFAULT_CONDITIONS_DAYS = (
 
 DEFAULT_CONDITIONS_BALANCE = (
     "Приглашённые пользователи регистрируются по вашей ссылке. "
-    "Когда они оплачивают подписку, вы получаете процент от суммы оплаты на свой баланс. "
+    "Когда они впервые оплачивают подписку, вы получаете фиксированный бонус на баланс. "
     "Накопленными средствами можно оплачивать новые ключи или продлевать существующие."
 )
 
@@ -75,6 +78,9 @@ async def show_referral_system(callback: CallbackQuery):
     active_levels = get_active_referral_levels()
     stats = get_referral_stats(user_internal_id)
     balance = get_user_balance(user_internal_id)
+    direct_referrals_count = count_direct_referrals(user_internal_id)
+    direct_paid_referrals_count = count_direct_paid_referrals(user_internal_id)
+    direct_referrals = get_direct_referrals_with_purchase_info(user_internal_id, limit=5)
     
     # Весь текст в HTML
     text_lines = [
@@ -126,6 +132,29 @@ async def show_referral_system(callback: CallbackQuery):
         text_lines.append(f"💰 <b>Ваш баланс:</b> {escape_html(format_price_compact(balance))}")
         text_lines.append("")
     
+    text_lines.append("━━━━━━━━━━━━━━━")
+    text_lines.append("🧲 <b>Прямые рефералы:</b>")
+    text_lines.append(f"Всего приглашено: <b>{escape_html(str(direct_referrals_count))}</b>")
+    text_lines.append(f"Оплатили подписку: <b>{escape_html(str(direct_paid_referrals_count))}</b>")
+    if direct_referrals_count > 0:
+        conversion = (direct_paid_referrals_count / direct_referrals_count) * 100
+        text_lines.append(f"Конверсия: <b>{escape_html(f'{conversion:.1f}%')}</b>")
+    if direct_referrals:
+        text_lines.append("")
+        text_lines.append("<b>Последние приглашённые:</b>")
+        for ref in direct_referrals:
+            username = ref.get("username")
+            if username:
+                user_display = f"@{username}"
+            else:
+                user_display = f"ID {ref.get('telegram_id')}"
+            tariff_name = ref.get("last_tariff_name") or "нет оплат"
+            text_lines.append(
+                f"• {escape_html(user_display)} | "
+                f"<code>{escape_html(str(ref.get('telegram_id')))}</code> | "
+                f"{escape_html(tariff_name)}"
+            )
+
     text = "\n".join(text_lines)
     
     await safe_edit_or_send(callback.message, 

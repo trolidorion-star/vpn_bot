@@ -7,6 +7,12 @@ from aiogram.fsm.context import FSMContext
 from bot.utils.text import escape_html, safe_edit_or_send
 from config import ADMIN_IDS
 from bot.handlers.user.payments.base import finalize_payment_ui
+from bot.services.flash_sale import (
+    apply_flash_sale_to_tariff,
+    apply_flash_sale_to_tariffs,
+    format_remaining_hms,
+    get_flash_sale_state,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,11 +28,19 @@ async def pay_cards_select_tariff(callback: CallbackQuery):
     if ':' in callback.data:
         order_id = callback.data.split(':')[1]
     tariffs = get_all_tariffs(include_hidden=False)
+    tariffs = apply_flash_sale_to_tariffs(tariffs)
     if not tariffs:
         await safe_edit_or_send(callback.message, '💳 <b>Оплата картой</b>\n\n😔 Нет доступных тарифов.\n\nПопробуйте позже или обратитесь в поддержку.', reply_markup=home_only_kb())
         await callback.answer()
         return
-    await safe_edit_or_send(callback.message, '💳 <b>Оплата картой</b>\n\nВыберите тариф:', reply_markup=tariff_select_kb(tariffs, order_id=order_id, is_cards=True))
+    sale = get_flash_sale_state()
+    sale_line = ""
+    if sale["active"]:
+        sale_line = (
+            f"\n🔥 Акция: {sale['sale_price_rub']} ₽ вместо {sale['base_price_rub']} ₽\n"
+            f"⏱ До конца: {format_remaining_hms(sale['remaining_seconds'])}\n"
+        )
+    await safe_edit_or_send(callback.message, f'💳 <b>Оплата картой</b>{sale_line}\nВыберите тариф:', reply_markup=tariff_select_kb(tariffs, order_id=order_id, is_cards=True))
     await callback.answer()
 
 @router.callback_query(F.data.startswith('cards_pay:'))
@@ -38,6 +52,7 @@ async def pay_cards_invoice(callback: CallbackQuery):
     tariff_id = int(parts[1])
     order_id = parts[2] if len(parts) > 2 else None
     tariff = get_tariff_by_id(tariff_id)
+    tariff = apply_flash_sale_to_tariff(tariff) if tariff else None
     if not tariff:
         await callback.answer('❌ Тариф не найден', show_alert=True)
         return
@@ -89,10 +104,18 @@ async def renew_cards_select_tariff(callback: CallbackQuery):
         return
     from bot.utils.groups import get_tariffs_for_renewal
     tariffs = get_tariffs_for_renewal(key.get('tariff_id', 0))
+    tariffs = apply_flash_sale_to_tariffs(tariffs)
     if not tariffs:
         await callback.answer('Нет доступных тарифов', show_alert=True)
         return
-    await safe_edit_or_send(callback.message, f"💳 <b>Оплата картой</b>\n\n🔑 Ключ: <b>{escape_html(key['display_name'])}</b>\n\nВыберите тариф для продления:", reply_markup=renew_tariff_select_kb(tariffs, key_id, order_id=order_id, is_cards=True))
+    sale = get_flash_sale_state()
+    sale_line = ""
+    if sale["active"]:
+        sale_line = (
+            f"\n🔥 Акция: {sale['sale_price_rub']} ₽ вместо {sale['base_price_rub']} ₽\n"
+            f"⏱ До конца: {format_remaining_hms(sale['remaining_seconds'])}\n"
+        )
+    await safe_edit_or_send(callback.message, f"💳 <b>Оплата картой</b>\n\n🔑 Ключ: <b>{escape_html(key['display_name'])}</b>{sale_line}\nВыберите тариф для продления:", reply_markup=renew_tariff_select_kb(tariffs, key_id, order_id=order_id, is_cards=True))
     await callback.answer()
 
 @router.callback_query(F.data.startswith('renew_pay_cards:'))
@@ -105,6 +128,7 @@ async def renew_cards_invoice(callback: CallbackQuery):
     tariff_id = int(parts[2])
     order_id = parts[3] if len(parts) > 3 else None
     tariff = get_tariff_by_id(tariff_id)
+    tariff = apply_flash_sale_to_tariff(tariff) if tariff else None
     key = get_key_details_for_user(key_id, callback.from_user.id)
     if not tariff or not key:
         await callback.answer('Ошибка тарифа или ключа', show_alert=True)
@@ -147,12 +171,20 @@ async def pay_qr_select_tariff(callback: CallbackQuery):
     from bot.keyboards.user import tariff_select_kb
     from bot.keyboards.admin import home_only_kb
     tariffs = get_all_tariffs(include_hidden=False)
+    tariffs = apply_flash_sale_to_tariffs(tariffs)
     rub_tariffs = [t for t in tariffs if t.get('price_rub') and t['price_rub'] > 0]
     if not rub_tariffs:
         await safe_edit_or_send(callback.message, '📱 <b>QR-оплата</b>\n\n😔 Для QR-оплаты не настроены цены в рублях.\nОбратитесь к администратору.', reply_markup=home_only_kb())
         await callback.answer()
         return
-    await safe_edit_or_send(callback.message, '📱 <b>QR-оплата (Карта/СБП)</b>\n\nВыберите тариф:\n\n<i>Оплата через ЮКассу — поддерживает банковские карты и СБП.</i>', reply_markup=tariff_select_kb(rub_tariffs, is_qr=True))
+    sale = get_flash_sale_state()
+    sale_line = ""
+    if sale["active"]:
+        sale_line = (
+            f"\n🔥 Акция: {sale['sale_price_rub']} ₽ вместо {sale['base_price_rub']} ₽\n"
+            f"⏱ До конца: {format_remaining_hms(sale['remaining_seconds'])}\n"
+        )
+    await safe_edit_or_send(callback.message, f'📱 <b>QR-оплата (Карта/СБП)</b>{sale_line}\nВыберите тариф:\n\n<i>Оплата через ЮКассу — поддерживает банковские карты и СБП.</i>', reply_markup=tariff_select_kb(rub_tariffs, is_qr=True))
     await callback.answer()
 
 @router.callback_query(F.data.startswith('qr_pay:'))
@@ -164,6 +196,7 @@ async def qr_pay_create(callback: CallbackQuery):
     from bot.keyboards.admin import home_only_kb
     tariff_id = int(callback.data.split(':')[1])
     tariff = get_tariff_by_id(tariff_id)
+    tariff = apply_flash_sale_to_tariff(tariff) if tariff else None
     if not tariff:
         await callback.answer('❌ Тариф не найден', show_alert=True)
         return
@@ -272,11 +305,19 @@ async def renew_qr_select_tariff(callback: CallbackQuery):
         await callback.answer('❌ Ключ не найден', show_alert=True)
         return
     tariffs = get_tariffs_for_renewal(key.get('tariff_id', 0))
+    tariffs = apply_flash_sale_to_tariffs(tariffs)
     rub_tariffs = [t for t in tariffs if t.get('price_rub') and t['price_rub'] > 0]
     if not rub_tariffs:
         await callback.answer('😔 Нет тарифов с ценой в рублях', show_alert=True)
         return
-    await safe_edit_or_send(callback.message, f"📱 <b>QR-оплата (Карта/СБП)</b>\n\n🔑 Ключ: <b>{escape_html(key['display_name'])}</b>\n\nВыберите тариф для продления:", reply_markup=renew_tariff_select_kb(rub_tariffs, key_id, is_qr=True))
+    sale = get_flash_sale_state()
+    sale_line = ""
+    if sale["active"]:
+        sale_line = (
+            f"\n🔥 Акция: {sale['sale_price_rub']} ₽ вместо {sale['base_price_rub']} ₽\n"
+            f"⏱ До конца: {format_remaining_hms(sale['remaining_seconds'])}\n"
+        )
+    await safe_edit_or_send(callback.message, f"📱 <b>QR-оплата (Карта/СБП)</b>\n\n🔑 Ключ: <b>{escape_html(key['display_name'])}</b>{sale_line}\nВыберите тариф для продления:", reply_markup=renew_tariff_select_kb(rub_tariffs, key_id, is_qr=True))
     await callback.answer()
 
 @router.callback_query(F.data.startswith('renew_pay_qr:'))
@@ -290,6 +331,7 @@ async def renew_qr_create(callback: CallbackQuery):
     key_id = int(parts[1])
     tariff_id = int(parts[2])
     tariff = get_tariff_by_id(tariff_id)
+    tariff = apply_flash_sale_to_tariff(tariff) if tariff else None
     key = get_key_details_for_user(key_id, callback.from_user.id)
     if not tariff or not key:
         await callback.answer('❌ Ошибка тарифа или ключа', show_alert=True)

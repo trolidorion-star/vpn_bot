@@ -48,61 +48,70 @@ def main_menu_kb(is_admin: bool = False, show_trial: bool = False, show_referral
 
 
 def help_kb(
-    news_link: str, 
-    support_link: str, 
-    news_hidden: bool = False, 
+    news_link: str,
+    news_hidden: bool = False,
     support_hidden: bool = False,
     news_name: str = "Новости",
-    support_name: str = "Поддержка"
+    support_name: str = "Поддержка",
+    privacy_link: str = "",
+    terms_link: str = "",
+    privacy_name: str = "Политика конфиденциальности",
+    terms_name: str = "Пользовательское соглашение",
 ) -> InlineKeyboardMarkup:
     """
     Клавиатура справки с внешними ссылками.
     
     Args:
         news_link: Ссылка на канал новостей
-        support_link: Ссылка на чат поддержки
         news_hidden: Скрыта ли кнопка новостей
         support_hidden: Скрыта ли кнопка поддержки
         news_name: Название кнопки новостей
         support_name: Название кнопки поддержки
     """
     builder = InlineKeyboardBuilder()
-    
-    # Формируем ряд с кнопками-ссылками (только нескрытые)
+
+    # Новости (URL) + Поддержка (callback на тикеты)
     visible_buttons = []
     if not news_hidden:
         visible_buttons.append(InlineKeyboardButton(text=f"📢 {news_name}", url=news_link))
     if not support_hidden:
-        visible_buttons.append(InlineKeyboardButton(text=f"💬 {support_name}", url=support_link))
-    
+        visible_buttons.append(
+            InlineKeyboardButton(text=f"💬 {support_name}", callback_data="support")
+        )
+
     if visible_buttons:
         builder.row(*visible_buttons)
-    
-    # На главную
+
+    legal_buttons = []
+    if privacy_link:
+        legal_buttons.append(InlineKeyboardButton(text=f"📄 {privacy_name}", url=privacy_link))
+    if terms_link:
+        legal_buttons.append(InlineKeyboardButton(text=f"📘 {terms_name}", url=terms_link))
+    if legal_buttons:
+        builder.row(*legal_buttons)
+
     builder.row(
         InlineKeyboardButton(text="🈴 На главную", callback_data="start")
     )
-    
+
     return builder.as_markup()
 
 
-def support_kb(support_link: str) -> InlineKeyboardMarkup:
+def support_kb() -> InlineKeyboardMarkup:
     """
     Клавиатура с кнопкой поддержки и возвратом на главную.
     
-    Args:
-        support_link: Ссылка на поддержку
     """
     builder = InlineKeyboardBuilder()
-    
+
     builder.row(
-        InlineKeyboardButton(text="💬 Support", url=support_link)
+        InlineKeyboardButton(text="💬 Поддержка", callback_data="support")
     )
-    
+
     builder.row(
         InlineKeyboardButton(text="🈴 На главную", callback_data="start")
     )
-    
+
     return builder.as_markup()
 
 
