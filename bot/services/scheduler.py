@@ -803,26 +803,63 @@ async def run_traffic_sync_scheduler(bot: Bot) -> None:
     """
     Фоновая задача для синхронизации трафика каждые 5 минут.
     Не заменяет существующие ежедневные задачи.
-    
+
     Args:
         bot: Экземпляр бота
     """
     logger.info("📊 Планировщик синхронизации трафика запущен (каждые 5 мин)")
-    
-    # Первый запуск через 30 секунд после старта бота
+
     await asyncio.sleep(30)
-    
+
     while True:
         try:
             await sync_traffic_stats(bot)
-            
-            # Ждём 5 минут
+
             await asyncio.sleep(300)
-            
+
         except asyncio.CancelledError:
             logger.info("Планировщик синхронизации трафика остановлен")
             break
         except Exception as e:
             logger.error(f"Ошибка в планировщике синхронизации трафика: {e}")
-            # Ждём 2 минуты и пробуем снова
             await asyncio.sleep(120)
+
+
+async def check_flash_sales(bot: Bot) -> None:
+    """
+    Проверяет истёкшие флеш-распродажи и обрабатывает auto_restart.
+    Запускается каждую минуту.
+
+    Args:
+        bot: Экземпляр бота
+    """
+    try:
+        from database.requests import check_and_expire_flash_sales
+        expired_ids = check_and_expire_flash_sales()
+        if expired_ids:
+            logger.info(f"⚡ Истекли флеш-распродажи: {expired_ids}")
+    except Exception as e:
+        logger.error(f"Ошибка при проверке флеш-распродаж: {e}")
+
+
+async def run_flash_sales_scheduler(bot: Bot) -> None:
+    """
+    Фоновая задача для проверки флеш-распродаж каждую минуту.
+
+    Args:
+        bot: Экземпляр бота
+    """
+    logger.info("⚡ Планировщик флеш-распродаж запущен (каждую минуту)")
+
+    await asyncio.sleep(60)
+
+    while True:
+        try:
+            await check_flash_sales(bot)
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            logger.info("Планировщик флеш-распродаж остановлен")
+            break
+        except Exception as e:
+            logger.error(f"Ошибка в планировщике флеш-распродаж: {e}")
+            await asyncio.sleep(60)

@@ -99,6 +99,15 @@ class AdminStates(StatesGroup):
     tariff_select_group = State()    # Выбор группы при добавлении тарифа
     server_select_group = State()    # Выбор группы при добавлении сервера
 
+    # ========== Тикеты поддержки ==========
+    admin_ticket_reply = State()     # Ожидание текста ответа на тикет
+
+    # ========== Флеш-распродажи ==========
+    flash_sale_promo = State()           # Ввод промокода
+    flash_sale_discount_type = State()   # Выбор типа скидки (% или сумма)
+    flash_sale_discount_value = State()  # Ввод значения скидки
+    flash_sale_duration = State()        # Ввод длительности
+
 
 # ============================================================================
 # ПАРАМЕТРЫ СЕРВЕРОВ

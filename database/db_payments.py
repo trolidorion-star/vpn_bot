@@ -38,6 +38,7 @@ __all__ = [
     'get_referral_reward_type',
     'get_referral_conditions_text',
     'update_referral_setting',
+    'get_referral_detailed_stats',
 ]
 
 def save_yookassa_payment_id(order_id: str, yookassa_payment_id: str) -> bool:
@@ -645,12 +646,63 @@ def get_referral_conditions_text() -> str:
 def update_referral_setting(key: str, value: str) -> bool:
     """
     Обновить настройку реферальной системы.
-    
+
     Args:
         key: Ключ настройки
         value: Значение
-    
+
     Returns:
         True если успешно
     """
     return set_setting(key, value) is not None
+
+
+def get_referral_detailed_stats(referrer_id: int) -> Dict[str, Any]:
+    """
+    Получает подробную статистику рефералов для пользователя.
+
+    Args:
+        referrer_id: Внутренний ID реферера
+
+    Returns:
+        Словарь с детальной статистикой
+    """
+    with get_db() as conn:
+        cursor = conn.execute("""
+            SELECT
+                u.id, u.telegram_id, u.username,
+                COUNT(DISTINCT rp.id) as purchase_count,
+                COALESCE(SUM(rp.amount_cents), 0) as total_spent_cents,
+                COALESCE(SUM(rp.reward_cents), 0) as total_reward_cents,
+                MAX(rp.created_at) as last_purchase_at,
+                CASE WHEN EXISTS(
+                    SELECT 1 FROM vpn_keys vk
+                    WHERE vk.user_id = u.id AND vk.expires_at > datetime('now')
+                ) THEN 1 ELSE 0 END as has_active_key
+            FROM users u
+            LEFT JOIN referral_purchases rp ON rp.referral_id = u.id AND rp.referrer_id = ?
+            WHERE u.referred_by = ?
+            GROUP BY u.id
+            ORDER BY purchase_count DESC, u.created_at DESC
+        """, (referrer_id, referrer_id))
+        referrals = [dict(row) for row in cursor.fetchall()]
+
+        row = conn.execute("""
+            SELECT
+                COUNT(*) as total_referrals,
+                COUNT(DISTINCT rp.referral_id) as paying_referrals,
+                COALESCE(SUM(rp.reward_cents), 0) as total_reward_cents,
+                COALESCE(SUM(CASE WHEN rp.is_first_purchase = 1 THEN rp.reward_cents ELSE 0 END), 0) as first_purchase_bonus_total
+            FROM users u
+            LEFT JOIN referral_purchases rp ON rp.referral_id = u.id AND rp.referrer_id = ?
+            WHERE u.referred_by = ?
+        """, (referrer_id, referrer_id)).fetchone()
+        summary = dict(row) if row else {
+            'total_referrals': 0, 'paying_referrals': 0,
+            'total_reward_cents': 0, 'first_purchase_bonus_total': 0
+        }
+
+        return {
+            'summary': summary,
+            'referrals': referrals,
+        }

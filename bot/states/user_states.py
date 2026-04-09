@@ -1,7 +1,6 @@
 from aiogram.fsm.state import State, StatesGroup
 
 class UserStates(StatesGroup):
-    # Example state
     waiting_for_vpn_key = State()
 
 class RenameKey(StatesGroup):
@@ -15,3 +14,8 @@ class ReplaceKey(StatesGroup):
 class NewKeyConfig(StatesGroup):
     waiting_for_server = State()
     waiting_for_inbound = State()
+
+class TicketStates(StatesGroup):
+    waiting_topic = State()
+    waiting_description = State()
+    waiting_reply = State()

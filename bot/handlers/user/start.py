@@ -169,7 +169,15 @@ async def show_help(message: 'Message', is_callback: bool = False):
     support_hidden = get_setting('support_hidden', '0') == '1'
     news_name = get_setting('news_button_name', 'Новости')
     support_name = get_setting('support_button_name', 'Поддержка')
-    kb = help_kb(news_link, support_link, news_hidden=news_hidden, support_hidden=support_hidden, news_name=news_name, support_name=support_name)
+    privacy_link = get_setting('privacy_policy_link', '') or ''
+    terms_link = get_setting('terms_link', '') or ''
+    kb = help_kb(
+        news_link, support_link,
+        news_hidden=news_hidden, support_hidden=support_hidden,
+        news_name=news_name, support_name=support_name,
+        privacy_link=privacy_link, terms_link=terms_link,
+        show_tickets=True,
+    )
     if is_callback:
         await send_editor_message(message, data=help_data, default_text='❓ <b>Справка</b>', reply_markup=kb)
     else:

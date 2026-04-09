@@ -17,6 +17,8 @@ from bot.handlers.admin.system import router as system_router
 from bot.handlers.admin.trial import router as trial_router
 from bot.handlers.admin.referral import router as referral_router
 from bot.handlers.admin.groups import router as groups_router
+from bot.handlers.admin.tickets import router as tickets_router
+from bot.handlers.admin.flash_sales import router as flash_sales_router
 
 admin_router = Router()
 
@@ -34,4 +36,6 @@ admin_router.include_router(users_keys_deleted_router)
 admin_router.include_router(system_router)
 admin_router.include_router(trial_router)
 admin_router.include_router(referral_router)
+admin_router.include_router(tickets_router)
+admin_router.include_router(flash_sales_router)
 

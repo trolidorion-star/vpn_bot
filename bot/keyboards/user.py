@@ -48,16 +48,19 @@ def main_menu_kb(is_admin: bool = False, show_trial: bool = False, show_referral
 
 
 def help_kb(
-    news_link: str, 
-    support_link: str, 
-    news_hidden: bool = False, 
+    news_link: str,
+    support_link: str,
+    news_hidden: bool = False,
     support_hidden: bool = False,
     news_name: str = "Новости",
-    support_name: str = "Поддержка"
+    support_name: str = "Поддержка",
+    privacy_link: str = "",
+    terms_link: str = "",
+    show_tickets: bool = False,
 ) -> InlineKeyboardMarkup:
     """
     Клавиатура справки с внешними ссылками.
-    
+
     Args:
         news_link: Ссылка на канал новостей
         support_link: Ссылка на чат поддержки
@@ -65,24 +68,39 @@ def help_kb(
         support_hidden: Скрыта ли кнопка поддержки
         news_name: Название кнопки новостей
         support_name: Название кнопки поддержки
+        privacy_link: Ссылка на политику конфиденциальности (пусто = скрыта)
+        terms_link: Ссылка на условия использования (пусто = скрыта)
+        show_tickets: Показывать ли кнопку «Написать в поддержку»
     """
     builder = InlineKeyboardBuilder()
-    
-    # Формируем ряд с кнопками-ссылками (только нескрытые)
+
     visible_buttons = []
     if not news_hidden:
         visible_buttons.append(InlineKeyboardButton(text=f"📢 {news_name}", url=news_link))
     if not support_hidden:
         visible_buttons.append(InlineKeyboardButton(text=f"💬 {support_name}", url=support_link))
-    
+
     if visible_buttons:
         builder.row(*visible_buttons)
-    
-    # На главную
+
+    if show_tickets:
+        builder.row(
+            InlineKeyboardButton(text="🎫 Написать в поддержку", callback_data="tickets_menu")
+        )
+
+    legal_buttons = []
+    if privacy_link and privacy_link.startswith(('http://', 'https://')):
+        legal_buttons.append(InlineKeyboardButton(text="🔒 Политика конфиденциальности", url=privacy_link))
+    if terms_link and terms_link.startswith(('http://', 'https://')):
+        legal_buttons.append(InlineKeyboardButton(text="📋 Условия использования", url=terms_link))
+
+    for btn in legal_buttons:
+        builder.row(btn)
+
     builder.row(
         InlineKeyboardButton(text="🈴 На главную", callback_data="start")
     )
-    
+
     return builder.as_markup()
 
 
@@ -864,9 +882,110 @@ def yookassa_qr_kb(order_id: str, back_callback: str = "buy_key", qr_url: str = 
 def referral_menu_kb() -> InlineKeyboardMarkup:
     """Клавиатура для раздела реферальной системы."""
     builder = InlineKeyboardBuilder()
-    
+
     builder.row(
         InlineKeyboardButton(text="⬅️ Назад", callback_data="start"),
+        InlineKeyboardButton(text="🈴 На главную", callback_data="start")
+    )
+    return builder.as_markup()
+
+
+# ============================================================================
+# ТИКЕТЫ ПОДДЕРЖКИ
+# ============================================================================
+
+def tickets_menu_kb(has_open_tickets: bool = False) -> InlineKeyboardMarkup:
+    """Главное меню тикетов пользователя."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="➕ Создать тикет", callback_data="ticket_create")
+    )
+    if has_open_tickets:
+        builder.row(
+            InlineKeyboardButton(text="📋 Мои тикеты", callback_data="ticket_list")
+        )
+    else:
+        builder.row(
+            InlineKeyboardButton(text="📋 Мои тикеты", callback_data="ticket_list")
+        )
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="help"),
+        InlineKeyboardButton(text="🈴 На главную", callback_data="start")
+    )
+    return builder.as_markup()
+
+
+def ticket_list_kb(tickets: list) -> InlineKeyboardMarkup:
+    """Список тикетов пользователя."""
+    builder = InlineKeyboardBuilder()
+    for ticket in tickets:
+        status_emoji = "🟢" if ticket['status'] == 'open' else "⚫"
+        topic = ticket['topic'][:30] + ("…" if len(ticket['topic']) > 30 else "")
+        builder.row(
+            InlineKeyboardButton(
+                text=f"{status_emoji} #{ticket['id']} {topic}",
+                callback_data=f"ticket_view:{ticket['id']}"
+            )
+        )
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="tickets_menu"),
+        InlineKeyboardButton(text="🈴 На главную", callback_data="start")
+    )
+    return builder.as_markup()
+
+
+def ticket_detail_kb(ticket_id: int, is_open: bool = True) -> InlineKeyboardMarkup:
+    """Клавиатура просмотра тикета."""
+    builder = InlineKeyboardBuilder()
+    if is_open:
+        builder.row(
+            InlineKeyboardButton(text="✉️ Ответить", callback_data=f"ticket_reply:{ticket_id}")
+        )
+        builder.row(
+            InlineKeyboardButton(text="✅ Закрыть тикет", callback_data=f"ticket_close:{ticket_id}")
+        )
+    else:
+        builder.row(
+            InlineKeyboardButton(text="🔄 Открыть снова", callback_data=f"ticket_reopen:{ticket_id}")
+        )
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="ticket_list"),
+        InlineKeyboardButton(text="🈴 На главную", callback_data="start")
+    )
+    return builder.as_markup()
+
+
+def ticket_cancel_kb() -> InlineKeyboardMarkup:
+    """Клавиатура отмены создания тикета."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="❌ Отмена", callback_data="tickets_menu")
+    )
+    return builder.as_markup()
+
+
+# ============================================================================
+# ФЛЕШ-РАСПРОДАЖИ
+# ============================================================================
+
+def flash_sale_admin_menu_kb(sale: dict = None) -> InlineKeyboardMarkup:
+    """Меню управления флеш-распродажами (для администратора)."""
+    builder = InlineKeyboardBuilder()
+    if sale:
+        builder.row(
+            InlineKeyboardButton(text="⏹ Остановить", callback_data=f"flash_sale_stop:{sale['id']}")
+        )
+        builder.row(
+            InlineKeyboardButton(text="🗑 Удалить", callback_data=f"flash_sale_delete:{sale['id']}")
+        )
+    builder.row(
+        InlineKeyboardButton(text="➕ Создать распродажу", callback_data="flash_sale_create")
+    )
+    builder.row(
+        InlineKeyboardButton(text="📋 История распродаж", callback_data="flash_sale_history")
+    )
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel"),
         InlineKeyboardButton(text="🈴 На главную", callback_data="start")
     )
     return builder.as_markup()

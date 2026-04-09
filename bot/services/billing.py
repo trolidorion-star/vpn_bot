@@ -23,7 +23,7 @@ from database.requests import (
     is_referral_enabled, get_referral_reward_type, get_active_referral_levels,
     get_user_referrer, get_user_referral_coefficient, get_user_balance,
     add_to_balance, deduct_from_balance, add_days_to_first_active_key,
-    update_referral_stat
+    update_referral_stat,
 )
 from bot.services.exchange_rate import get_usd_rub_rate
 
@@ -613,6 +613,38 @@ def convert_to_rub_cents(amount_raw: int, payment_type: str, usd_rub_rate: int) 
         return amount_raw
 
 
+def _is_first_referral_purchase(referrer_id: int, referral_id: int) -> bool:
+    """
+    Проверяет, является ли текущий платёж первым для данного реферала.
+
+    Args:
+        referrer_id: ID реферера
+        referral_id: ID реферала
+
+    Returns:
+        True если это первый платёж реферала
+    """
+    from database.connection import get_db
+    with get_db() as conn:
+        cursor = conn.execute(
+            "SELECT COUNT(*) as cnt FROM referral_stats WHERE referrer_id = ? AND referral_id = ?",
+            (referrer_id, referral_id)
+        )
+        row = cursor.fetchone()
+        return (row['cnt'] if row else 0) == 0
+
+
+def _record_referral_purchase(referrer_id: int, referral_id: int, amount_cents: int, reward_cents: int, is_first: bool) -> None:
+    """Записывает детальную информацию о реферальной покупке."""
+    from database.connection import get_db
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO referral_purchases
+            (referrer_id, referral_id, amount_cents, reward_cents, is_first_purchase)
+            VALUES (?, ?, ?, ?, ?)
+        """, (referrer_id, referral_id, amount_cents, reward_cents, 1 if is_first else 0))
+
+
 async def process_referral_reward(
     payer_id: int,
     period_days: int,
@@ -622,7 +654,7 @@ async def process_referral_reward(
     """
     Обработка реферального вознаграждения при оплате.
     Вызывается ПОСЛЕ успешной обработки платежа.
-    
+
     Args:
         payer_id: Внутренний ID пользователя, который оплатил
         period_days: Сколько дней купил реферал
@@ -632,59 +664,77 @@ async def process_referral_reward(
             - 'cards': копейки рублей (int)
             - 'yookassa_qr': копейки рублей (int)
         payment_type: Тип платежа ('stars', 'crypto', 'cards', 'yookassa_qr')
-    
+
     Note:
         При оплате балансом реферальные вознаграждения НЕ начисляются,
         поэтому эта функция не вызывается для платежей балансом.
     """
     if not is_referral_enabled():
         return
-    
+
     reward_type = get_referral_reward_type()
     levels = get_active_referral_levels()
-    
+
     if not levels:
         return
-    
+
     usd_rub_rate = await get_usd_rub_rate()
     amount_rub_cents = convert_to_rub_cents(amount_raw, payment_type, usd_rub_rate)
-    
+
     current_user_id = payer_id
-    
+
     from bot.services.user_locks import user_locks
-    
+
+    first_purchase_bonus_str = get_setting('referral_first_purchase_bonus', '5000')
+    try:
+        first_purchase_bonus = int(first_purchase_bonus_str) if first_purchase_bonus_str else 5000
+    except (ValueError, TypeError):
+        first_purchase_bonus = 5000
+
     for level_num, percent in levels:
         referrer_id = get_user_referrer(current_user_id)
         if not referrer_id:
             break
-        
+
         coefficient = get_user_referral_coefficient(referrer_id)
-        
+        is_first = _is_first_referral_purchase(referrer_id, current_user_id)
+
         if reward_type == 'balance':
             base_reward = amount_rub_cents * (percent / 100)
             final_reward = int(base_reward * coefficient)
             final_reward = round(final_reward / 100) * 100
-            
-            if final_reward > 0:
+
+            bonus = first_purchase_bonus if (is_first and level_num == 1 and first_purchase_bonus > 0) else 0
+
+            total_balance_reward = final_reward + bonus
+
+            if total_balance_reward > 0:
                 async with user_locks[referrer_id]:
-                    add_to_balance(referrer_id, final_reward)
-            
+                    add_to_balance(referrer_id, total_balance_reward)
+
             reward_days = 0
         else:
             base_days = period_days * (percent / 100)
             final_days = base_days * coefficient
             reward_days = math.ceil(final_days)
-            
+
             if reward_days > 0:
                 add_days_to_first_active_key(referrer_id, reward_days)
-            
+
             final_reward = 0
-        
+            bonus = 0
+
         update_referral_stat(
-            referrer_id, payer_id, level_num,
+            referrer_id, current_user_id, level_num,
             final_reward, reward_days
         )
-        
+
+        _record_referral_purchase(
+            referrer_id, current_user_id,
+            amount_rub_cents, final_reward,
+            is_first and level_num == 1
+        )
+
         current_user_id = referrer_id
 
 

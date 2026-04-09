@@ -210,27 +210,36 @@ def create_initial_vpn_key(
     user_id: int,
     tariff_id: int,
     days: int,
-    traffic_limit: int = 0
+    traffic_limit: int = 0,
+    hours: int = 0
 ) -> int:
     """
     Создаёт начальный (черновой) VPN-ключ без привязки к серверу.
     Ключ создается сразу после оплаты.
-    
+
     Args:
         user_id: ID пользователя
         tariff_id: ID тарифа
         days: Срок действия (дней)
         traffic_limit: Лимит трафика в байтах (0 = безлимит)
-        
+        hours: Если задан, используется вместо days для часового срока
+
     Returns:
         ID созданного ключа
     """
     with get_db() as conn:
-        cursor = conn.execute("""
-            INSERT INTO vpn_keys 
-            (user_id, tariff_id, expires_at, created_at, traffic_limit)
-            VALUES (?, ?, datetime('now', '+' || ? || ' days'), CURRENT_TIMESTAMP, ?)
-        """, (user_id, tariff_id, days, traffic_limit))
+        if hours > 0:
+            cursor = conn.execute("""
+                INSERT INTO vpn_keys
+                (user_id, tariff_id, expires_at, created_at, traffic_limit)
+                VALUES (?, ?, datetime('now', '+' || ? || ' hours'), CURRENT_TIMESTAMP, ?)
+            """, (user_id, tariff_id, hours, traffic_limit))
+        else:
+            cursor = conn.execute("""
+                INSERT INTO vpn_keys
+                (user_id, tariff_id, expires_at, created_at, traffic_limit)
+                VALUES (?, ?, datetime('now', '+' || ? || ' days'), CURRENT_TIMESTAMP, ?)
+            """, (user_id, tariff_id, days, traffic_limit))
         return cursor.lastrowid
 
 def is_key_active(key: dict) -> bool:

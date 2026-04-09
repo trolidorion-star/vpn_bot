@@ -28,7 +28,7 @@ def _add_column(conn: sqlite3.Connection, table: str, column_def: str) -> None:
 
 
 # Текущая версия схемы БД
-LATEST_VERSION = 16
+LATEST_VERSION = 17
 
 
 def get_current_version() -> int:
@@ -1361,6 +1361,92 @@ def migration_16(conn: sqlite3.Connection) -> None:
     logger.info("Миграция v16 применена")
 
 
+def migration_17(conn: sqlite3.Connection) -> None:
+    """
+    Миграция v17: Тикеты поддержки, флеш-распродажи, расширенная реферальная система.
+
+    Изменения:
+    - Новая таблица tickets: тикеты поддержки пользователей
+    - Новая таблица ticket_messages: сообщения в тикетах
+    - Новая таблица flash_sales: флеш-распродажи с таймером
+    - Новая таблица referral_purchases: детальный учёт реферальных покупок
+    - Новые настройки: privacy_policy_link, terms_link, trial_duration_hours,
+      referral_first_purchase_bonus
+    """
+    logger.info("Применение миграции v17 (Тикеты, флеш-распродажи, расширенная реферальная система)...")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS tickets (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            status TEXT DEFAULT 'open',
+            topic TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            closed_at DATETIME,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tickets_user_id ON tickets(user_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS ticket_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ticket_id INTEGER NOT NULL,
+            sender_type TEXT NOT NULL,
+            message_text TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (ticket_id) REFERENCES tickets(id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_ticket_messages_ticket_id ON ticket_messages(ticket_id)")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS flash_sales (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            promo_code TEXT NOT NULL UNIQUE,
+            discount_percent INTEGER DEFAULT 0,
+            discount_amount INTEGER DEFAULT 0,
+            start_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+            end_time DATETIME NOT NULL,
+            is_active INTEGER DEFAULT 1,
+            auto_restart INTEGER DEFAULT 0,
+            duration_seconds INTEGER DEFAULT 3600,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_flash_sales_is_active ON flash_sales(is_active)")
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS referral_purchases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            referrer_id INTEGER NOT NULL,
+            referral_id INTEGER NOT NULL,
+            amount_cents INTEGER NOT NULL,
+            reward_cents INTEGER NOT NULL,
+            is_first_purchase INTEGER DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (referrer_id) REFERENCES users(id),
+            FOREIGN KEY (referral_id) REFERENCES users(id)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_referral_purchases_referrer ON referral_purchases(referrer_id)")
+
+    new_settings = [
+        ('privacy_policy_link', ''),
+        ('terms_link', ''),
+        ('trial_duration_hours', ''),
+        ('referral_first_purchase_bonus', '5000'),
+    ]
+    for key, value in new_settings:
+        conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+            (key, value)
+        )
+
+    logger.info("Миграция v17 применена")
+
+
 MIGRATIONS = {
     1: migration_1,
     2: migration_2,
@@ -1378,6 +1464,7 @@ MIGRATIONS = {
     14: migration_14,
     15: migration_15,
     16: migration_16,
+    17: migration_17,
 }
 
 
