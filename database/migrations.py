@@ -28,7 +28,7 @@ def _add_column(conn: sqlite3.Connection, table: str, column_def: str) -> None:
 
 
 # Текущая версия схемы БД
-LATEST_VERSION = 15
+LATEST_VERSION = 16
 
 
 def get_current_version() -> int:
@@ -105,25 +105,20 @@ def migration_1(conn: sqlite3.Connection) -> None:
 
 Продлите подписку, чтобы сохранить доступ к VPN без перерыва!'''),
         ('main_page_text', (
-            "🔐 *Добро пожаловать в VPN\\-бот\\!*\n"
-            "Быстрый, безопасный и анонимный доступ к интернету\\.\n"
-            "Без логов, без ограничений, без проблем\\! 🚀\n"
+            "🦫 Добро пожаловать в Bobrik_Vpn!\n\n"
+            "Ваш личный доступ к свободному интернету через надежные сервера в Нидерландах 🇳🇱\n\n"
+            "Как начать:\n\n"
+            "    Выберите тариф и купите ключ 💳\n\n"
+            "    Скачайте приложение (Hiddify / v2rayNG)\n\n"
+            "    Подключайтесь и наслаждайтесь! 🚀"
         )),
         ('help_page_text', (
-            "🔐 Этот бот предоставляет доступ к VPN\\-сервису\\.\n\n"
-            "*Как это работает:*\n"
-            "1\\. Купите ключ через раздел «Купить ключ»\n\n"
-            "2\\. Установите VPN\\-клиент для вашего устройства:\n\n"
-            "Hiddify или v2rayNG или V2Box\n"
-            "Подробная инструкция по настройке VPN👇 https://telegra\\.ph/Kak\\-nastroit\\-VPN\\-Gajd\\-za\\-2\\-minuty\\-01\\-23\n\n"
-            "3\\. Импортируйте ключ в приложение\n\n"
-            "4\\. Подключайтесь и наслаждайтесь\\! 🚀\n\n"
-            "\\-\\-\\-\n"
-            "Разработчик @plushkin\\_blog\n"
-            "\\-\\-\\-"
+            "👤 Техническая поддержка Bobrik_Vpn\n\n"
+            "Если у вас возникли вопросы по оплате или настройке ключа, наш администратор всегда на связи! 🛠️\n\n"
+            "По всем вопросам: @kikiki190"
         )),
-        ('news_channel_link', 'https://t.me/YadrenoRu'),
-        ('support_channel_link', 'https://t.me/YadrenoChat'),
+        ('news_channel_link', 'https://t.me/Bobrik_Vpn'),
+        ('support_channel_link', 'https://t.me/kikiki190'),
     ]
     for key, value in default_settings:
         conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
@@ -974,6 +969,36 @@ def _migrate_setting_text(conn, key: str, md_default: str, html_default: str) ->
         return 'converted'
 
 
+def _replace_old_text(conn, key: str, old_text: str, new_text: str) -> bool:
+    """Заменяет старый текст на новый, если текущее значение совпадает со старым."""
+    import json as _json
+    
+    cursor = conn.execute("SELECT value FROM settings WHERE key = ?", (key,))
+    row = cursor.fetchone()
+    if not row or not row['value']:
+        return False
+    
+    current_val = row['value']
+    replaced = False
+    
+    # Пробуем распарсить JSON
+    try:
+        data = _json.loads(current_val)
+        if isinstance(data, dict) and 'text' in data:
+            if _is_default_text(data['text'], old_text):
+                data['text'] = new_text
+                new_val = _json.dumps(data, ensure_ascii=False)
+                conn.execute("UPDATE settings SET value = ? WHERE key = ?", (new_val, key))
+                replaced = True
+    except (_json.JSONDecodeError, TypeError):
+        # Обычная строка
+        if _is_default_text(current_val, old_text):
+            conn.execute("UPDATE settings SET value = ? WHERE key = ?", (new_text, key))
+            replaced = True
+    
+    return replaced
+
+
 def migration_15(conn: sqlite3.Connection) -> None:
     """
     Миграция v15: Конвертация всех текстов из MarkdownV2 в HTML.
@@ -988,21 +1013,36 @@ def migration_15(conn: sqlite3.Connection) -> None:
     logger.info("Применение миграции v15 (MarkdownV2 → HTML)...")
     
     # ── 1. main_page_text ─────────────────────────────────────────────────────
-    md_main = (
+    # Старые тексты для проверки и замены
+    old_md_main = (
         "🔐 *Добро пожаловать в VPN\\-бот\\!*\n"
         "Быстрый, безопасный и анонимный доступ к интернету\\.\n"
         "Без логов, без ограничений, без проблем\\! 🚀\n"
     )
+    md_main = (
+        "🦫 Добро пожаловать в Bobrik_Vpn!\n\n"
+        "Ваш личный доступ к свободному интернету через надежные сервера в Нидерландах 🇳🇱\n\n"
+        "Как начать:\n\n"
+        "    Выберите тариф и купите ключ 💳\n\n"
+        "    Скачайте приложение (Hiddify / v2rayNG)\n\n"
+        "    Подключайтесь и наслаждайтесь! 🚀"
+    )
     html_main = (
-        "🔐 <b>Добро пожаловать в VPN-бот!</b>\n\n"
-        "Быстрый, безопасный и анонимный доступ к интернету.\n"
-        "Без логов, без ограничений, без проблем! 🚀"
+        "🦫 Добро пожаловать в Bobrik_Vpn!\n\n"
+        "Ваш личный доступ к свободному интернету через надежные сервера в Нидерландах 🇳🇱\n\n"
+        "Как начать:\n\n"
+        "    Выберите тариф и купите ключ 💳\n\n"
+        "    Скачайте приложение (Hiddify / v2rayNG)\n\n"
+        "    Подключайтесь и наслаждайтесь! 🚀"
     )
     result = _migrate_setting_text(conn, 'main_page_text', md_main, html_main)
+    # Дополнительная проверка на старый текст с заменой
+    _replace_old_text(conn, 'main_page_text', old_md_main, html_main)
     logger.info(f"main_page_text: {result}")
     
     # ── 2. help_page_text ─────────────────────────────────────────────────────
-    md_help = (
+    # Старые тексты для проверки и замены
+    old_md_help = (
         "🔐 Этот бот предоставляет доступ к VPN\\-сервису\\.\n\n"
         "*Как это работает:*\n"
         "1\\. Купите ключ через раздел «Купить ключ»\n\n"
@@ -1015,7 +1055,12 @@ def migration_15(conn: sqlite3.Connection) -> None:
         "Разработчик @plushkin\\_blog\n"
         "\\-\\-\\-"
     )
-    html_help = (
+    old_md_help_alt = (
+        "👤 Техническая поддержка YadrenoRu\n\n"
+        "Если у вас возникли вопросы по оплате или настройке ключа, наш администратор всегда на связи! 🛠️\n\n"
+        "По всем вопросам: @kikiki190"
+    )
+    old_html_help_plushkin = (
         "🔐 Этот бот предоставляет доступ к VPN-сервису.\n\n"
         "<b>Как это работает:</b>\n"
         "1. Купите ключ через раздел «Купить ключ»\n\n"
@@ -1028,7 +1073,35 @@ def migration_15(conn: sqlite3.Connection) -> None:
         "Разработчик @plushkin_blog\n"
         "---"
     )
+    old_html_help_yadreno = (
+        "🔐 Этот бот предоставляет доступ к VPN-сервису.\n\n"
+        "<b>Как это работает:</b>\n"
+        "1. Купите ключ через раздел «Купить ключ»\n\n"
+        "2. Установите VPN-клиент для вашего устройства:\n\n"
+        "Hiddify или v2rayNG или V2Box\n"
+        "Подробная инструкция по настройке VPN👇 https://telegra.ph/Kak-nastroit-VPN-Gajd-za-2-minuty-01-23\n\n"
+        "3. Импортируйте ключ в приложение\n\n"
+        "4. Подключайтесь и наслаждайтесь! 🚀\n\n"
+        "---\n"
+        "Разработчик @kikiki190\n"
+        "---"
+    )
+    md_help = (
+        "👤 Техническая поддержка Bobrik_Vpn\n\n"
+        "Если у вас возникли вопросы по оплате или настройке ключа, наш администратор всегда на связи! 🛠️\n\n"
+        "По всем вопросам: @kikiki190"
+    )
+    html_help = (
+        "👤 Техническая поддержка Bobrik_Vpn\n\n"
+        "Если у вас возникли вопросы по оплате или настройке ключа, наш администратор всегда на связи! 🛠️\n\n"
+        "По всем вопросам: @kikiki190"
+    )
     result = _migrate_setting_text(conn, 'help_page_text', md_help, html_help)
+    # Дополнительная проверка на все старые варианты текста
+    _replace_old_text(conn, 'help_page_text', old_md_help, html_help)
+    _replace_old_text(conn, 'help_page_text', old_md_help_alt, html_help)
+    _replace_old_text(conn, 'help_page_text', old_html_help_plushkin, html_help)
+    _replace_old_text(conn, 'help_page_text', old_html_help_yadreno, html_help)
     logger.info(f"help_page_text: {result}")
     
     # ── 3. notification_text ──────────────────────────────────────────────────
@@ -1175,6 +1248,119 @@ def migration_15(conn: sqlite3.Connection) -> None:
     logger.info("Миграция v15 применена")
 
 
+def migration_16(conn: sqlite3.Connection) -> None:
+    """
+    Миграция v16: Замена всех упоминаний старого автора на новые данные.
+    
+    Заменяет:
+    - @plushkin_blog → @kikiki190
+    - YadrenoRu → Bobrik_Vpn
+    - Старые тексты main_page_text и help_page_text на новые
+    """
+    import json as _json
+    logger.info("Применение миграции v16 (Замена данных автора)...")
+    
+    # Новые значения для настроек
+    new_main_page_text = (
+        "🦫 Добро пожаловать в Bobrik_Vpn!\n\n"
+        "Ваш личный доступ к свободному интернету через надежные сервера в Нидерландах 🇳🇱\n\n"
+        "Как начать:\n\n"
+        "    Выберите тариф и купите ключ 💳\n\n"
+        "    Скачайте приложение (Hiddify / v2rayNG)\n\n"
+        "    Подключайтесь и наслаждайтесь! 🚀"
+    )
+    
+    new_help_page_text = (
+        "👤 Техническая поддержка Bobrik_Vpn\n\n"
+        "Если у вас возникли вопросы по оплате или настройке ключа, наш администратор всегда на связи! 🛠️\n\n"
+        "По всем вопросам: @kikiki190"
+    )
+    
+    # Признаки старых текстов для замены
+    old_help_markers = [
+        "@plushkin_blog",
+        "@plushkin\\_blog",
+        "Разработчик @",
+        "🔐 Этот бот предоставляет доступ",
+        "Как это работает:",
+    ]
+    
+    old_main_markers = [
+        "🔐 <b>Добро пожаловать в VPN-бот!</b>",
+        "VPN\\-бот",
+        "Без логов, без ограничений",
+    ]
+    
+    def should_replace_help(text: str) -> bool:
+        """Проверяет, нужно ли заменить текст help_page_text."""
+        for marker in old_help_markers:
+            if marker in text:
+                return True
+        return False
+    
+    def should_replace_main(text: str) -> bool:
+        """Проверяет, нужно ли заменить текст main_page_text."""
+        for marker in old_main_markers:
+            if marker in text:
+                return True
+        return False
+    
+    def update_setting_text(conn, key: str, new_text: str, should_replace_fn) -> None:
+        """Обновляет настройку, если она содержит старый текст."""
+        cursor = conn.execute("SELECT value FROM settings WHERE key = ?", (key,))
+        row = cursor.fetchone()
+        if not row or not row['value']:
+            # Если настройки нет, создаём её с новым значением
+            conn.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+                (key, new_text)
+            )
+            logger.info(f"{key}: установлено новое значение (настройка отсутствовала)")
+            return
+        
+        current_val = row['value']
+        
+        # Пробуем распарсить JSON
+        try:
+            data = _json.loads(current_val)
+            if isinstance(data, dict) and 'text' in data:
+                if should_replace_fn(data['text']):
+                    data['text'] = new_text
+                    new_val = _json.dumps(data, ensure_ascii=False)
+                    conn.execute("UPDATE settings SET value = ? WHERE key = ?", (new_val, key))
+                    logger.info(f"{key}: заменён старый текст (JSON)")
+                else:
+                    logger.info(f"{key}: пропущен (текст не содержит старые маркеры)")
+                return
+        except (_json.JSONDecodeError, TypeError):
+            pass
+        
+        # Обычная строка
+        if should_replace_fn(current_val):
+            conn.execute("UPDATE settings SET value = ? WHERE key = ?", (new_text, key))
+            logger.info(f"{key}: заменён старый текст (plain)")
+        else:
+            logger.info(f"{key}: пропущен (текст не содержит старые маркеры)")
+    
+    # Обновляем help_page_text
+    update_setting_text(conn, 'help_page_text', new_help_page_text, should_replace_help)
+    
+    # Обновляем main_page_text
+    update_setting_text(conn, 'main_page_text', new_main_page_text, should_replace_main)
+    
+    # Обновляем ссылки на каналы (на всякий случай)
+    conn.execute(
+        "UPDATE settings SET value = ? WHERE key = ?",
+        ('https://t.me/Bobrik_Vpn', 'news_channel_link')
+    )
+    conn.execute(
+        "UPDATE settings SET value = ? WHERE key = ?",
+        ('https://t.me/kikiki190', 'support_channel_link')
+    )
+    
+    logger.info("Миграция v16 применена")
+
+
 MIGRATIONS = {
     1: migration_1,
     2: migration_2,
@@ -1191,6 +1377,7 @@ MIGRATIONS = {
     13: migration_13,
     14: migration_14,
     15: migration_15,
+    16: migration_16,
 }
 
 
