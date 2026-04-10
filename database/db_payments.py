@@ -44,6 +44,7 @@ __all__ = [
     'mark_gift_redeemed',
     'list_abandoned_orders_for_reminder',
     'mark_payment_reminder_sent',
+    'suppress_abandoned_payment_reminders_for_user',
 ]
 
 def save_yookassa_payment_id(order_id: str, yookassa_payment_id: str) -> bool:
@@ -794,3 +795,26 @@ def mark_payment_reminder_sent(order_id: str) -> bool:
             (order_id,),
         )
         return cursor.rowcount > 0
+
+
+def suppress_abandoned_payment_reminders_for_user(user_id: int) -> int:
+    """
+    Отключает напоминания о незавершённой оплате для всех текущих pending-заказов пользователя.
+
+    Returns:
+        Количество обновлённых заказов.
+    """
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE payments
+            SET reminder_sent_at = COALESCE(reminder_sent_at, CURRENT_TIMESTAMP),
+                reminder_attempts = COALESCE(reminder_attempts, 0) + 1
+            WHERE user_id = ?
+              AND status = 'pending'
+              AND paid_at IS NULL
+              AND reminder_sent_at IS NULL
+            """,
+            (user_id,),
+        )
+        return int(cursor.rowcount or 0)

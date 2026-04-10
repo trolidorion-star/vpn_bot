@@ -470,6 +470,12 @@ async def check_abandoned_payments_and_remind(bot: Bot) -> None:
                         callback_data="buy_key",
                     )
                 )
+            builder.row(
+                InlineKeyboardButton(
+                    text="🔕 Убрать уведомления",
+                    callback_data="abandoned_reminders_off",
+                )
+            )
             builder.row(InlineKeyboardButton(text="🈴 На главную", callback_data="start"))
 
             try:

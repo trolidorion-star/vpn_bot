@@ -345,6 +345,15 @@ async def process_crypto_payment(start_param: str, user_id: Optional[int] = None
         if not success:
              return False, "❌ Ошибка сохранения внешнего заказа.", None
     
+    # Подарочный заказ не должен уходить в стандартный flow выдачи ключа.
+    # Здесь только подтверждаем оплату и возвращаем ордер для gift-финализации в другом слое.
+    if order and int(order.get('is_gift') or 0) == 1:
+        if not is_order_already_paid(order_id):
+            if not complete_order(order_id):
+                return False, "❌ Не удалось подтвердить оплату подарка.", order
+        refreshed = find_order_by_order_id(order_id)
+        return True, "✅ Оплата подарка подтверждена!", (refreshed or order)
+
     # Delegate to unified logic
     return await process_payment_order(order_id)
 

@@ -167,12 +167,22 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
         return
 
     if args and args.startswith('bill'):
-        from bot.services.billing import process_crypto_payment
+        from bot.services.billing import process_crypto_payment, complete_payment_flow
         from bot.handlers.user.payments.base import finalize_payment_ui
         try:
             (success, text, order) = await process_crypto_payment(args, user_id=user['id'])
             if success and order:
-                await finalize_payment_ui(message, state, text, order, user_id=message.from_user.id)
+                if int(order.get('is_gift') or 0) == 1:
+                    await complete_payment_flow(
+                        order_id=order['order_id'],
+                        message=message,
+                        state=state,
+                        telegram_id=message.from_user.id,
+                        payment_type='crypto',
+                        referral_amount=int(order.get('amount_cents') or 0),
+                    )
+                else:
+                    await finalize_payment_ui(message, state, text, order, user_id=message.from_user.id)
             else:
                 await safe_edit_or_send(message, text, force_new=True)
         except Exception as e:
@@ -282,3 +292,22 @@ async def help_handler(callback: CallbackQuery):
 async def noop_handler(callback: CallbackQuery):
     """Заглушка: нажатие на заголовок группы ничего не делает."""
     await callback.answer()
+
+
+@router.callback_query(F.data == "abandoned_reminders_off")
+async def abandoned_reminders_off_handler(callback: CallbackQuery):
+    """Отключить напоминания о незавершённых оплатах для текущего пользователя."""
+    from database.requests import get_user_internal_id, suppress_abandoned_payment_reminders_for_user
+
+    internal_user_id = get_user_internal_id(callback.from_user.id)
+    if not internal_user_id:
+        await callback.answer("❌ Пользователь не найден", show_alert=True)
+        return
+
+    changed = suppress_abandoned_payment_reminders_for_user(internal_user_id)
+    text = (
+        "🔕 Уведомления о незавершённой оплате отключены."
+        if changed > 0
+        else "🔕 Уведомления уже были отключены."
+    )
+    await callback.answer(text, show_alert=True)
