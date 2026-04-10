@@ -200,17 +200,8 @@ async def buy_key_handler(callback: CallbackQuery):
             force_new=True,
         )
 
-    chat_id = callback.message.chat.id
-    _cancel_buy_key_timer(chat_id)
-
-    if sale["active"] and sent_message:
-        timer_task = asyncio.create_task(_run_buy_key_timer(sent_message, prepayment_text, kb))
-        _buy_key_timer_tasks[chat_id] = timer_task
-
-        def _cleanup_done(task: asyncio.Task, cid: int = chat_id):
-            if _buy_key_timer_tasks.get(cid) is task:
-                _buy_key_timer_tasks.pop(cid, None)
-
-        timer_task.add_done_callback(_cleanup_done)
+    # Важно: фоновое обновление таймера отключено.
+    # Ранее оно могло перезаписывать текущий экран пользователя (например, "Справка" или flow оплаты)
+    # и возвращать его обратно на страницу покупки.
 
     await callback.answer()
