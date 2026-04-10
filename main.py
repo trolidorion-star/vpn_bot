@@ -21,6 +21,7 @@ from bot.services.scheduler import (
     run_update_check_scheduler,
     run_traffic_sync_scheduler,
     run_support_sla_scheduler,
+    run_abandoned_payments_scheduler,
 )
 
 # Импорт роутеров
@@ -127,6 +128,8 @@ async def main():
     traffic_tasks = asyncio.create_task(run_traffic_sync_scheduler(bot))
     # Запускаем SLA-планировщик тикетов поддержки
     support_sla_tasks = asyncio.create_task(run_support_sla_scheduler(bot))
+    # Запускаем планировщик напоминаний о брошенной оплате
+    abandoned_payment_tasks = asyncio.create_task(run_abandoned_payments_scheduler(bot))
     
     try:
         await dp.start_polling(bot)
@@ -135,6 +138,7 @@ async def main():
         update_tasks.cancel()
         traffic_tasks.cancel()
         support_sla_tasks.cancel()
+        abandoned_payment_tasks.cancel()
         await bot.session.close()
 
 

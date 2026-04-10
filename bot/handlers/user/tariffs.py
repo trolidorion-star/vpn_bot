@@ -6,7 +6,7 @@ from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command, CommandObject, StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.exceptions import TelegramForbiddenError
+from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
 from config import ADMIN_IDS
 from database.requests import (
     get_or_create_user,
@@ -24,6 +24,75 @@ from bot.utils.text import escape_html, safe_edit_or_send
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+BUY_KEY_TIMER_INTERVAL_SECONDS = 5
+BUY_KEY_TIMER_MAX_SECONDS = 3600
+_buy_key_timer_tasks: dict[int, asyncio.Task] = {}
+
+
+def _build_sale_block(sale: dict, format_remaining_hms) -> str:
+    if not sale.get("active"):
+        return ""
+    return (
+        "\n\n🔥 <b>Скидка активна</b>\n"
+        f"Промокод: <code>{sale['promo_code']}</code>\n"
+        f"Цена: <b>{sale['sale_price_rub']} ₽</b> вместо <s>{sale['base_price_rub']} ₽</s>\n"
+        f"До конца: <b>{format_remaining_hms(sale['remaining_seconds'])}</b>"
+    )
+
+
+def _build_buy_key_text(prepayment_text: str, sale: dict, format_remaining_hms) -> str:
+    sale_block = _build_sale_block(sale, format_remaining_hms)
+    if prepayment_text:
+        return f"{prepayment_text}{sale_block}\n\nВыберите способ оплаты:"
+    return f"Выберите способ оплаты:{sale_block}"
+
+
+def _cancel_buy_key_timer(chat_id: int) -> None:
+    task = _buy_key_timer_tasks.pop(chat_id, None)
+    if task and not task.done():
+        task.cancel()
+
+
+async def _update_buy_key_message(message: Message, text: str, reply_markup) -> bool:
+    try:
+        if message.photo or message.video or message.animation or message.document:
+            await message.edit_caption(
+                caption=text,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
+        else:
+            await message.edit_text(
+                text=text,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+            )
+        return True
+    except TelegramBadRequest as e:
+        err = str(e).lower()
+        if "message is not modified" in err:
+            return True
+        if "message to edit not found" in err or "message can't be edited" in err:
+            return False
+        logger.debug("Не удалось обновить экран покупки: %s", e)
+        return False
+    except Exception as e:
+        logger.debug("Фоновое обновление таймера остановлено: %s", e)
+        return False
+
+
+async def _run_buy_key_timer(message: Message, prepayment_text: str, reply_markup) -> None:
+    from bot.services.flash_sale import get_flash_sale_state, format_remaining_hms
+
+    steps = max(1, BUY_KEY_TIMER_MAX_SECONDS // BUY_KEY_TIMER_INTERVAL_SECONDS)
+    for _ in range(steps):
+        await asyncio.sleep(BUY_KEY_TIMER_INTERVAL_SECONDS)
+        sale = get_flash_sale_state()
+        text = _build_buy_key_text(prepayment_text, sale, format_remaining_hms)
+        ok = await _update_buy_key_message(message, text, reply_markup)
+        if not ok or not sale["active"]:
+            return
 
 
 @router.callback_query(F.data == "buy_key")
@@ -96,20 +165,7 @@ async def buy_key_handler(callback: CallbackQuery):
     prepayment_text = prepayment_data.get("text", "") or ""
 
     sale = get_flash_sale_state()
-    sale_block = ""
-    if sale["active"]:
-        sale_block = (
-            f"\n\n🔥 <b>Скидка активна</b>\n"
-            f"Промокод: <code>{sale['promo_code']}</code>\n"
-            f"Цена: <b>{sale['sale_price_rub']} ₽</b> вместо <s>{sale['base_price_rub']} ₽</s>\n"
-            f"До конца: <b>{format_remaining_hms(sale['remaining_seconds'])}</b>"
-        )
-
-    text_override = (
-        f"{prepayment_text}{sale_block}\n\nВыберите способ оплаты:"
-        if prepayment_text
-        else f"Выберите способ оплаты:{sale_block}"
-    )
+    text_override = _build_buy_key_text(prepayment_text, sale, format_remaining_hms)
 
     kb = buy_key_kb(
         crypto_url=crypto_url,
@@ -121,8 +177,10 @@ async def buy_key_handler(callback: CallbackQuery):
         order_id=existing_order_id,
         show_balance_button=show_balance_button,
     )
+
+    sent_message = None
     try:
-        await send_editor_message(
+        sent_message = await send_editor_message(
             callback.message,
             data=prepayment_data,
             reply_markup=kb,
@@ -134,11 +192,25 @@ async def buy_key_handler(callback: CallbackQuery):
         except Exception:
             pass
         prepayment_photo = prepayment_data.get("photo_file_id")
-        await safe_edit_or_send(
+        sent_message = await safe_edit_or_send(
             callback.message,
             text_override,
             photo=prepayment_photo,
             reply_markup=kb,
             force_new=True,
         )
+
+    chat_id = callback.message.chat.id
+    _cancel_buy_key_timer(chat_id)
+
+    if sale["active"] and sent_message:
+        timer_task = asyncio.create_task(_run_buy_key_timer(sent_message, prepayment_text, kb))
+        _buy_key_timer_tasks[chat_id] = timer_task
+
+        def _cleanup_done(task: asyncio.Task, cid: int = chat_id):
+            if _buy_key_timer_tasks.get(cid) is task:
+                _buy_key_timer_tasks.pop(cid, None)
+
+        timer_task.add_done_callback(_cleanup_done)
+
     await callback.answer()

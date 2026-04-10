@@ -25,7 +25,8 @@ from database.requests import (
     get_all_servers, get_users_stats, get_keys_stats,
     get_daily_payments_stats, get_new_users_count_today,
     get_setting, get_expiring_keys, is_notification_sent_today, log_notification_sent,
-    list_tickets_waiting_admin_reply, mark_ticket_sla_reminded
+    list_tickets_waiting_admin_reply, mark_ticket_sla_reminded,
+    list_abandoned_orders_for_reminder, mark_payment_reminder_sent
 )
 from bot.services.vpn_api import get_client_from_server_data, VPNAPIError, format_traffic
 from bot.utils.git_utils import check_for_updates
@@ -413,6 +414,93 @@ async def run_support_sla_scheduler(bot: Bot) -> None:
         logger.info("Планировщик SLA тикетов поддержки остановлен")
     except Exception as e:
         logger.error(f"Ошибка в планировщике SLA тикетов: {e}")
+
+
+async def check_abandoned_payments_and_remind(bot: Bot) -> None:
+    """Проверяет pending-оплаты и отправляет одно напоминание в окне 10-30 минут."""
+    try:
+        from bot.utils.text import escape_html
+
+        enabled = get_setting("abandoned_payment_funnel_enabled", "1") == "1"
+        if not enabled:
+            return
+
+        min_minutes = int(get_setting("abandoned_payment_min_minutes", "10") or "10")
+        max_minutes = int(get_setting("abandoned_payment_max_minutes", "30") or "30")
+        min_minutes = max(1, min_minutes)
+        max_minutes = max(min_minutes, max_minutes)
+
+        orders = list_abandoned_orders_for_reminder(
+            min_age_minutes=min_minutes,
+            max_age_minutes=max_minutes,
+            limit=30,
+        )
+        if not orders:
+            return
+
+        for order in orders:
+            tg_id = order.get("user_telegram_id")
+            order_id = order.get("order_id")
+            if not tg_id or not order_id:
+                continue
+
+            vpn_key_id = order.get("vpn_key_id")
+            tariff_name = escape_html(str(order.get("tariff_name") or "тариф"))
+            price_rub = order.get("tariff_price_rub")
+            price_line = f"\nСумма: <b>{int(price_rub)} ₽</b>" if price_rub else ""
+
+            text = (
+                "💳 <b>Вы не завершили оплату</b>\n\n"
+                f"Тариф: <b>{tariff_name}</b>{price_line}\n\n"
+                "Готовы продолжить? Нажмите кнопку ниже."
+            )
+
+            builder = InlineKeyboardBuilder()
+            if vpn_key_id:
+                builder.row(
+                    InlineKeyboardButton(
+                        text="💳 Вернуться к оплате",
+                        callback_data=f"key_renew:{vpn_key_id}",
+                    )
+                )
+            else:
+                builder.row(
+                    InlineKeyboardButton(
+                        text="💳 Вернуться к оплате",
+                        callback_data="buy_key",
+                    )
+                )
+            builder.row(InlineKeyboardButton(text="🈴 На главную", callback_data="start"))
+
+            try:
+                await bot.send_message(
+                    chat_id=int(tg_id),
+                    text=text,
+                    parse_mode="HTML",
+                    reply_markup=builder.as_markup(),
+                )
+                mark_payment_reminder_sent(order_id)
+            except Exception as e:
+                logger.warning(
+                    f"Не удалось отправить reminder по order {order_id} пользователю {tg_id}: {e}"
+                )
+
+    except Exception as e:
+        logger.error(f"Ошибка проверки брошенных оплат: {e}")
+
+
+async def run_abandoned_payments_scheduler(bot: Bot) -> None:
+    """Фоновая задача напоминаний о брошенной оплате (каждые 2 минуты)."""
+    logger.info("🕑 Планировщик напоминаний о брошенной оплате запущен")
+    try:
+        await asyncio.sleep(60)
+        while True:
+            await check_abandoned_payments_and_remind(bot)
+            await asyncio.sleep(120)
+    except asyncio.CancelledError:
+        logger.info("Планировщик напоминаний о брошенной оплате остановлен")
+    except Exception as e:
+        logger.error(f"Ошибка в планировщике напоминаний о брошенной оплате: {e}")
 
 
 def get_seconds_until(target_hour: int, target_minute: int = 0) -> int:
