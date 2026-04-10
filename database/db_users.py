@@ -21,6 +21,7 @@ __all__ = [
     'get_users_stats',
     'get_all_users_paginated',
     'get_user_by_telegram_id',
+    'get_user_by_id',
     'get_user_by_username',
     'toggle_user_ban',
     'get_new_users_count_today',
@@ -38,6 +39,7 @@ __all__ = [
     'count_direct_referrals',
     'count_direct_paid_referrals',
     'get_direct_referrals_conversion_stats',
+    'get_referrers_with_stats',
     'get_direct_referrals_with_purchase_info',
 ]
 
@@ -291,6 +293,19 @@ def get_user_by_telegram_id(telegram_id: int) -> Optional[Dict[str, Any]]:
         row = cursor.fetchone()
         return dict(row) if row else None
 
+
+def get_user_by_id(user_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Получает пользователя по внутреннему ID.
+    """
+    with get_db() as conn:
+        cursor = conn.execute(
+            "SELECT * FROM users WHERE id = ?",
+            (user_id,)
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
 def get_user_by_username(username: str) -> Optional[Dict[str, Any]]:
     """
     Получает пользователя по @username.
@@ -461,6 +476,95 @@ def get_direct_referrals_conversion_stats(referrer_id: int) -> Dict[str, Any]:
         "unpaid": unpaid,
         "conversion_percent": conversion_percent,
     }
+
+
+def get_referrers_with_stats(
+    offset: int = 0,
+    limit: int = 20,
+    sort_by: str = "invited",
+    sort_dir: str = "desc",
+) -> tuple[List[Dict[str, Any]], int]:
+    """
+    Возвращает список пользователей, которые привели хотя бы 1 реферала,
+    со статистикой и сортировкой.
+
+    sort_by:
+        invited - по числу приглашённых
+        paid - по числу оплативших рефералов
+        conversion - по конверсии
+        created - по дате регистрации реферера
+    sort_dir:
+        desc | asc
+    """
+    sort_columns = {
+        "invited": "invited_count",
+        "paid": "paid_referrals_count",
+        "conversion": "conversion_ratio",
+        "created": "created_at",
+    }
+    order_col = sort_columns.get(sort_by, "invited_count")
+    order_dir = "ASC" if str(sort_dir).lower() == "asc" else "DESC"
+
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            WITH ref_stats AS (
+                SELECT
+                    u.id AS referrer_id,
+                    COUNT(DISTINCT r.id) AS invited_count,
+                    COUNT(DISTINCT CASE WHEN p.status = 'paid' THEN r.id END) AS paid_referrals_count,
+                    COUNT(CASE WHEN p.status = 'paid' THEN p.id END) AS paid_orders_count
+                FROM users u
+                LEFT JOIN users r ON r.referred_by = u.id
+                LEFT JOIN payments p ON p.user_id = r.id
+                GROUP BY u.id
+            ),
+            ref_stats_filtered AS (
+                SELECT
+                    u.id,
+                    u.telegram_id,
+                    u.username,
+                    u.created_at,
+                    rs.invited_count,
+                    rs.paid_referrals_count,
+                    rs.paid_orders_count,
+                    CASE
+                        WHEN rs.invited_count > 0
+                        THEN (rs.paid_referrals_count * 1.0 / rs.invited_count)
+                        ELSE 0
+                    END AS conversion_ratio
+                FROM ref_stats rs
+                JOIN users u ON u.id = rs.referrer_id
+                WHERE rs.invited_count > 0
+            )
+            SELECT *
+            FROM ref_stats_filtered
+            ORDER BY
+                CASE WHEN ? = 'invited_count' THEN invited_count END """ + order_dir + """,
+                CASE WHEN ? = 'paid_referrals_count' THEN paid_referrals_count END """ + order_dir + """,
+                CASE WHEN ? = 'conversion_ratio' THEN conversion_ratio END """ + order_dir + """,
+                CASE WHEN ? = 'created_at' THEN created_at END """ + order_dir + """,
+                invited_count DESC,
+                id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (order_col, order_col, order_col, order_col, int(limit), int(offset)),
+        )
+        rows = [dict(row) for row in cursor.fetchall()]
+
+        count_cursor = conn.execute(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM (
+                SELECT u.id
+                FROM users u
+                JOIN users r ON r.referred_by = u.id
+                GROUP BY u.id
+            ) t
+            """
+        )
+        total = int(count_cursor.fetchone()["cnt"])
+        return rows, total
 
 def get_direct_referrals_with_purchase_info(referrer_id: int, limit: int = 10) -> List[Dict[str, Any]]:
     """
