@@ -28,7 +28,7 @@ def _add_column(conn: sqlite3.Connection, table: str, column_def: str) -> None:
 
 
 # Текущая версия схемы БД
-LATEST_VERSION = 21
+LATEST_VERSION = 22
 
 
 def get_current_version() -> int:
@@ -1511,6 +1511,55 @@ def migration_21(conn: sqlite3.Connection) -> None:
     logger.info("Migration v21 applied")
 
 
+def migration_22(conn: sqlite3.Connection) -> None:
+    """
+    Migration v22:
+    - Adds gift purchase fields to payments.
+    - Adds abandoned payment reminder fields to payments.
+    - Adds created_at timestamp for pending order aging.
+    """
+    logger.info("Applying migration v22 (gift purchases + abandoned payment reminders)...")
+
+    _add_column(conn, "payments", "created_at DATETIME")
+    _add_column(conn, "payments", "is_gift INTEGER DEFAULT 0")
+    _add_column(conn, "payments", "gift_token TEXT")
+    _add_column(conn, "payments", "gift_sender_user_id INTEGER")
+    _add_column(conn, "payments", "gift_recipient_user_id INTEGER")
+    _add_column(conn, "payments", "gift_redeemed_at DATETIME")
+    _add_column(conn, "payments", "reminder_sent_at DATETIME")
+    _add_column(conn, "payments", "reminder_attempts INTEGER DEFAULT 0")
+
+    conn.execute(
+        """
+        UPDATE payments
+        SET created_at = COALESCE(created_at, paid_at, CURRENT_TIMESTAMP)
+        WHERE created_at IS NULL
+        """
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_payments_gift_token ON payments(gift_token)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_payments_created_at ON payments(created_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_payments_pending_reminder ON payments(status, reminder_sent_at)"
+    )
+
+    reminder_settings = [
+        ("abandoned_payment_funnel_enabled", "1"),
+        ("abandoned_payment_min_minutes", "10"),
+        ("abandoned_payment_max_minutes", "30"),
+    ]
+    for key, value in reminder_settings:
+        conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+            (key, value),
+        )
+
+    logger.info("Migration v22 applied")
+
+
 MIGRATIONS = {
     1: migration_1,
     2: migration_2,
@@ -1533,6 +1582,7 @@ MIGRATIONS = {
     19: migration_19,
     20: migration_20,
     21: migration_21,
+    22: migration_22,
 }
 
 

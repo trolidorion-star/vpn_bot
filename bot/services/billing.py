@@ -755,9 +755,56 @@ async def complete_payment_flow(
     from bot.handlers.user.payments.base import finalize_payment_ui
     from bot.keyboards.admin import home_only_kb
     from bot.services.user_locks import user_locks
+    from database.requests import find_order_by_order_id, is_order_already_paid, complete_order, mark_order_as_gift
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    from aiogram.types import InlineKeyboardButton
     
     state_data = await state.get_data()
     balance_to_deduct = state_data.get('balance_to_deduct', 0)
+
+    # Специальный сценарий: подарок.
+    order_preview = find_order_by_order_id(order_id)
+    if order_preview and int(order_preview.get('is_gift') or 0) == 1:
+        try:
+            gift_token = order_preview.get('gift_token')
+            if not gift_token:
+                gift_token = uuid.uuid4().hex[:24]
+                mark_order_as_gift(order_id, order_preview['user_id'], gift_token)
+
+            if not is_order_already_paid(order_id):
+                if not complete_order(order_id):
+                    await message.answer(
+                        "❌ Не удалось подтвердить оплату подарка. Попробуйте позже.",
+                        parse_mode='HTML'
+                    )
+                    return
+
+            days = order_preview.get('period_days') or order_preview.get('duration_days') or 30
+            await process_referral_reward(order_preview['user_id'], days, referral_amount, payment_type)
+            await state.update_data(balance_to_deduct=0, remaining_cents=0)
+
+            bot_username = getattr(message.bot, "my_username", None)
+            if not bot_username:
+                bot_info = await message.bot.get_me()
+                bot_username = bot_info.username
+            gift_link = f"https://t.me/{bot_username}?start=gift_{gift_token}"
+            tariff_name = order_preview.get('tariff_name') or 'VPN-тариф'
+
+            text = (
+                "🎁 <b>Подарок готов!</b>\n\n"
+                f"Тариф: <b>{tariff_name}</b>\n"
+                f"Срок: <b>{days} дн.</b>\n\n"
+                "Отправьте ссылку получателю. Он откроет её, активирует подарок и сам выберет сервер:\n"
+                f"<code>{gift_link}</code>"
+            )
+            builder = InlineKeyboardBuilder()
+            builder.row(InlineKeyboardButton(text="🎁 Открыть подарок", url=gift_link))
+            await message.answer(text, parse_mode="HTML", reply_markup=builder.as_markup())
+            return
+        except Exception as e:
+            logger.exception(f'Ошибка gift-финализации оплаты: {e}')
+            await message.answer('❌ Ошибка при формировании подарка. Обратитесь в поддержку.', parse_mode='HTML')
+            return
     
     try:
         (success, text, order) = await process_payment_order(order_id)

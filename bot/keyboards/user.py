@@ -123,7 +123,8 @@ def buy_key_kb(
     cards_enabled: bool = False,
     yookassa_qr_enabled: bool = False,
     order_id: str = None,
-    show_balance_button: bool = False
+    show_balance_button: bool = False,
+    show_gift_button: bool = True
 ) -> InlineKeyboardMarkup:
     """
     Клавиатура для страницы «Купить ключ».
@@ -175,6 +176,11 @@ def buy_key_kb(
     if show_balance_button:
         builder.row(
             InlineKeyboardButton(text="💰 Использовать баланс", callback_data="pay_use_balance")
+        )
+
+    if show_gift_button:
+        builder.row(
+            InlineKeyboardButton(text="🎁 Купить в подарок", callback_data="buy_key_gift")
         )
 
     # Кнопка «На главную» — последний ряд
@@ -268,7 +274,7 @@ def balance_payment_kb(
     return builder.as_markup()
 
 
-def tariff_select_kb(tariffs: list, back_callback: str = "buy_key", order_id: str = None, is_cards: bool = False, is_crypto: bool = False, is_balance: bool = False, is_qr: bool = False, groups_data: list = None) -> InlineKeyboardMarkup:
+def tariff_select_kb(tariffs: list, back_callback: str = "buy_key", order_id: str = None, is_cards: bool = False, is_crypto: bool = False, is_balance: bool = False, is_qr: bool = False, groups_data: list = None, is_gift: bool = False) -> InlineKeyboardMarkup:
     """
     Клавиатура выбора тарифа для оплаты Stars, Картами, Криптой или Балансом.
     
@@ -292,21 +298,21 @@ def tariff_select_kb(tariffs: list, back_callback: str = "buy_key", order_id: st
                 price_usd = tariff['price_cents'] / 100
                 price_str = f"{price_usd:g}".replace('.', ',')
                 price_display = f"${price_str}"
-                prefix = "crypto_pay"
+                prefix = "gift_crypto_pay" if is_gift else "crypto_pay"
                 emoji = '💰'
             elif is_cards:
                 price_rub = tariff.get('price_rub')
                 if price_rub is None or price_rub <= 1:
                     continue
                 price_display = f"{price_rub} ₽"
-                prefix = "cards_pay"
+                prefix = "gift_cards_pay" if is_gift else "cards_pay"
                 emoji = '💳'
             elif is_qr:
                 price_rub = tariff.get('price_rub')
                 if price_rub is None or price_rub <= 0:
                     continue
                 price_display = f"{price_rub} ₽"
-                prefix = "qr_pay"
+                prefix = "gift_qr_pay" if is_gift else "qr_pay"
                 emoji = '📱'
             elif is_balance:
                 price_rub = tariff.get('price_rub')
@@ -317,7 +323,7 @@ def tariff_select_kb(tariffs: list, back_callback: str = "buy_key", order_id: st
                 emoji = '💰'
             else:
                 price_display = f"{tariff['price_stars']} звёзд"
-                prefix = "stars_pay"
+                prefix = "gift_stars_pay" if is_gift else "stars_pay"
                 emoji = '⭐'
                 
             cb_data = f"{prefix}:{tariff['id']}:{order_id}" if order_id else f"{prefix}:{tariff['id']}"

@@ -5,6 +5,7 @@ from .yookassa import router as yookassa_router
 from .stars import router as stars_router
 from .crypto import router as crypto_router
 from .keys_config import router as keys_config_router
+from .gift import router as gift_router
 
 router = Router()
 router.include_router(base_router)
@@ -13,3 +14,4 @@ router.include_router(yookassa_router)
 router.include_router(stars_router)
 router.include_router(crypto_router)
 router.include_router(keys_config_router)
+router.include_router(gift_router)

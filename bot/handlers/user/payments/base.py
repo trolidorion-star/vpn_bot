@@ -49,6 +49,8 @@ async def successful_payment_handler(message: Message, state: FSMContext):
     
     if payload.startswith('renew:'):
         order_id = payload.split(':')[1]
+    elif payload.startswith('gift:'):
+        order_id = payload.split(':')[1]
     elif payload.startswith('vpn_key:'):
         order_id = payload.split(':')[1]
     else:

@@ -39,6 +39,11 @@ __all__ = [
     'get_referral_conditions_text',
     'update_referral_setting',
     'get_user_paid_payments_count',
+    'mark_order_as_gift',
+    'find_gift_order_by_token',
+    'mark_gift_redeemed',
+    'list_abandoned_orders_for_reminder',
+    'mark_payment_reminder_sent',
 ]
 
 def save_yookassa_payment_id(order_id: str, yookassa_payment_id: str) -> bool:
@@ -286,8 +291,8 @@ def create_pending_order(
         cursor = conn.execute("""
             INSERT INTO payments 
             (user_id, tariff_id, order_id, payment_type, vpn_key_id, 
-             amount_cents, amount_stars, period_days, status, paid_at)
-            VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, 'pending', NULL)
+             amount_cents, amount_stars, period_days, status, paid_at, created_at)
+            VALUES (?, ?, 'pending', ?, ?, ?, ?, ?, 'pending', NULL, CURRENT_TIMESTAMP)
         """, (
             user_id, tariff_id, payment_type, vpn_key_id,
             tariff['price_cents'] if tariff else 0,
@@ -339,8 +344,8 @@ def create_paid_order_external(
             conn.execute("""
                 INSERT INTO payments 
                 (user_id, tariff_id, order_id, payment_type, vpn_key_id, 
-                 amount_cents, amount_stars, period_days, status, paid_at)
-                VALUES (?, ?, ?, ?, NULL, ?, ?, ?, 'pending', NULL)
+                 amount_cents, amount_stars, period_days, status, paid_at, created_at)
+                VALUES (?, ?, ?, ?, NULL, ?, ?, ?, 'pending', NULL, CURRENT_TIMESTAMP)
             """, (
                 user_id, tariff_id, order_id, payment_type,
                 amount_cents, amount_stars, period_days
@@ -670,3 +675,122 @@ def update_referral_setting(key: str, value: str) -> bool:
         True если успешно
     """
     return set_setting(key, value) is not None
+
+
+def mark_order_as_gift(order_id: str, sender_user_id: int, gift_token: str) -> bool:
+    """
+    Помечает pending/paid заказ как подарочный и сохраняет gift token.
+    """
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE payments
+            SET is_gift = 1,
+                gift_token = ?,
+                gift_sender_user_id = ?
+            WHERE order_id = ?
+            """,
+            (gift_token, sender_user_id, order_id),
+        )
+        return cursor.rowcount > 0
+
+
+def find_gift_order_by_token(gift_token: str) -> Optional[Dict[str, Any]]:
+    """
+    Находит подарочный заказ по gift token.
+    """
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            SELECT p.*, u.telegram_id AS buyer_telegram_id, t.name AS tariff_name
+            FROM payments p
+            LEFT JOIN users u ON u.id = p.user_id
+            LEFT JOIN tariffs t ON t.id = p.tariff_id
+            WHERE p.gift_token = ? AND COALESCE(p.is_gift, 0) = 1
+            LIMIT 1
+            """,
+            (gift_token,),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def mark_gift_redeemed(order_id: str, recipient_user_id: int) -> bool:
+    """
+    Атомарно помечает подарочный заказ как активированный получателем.
+    """
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE payments
+            SET gift_recipient_user_id = ?,
+                gift_redeemed_at = CURRENT_TIMESTAMP
+            WHERE order_id = ?
+              AND COALESCE(is_gift, 0) = 1
+              AND gift_redeemed_at IS NULL
+            """,
+            (recipient_user_id, order_id),
+        )
+        return cursor.rowcount > 0
+
+
+def list_abandoned_orders_for_reminder(
+    min_age_minutes: int = 10,
+    max_age_minutes: int = 30,
+    limit: int = 30,
+) -> List[Dict[str, Any]]:
+    """
+    Возвращает pending-заказы, по которым еще не отправлялось напоминание,
+    и возраст которых в диапазоне [min_age_minutes, max_age_minutes].
+    """
+    min_age_minutes = max(1, int(min_age_minutes))
+    max_age_minutes = max(min_age_minutes, int(max_age_minutes))
+    limit = max(1, int(limit))
+
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            SELECT
+                p.id,
+                p.order_id,
+                p.user_id,
+                p.vpn_key_id,
+                p.tariff_id,
+                p.payment_type,
+                p.created_at,
+                u.telegram_id AS user_telegram_id,
+                t.name AS tariff_name,
+                t.price_rub AS tariff_price_rub
+            FROM payments p
+            JOIN users u ON u.id = p.user_id
+            LEFT JOIN tariffs t ON t.id = p.tariff_id
+            WHERE p.status = 'pending'
+              AND p.paid_at IS NULL
+              AND p.created_at IS NOT NULL
+              AND p.reminder_sent_at IS NULL
+              AND p.created_at <= datetime('now', '-' || ? || ' minutes')
+              AND p.created_at >= datetime('now', '-' || ? || ' minutes')
+            ORDER BY p.created_at DESC
+            LIMIT ?
+            """,
+            (min_age_minutes, max_age_minutes, limit),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def mark_payment_reminder_sent(order_id: str) -> bool:
+    """
+    Помечает, что по pending-заказу отправлено напоминание.
+    """
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE payments
+            SET reminder_sent_at = CURRENT_TIMESTAMP,
+                reminder_attempts = COALESCE(reminder_attempts, 0) + 1
+            WHERE order_id = ?
+              AND status = 'pending'
+            """,
+            (order_id,),
+        )
+        return cursor.rowcount > 0

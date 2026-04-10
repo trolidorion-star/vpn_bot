@@ -79,6 +79,93 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
     is_admin = user_id in ADMIN_IDS
     (text, welcome_photo) = get_welcome_text(is_admin)
     args = command.args
+    if args and args.startswith('gift_'):
+        from database.requests import (
+            find_gift_order_by_token,
+            mark_gift_redeemed,
+            create_pending_order,
+            complete_order,
+        )
+        from bot.handlers.user.payments.keys_config import start_new_key_config
+
+        gift_token = args[5:].strip()
+        gift = find_gift_order_by_token(gift_token) if gift_token else None
+        if not gift:
+            await safe_edit_or_send(
+                message,
+                "❌ <b>Подарок не найден</b>\n\n"
+                "Возможно, ссылка устарела или введена неверно.",
+                force_new=True,
+            )
+            return
+
+        if gift.get('status') != 'paid':
+            await safe_edit_or_send(
+                message,
+                "⏳ <b>Подарок ещё не оплачен</b>\n\n"
+                "Попросите отправителя завершить оплату и откройте ссылку снова.",
+                force_new=True,
+            )
+            return
+
+        if gift.get('gift_redeemed_at'):
+            if int(gift.get('gift_recipient_user_id') or 0) == int(user['id']):
+                await safe_edit_or_send(
+                    message,
+                    "ℹ️ Этот подарок уже активирован вами.",
+                    force_new=True,
+                )
+            else:
+                await safe_edit_or_send(
+                    message,
+                    "❌ Этот подарок уже был активирован другим пользователем.",
+                    force_new=True,
+                )
+            return
+
+        if int(gift.get('user_id') or 0) == int(user['id']):
+            await safe_edit_or_send(
+                message,
+                "ℹ️ Нельзя активировать собственный подарок. Отправьте ссылку получателю.",
+                force_new=True,
+            )
+            return
+
+        tariff_id = gift.get('tariff_id')
+        if not tariff_id:
+            await safe_edit_or_send(
+                message,
+                "❌ Не удалось определить тариф подарка. Обратитесь в поддержку.",
+                force_new=True,
+            )
+            return
+
+        claimed = mark_gift_redeemed(gift['order_id'], user['id'])
+        if not claimed:
+            await safe_edit_or_send(
+                message,
+                "❌ Подарок уже активирован. Если это ошибка, обратитесь в поддержку.",
+                force_new=True,
+            )
+            return
+
+        (_, gift_order_id) = create_pending_order(
+            user_id=user['id'],
+            tariff_id=tariff_id,
+            payment_type='gift',
+            vpn_key_id=None,
+        )
+        complete_order(gift_order_id)
+
+        await safe_edit_or_send(
+            message,
+            "🎁 <b>Подарок принят!</b>\n\n"
+            "Остался последний шаг: выберите сервер для вашего нового ключа.",
+            force_new=True,
+        )
+        await start_new_key_config(message, state, gift_order_id, key_id=None)
+        return
+
     if args and args.startswith('bill'):
         from bot.services.billing import process_crypto_payment
         from bot.handlers.user.payments.base import finalize_payment_ui

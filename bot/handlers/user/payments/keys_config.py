@@ -73,7 +73,7 @@ async def process_new_key_inbound_selection(callback: CallbackQuery, state: FSMC
 
 async def process_new_key_final(callback: CallbackQuery, state: FSMContext, server_id: int, inbound_id: int):
     """Финальный этап создания ключа."""
-    from database.requests import get_server_by_id, update_vpn_key_config, update_payment_key_id, find_order_by_order_id, get_user_internal_id, get_key_details_for_user, create_initial_vpn_key
+    from database.requests import get_server_by_id, update_vpn_key_config, update_payment_key_id, find_order_by_order_id, get_user_internal_id, get_key_details_for_user, create_initial_vpn_key, set_key_expiration_hours, get_setting
     from bot.services.vpn_api import get_client
     from bot.handlers.admin.users_keys import generate_unique_email
     from bot.utils.key_sender import send_key_with_qr
@@ -118,6 +118,18 @@ async def process_new_key_final(callback: CallbackQuery, state: FSMContext, serv
         client_uuid = res['uuid']
         update_vpn_key_config(key_id=key_id, server_id=server_id, panel_inbound_id=inbound_id, panel_email=panel_email, client_uuid=client_uuid)
         update_payment_key_id(order_id, key_id)
+
+        # Для trial-подписок применяем точный срок в часах и сразу синхронизируем на панель.
+        if order.get('payment_type') == 'trial':
+            trial_hours_override = int(get_setting('trial_duration_hours_override', '1') or '1')
+            if trial_hours_override > 0:
+                set_key_expiration_hours(key_id, trial_hours_override)
+                try:
+                    from bot.services.vpn_api import push_key_to_panel
+                    await push_key_to_panel(key_id)
+                except Exception as e:
+                    logger.warning(f'Не удалось синхронизировать trial-expiry на панель для key {key_id}: {e}')
+
         await state.clear()
         new_key = get_key_details_for_user(key_id, telegram_id)
         await send_key_with_qr(callback, new_key, key_issued_kb(), is_new=True)
