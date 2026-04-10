@@ -15,6 +15,7 @@ __all__ = [
     'is_notification_sent_today',
     'log_notification_sent',
     'get_keys_stats',
+    'get_business_metrics',
 ]
 
 def get_users_for_broadcast(filter_type: str) -> List[int]:
@@ -188,4 +189,93 @@ def get_keys_stats() -> Dict[str, int]:
             'active': active,
             'expired': total - active,
             'created_today': created_today
+        }
+
+
+def get_business_metrics(hours: int = 24) -> Dict[str, Any]:
+    """
+    Возвращает бизнес-метрики за период (в часах):
+    - новые пользователи
+    - выручка (RUB, USDT, Stars)
+    - количество paid-оплат
+    - churn: пользователи с истёкшими ключами без продления
+    """
+    hours = max(1, int(hours))
+    window_sql = f"-{hours} hours"
+
+    def _as_int(row: Any, key: str) -> int:
+        if not row:
+            return 0
+        value = row[key] if key in row.keys() else 0
+        return int(value or 0)
+
+    with get_db() as conn:
+        # Новые пользователи
+        cursor = conn.execute(
+            """
+            SELECT COUNT(*) AS cnt
+            FROM users
+            WHERE is_banned = 0
+              AND created_at >= datetime('now', ?)
+            """,
+            (window_sql,),
+        )
+        new_users = _as_int(cursor.fetchone(), "cnt")
+
+        # Оплаты и суммы по валютам
+        cursor = conn.execute(
+            """
+            SELECT
+                COUNT(*) AS paid_count,
+                COALESCE(SUM(CASE WHEN payment_type IN ('cards', 'yookassa_qr', 'balance') THEN amount_cents ELSE 0 END), 0) AS paid_rub_cents,
+                COALESCE(SUM(CASE WHEN payment_type = 'crypto' THEN amount_cents ELSE 0 END), 0) AS paid_usdt_cents,
+                COALESCE(SUM(CASE WHEN payment_type = 'stars' THEN amount_stars ELSE 0 END), 0) AS paid_stars
+            FROM payments
+            WHERE status = 'paid'
+              AND COALESCE(paid_at, created_at) >= datetime('now', ?)
+            """,
+            (window_sql,),
+        )
+        pay_row = cursor.fetchone()
+        paid_count = _as_int(pay_row, "paid_count")
+        paid_rub_cents = _as_int(pay_row, "paid_rub_cents")
+        paid_usdt_cents = _as_int(pay_row, "paid_usdt_cents")
+        paid_stars = _as_int(pay_row, "paid_stars")
+
+        # Отвалившиеся: ключ истёк в окне, нет активного ключа и нет оплаты после истечения
+        cursor = conn.execute(
+            """
+            SELECT COUNT(DISTINCT vk.user_id) AS churned_users
+            FROM vpn_keys vk
+            JOIN users u ON u.id = vk.user_id
+            WHERE u.is_banned = 0
+              AND vk.expires_at IS NOT NULL
+              AND vk.expires_at <= datetime('now')
+              AND vk.expires_at >= datetime('now', ?)
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM vpn_keys active_vk
+                  WHERE active_vk.user_id = vk.user_id
+                    AND active_vk.expires_at > datetime('now')
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM payments p
+                  WHERE p.user_id = vk.user_id
+                    AND p.status = 'paid'
+                    AND COALESCE(p.paid_at, p.created_at) > vk.expires_at
+              )
+            """,
+            (window_sql,),
+        )
+        churned_users = _as_int(cursor.fetchone(), "churned_users")
+
+        return {
+            "window_hours": hours,
+            "new_users": new_users,
+            "paid_count": paid_count,
+            "paid_rub_cents": paid_rub_cents,
+            "paid_usdt_cents": paid_usdt_cents,
+            "paid_stars": paid_stars,
+            "churned_users": churned_users,
         }

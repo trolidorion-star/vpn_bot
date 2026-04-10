@@ -21,6 +21,7 @@ __all__ = [
     'home_only_kb',
     'admin_main_menu_kb',
     'author_support_kb',
+    'gift_design_kb',
     'admin_logs_menu_kb',
     'stop_bot_confirm_kb',
     'bot_settings_kb',

@@ -16,3 +16,7 @@ class ReplaceKey(StatesGroup):
 class NewKeyConfig(StatesGroup):
     waiting_for_server = State()
     waiting_for_inbound = State()
+
+
+class GiftFlow(StatesGroup):
+    waiting_for_recipient_name = State()

@@ -28,7 +28,7 @@ def _add_column(conn: sqlite3.Connection, table: str, column_def: str) -> None:
 
 
 # Текущая версия схемы БД
-LATEST_VERSION = 22
+LATEST_VERSION = 23
 
 
 def get_current_version() -> int:
@@ -1560,6 +1560,50 @@ def migration_22(conn: sqlite3.Connection) -> None:
     logger.info("Migration v22 applied")
 
 
+def migration_23(conn: sqlite3.Connection) -> None:
+    """
+    Migration v23:
+    - Adds gift recipient name to payments.
+    - Adds per-user toggle for abandoned payment reminders.
+    - Adds editable gift card message defaults.
+    """
+    logger.info("Applying migration v23 (gift card metadata + reminder toggle)...")
+
+    _add_column(conn, "payments", "gift_recipient_name TEXT")
+    _add_column(conn, "users", "abandoned_payment_reminders_enabled INTEGER DEFAULT 1")
+
+    defaults = [
+        (
+            "gift_card_sender_text",
+            (
+                "🎁 <b>Подарок готов!</b>\n\n"
+                "Для: <b>%получатель%</b>\n"
+                "Тариф: <b>%тариф%</b>\n"
+                "Срок: <b>%дни%</b>\n\n"
+                "Отправьте получателю эту ссылку:\n"
+                "<code>%gift_link%</code>"
+            ),
+        ),
+        (
+            "gift_card_receiver_text",
+            (
+                "🎁 <b>Вам отправили подарок VPN</b>\n\n"
+                "От: <b>%отправитель%</b>\n"
+                "Для: <b>%получатель%</b>\n"
+                "Тариф: <b>%тариф%</b>\n\n"
+                "Остался последний шаг: выберите сервер для нового ключа."
+            ),
+        ),
+    ]
+    for key, value in defaults:
+        conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+            (key, value),
+        )
+
+    logger.info("Migration v23 applied")
+
+
 MIGRATIONS = {
     1: migration_1,
     2: migration_2,
@@ -1583,6 +1627,7 @@ MIGRATIONS = {
     20: migration_20,
     21: migration_21,
     22: migration_22,
+    23: migration_23,
 }
 
 

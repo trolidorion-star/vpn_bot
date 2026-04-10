@@ -40,6 +40,7 @@ __all__ = [
     'update_referral_setting',
     'get_user_paid_payments_count',
     'mark_order_as_gift',
+    'set_gift_recipient_name',
     'find_gift_order_by_token',
     'mark_gift_redeemed',
     'list_abandoned_orders_for_reminder',
@@ -696,6 +697,27 @@ def mark_order_as_gift(order_id: str, sender_user_id: int, gift_token: str) -> b
         return cursor.rowcount > 0
 
 
+def set_gift_recipient_name(order_id: str, recipient_name: str) -> bool:
+    """
+    Сохраняет имя получателя подарка для заказа.
+    """
+    clean_name = (recipient_name or "").strip()
+    if not clean_name:
+        return False
+
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE payments
+            SET gift_recipient_name = ?
+            WHERE order_id = ?
+              AND COALESCE(is_gift, 0) = 1
+            """,
+            (clean_name[:64], order_id),
+        )
+        return cursor.rowcount > 0
+
+
 def find_gift_order_by_token(gift_token: str) -> Optional[Dict[str, Any]]:
     """
     Находит подарочный заказ по gift token.
@@ -767,6 +789,7 @@ def list_abandoned_orders_for_reminder(
             LEFT JOIN tariffs t ON t.id = p.tariff_id
             WHERE p.status = 'pending'
               AND p.paid_at IS NULL
+              AND COALESCE(u.abandoned_payment_reminders_enabled, 1) = 1
               AND p.created_at IS NOT NULL
               AND p.reminder_sent_at IS NULL
               AND p.created_at <= datetime('now', '-' || ? || ' minutes')

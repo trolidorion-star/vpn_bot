@@ -1,4 +1,4 @@
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+﻿from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 
@@ -47,7 +47,10 @@ def admin_main_menu_kb() -> InlineKeyboardMarkup:
     )
     builder.row(
         InlineKeyboardButton(text="👥 Пользователи", callback_data="admin_users"),
-        InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast"),
+        InlineKeyboardButton(text="📣 Рассылка", callback_data="admin_broadcast"),
+    )
+    builder.row(
+        InlineKeyboardButton(text="📊 Бизнес-статистика", callback_data="admin_business_stats"),
     )
     builder.row(
         InlineKeyboardButton(text="⚙️ Настройки бота", callback_data="admin_bot_settings"),
@@ -56,7 +59,7 @@ def admin_main_menu_kb() -> InlineKeyboardMarkup:
     builder.row(InlineKeyboardButton(text="🎫 Тикеты поддержки", callback_data="admin_support_tickets"))
     builder.row(
         InlineKeyboardButton(
-            text="🤍 Поддержка автора",
+            text="🤌 Поддержка автора",
             callback_data="admin_author_support",
             style="success",
         )
@@ -137,7 +140,23 @@ def author_support_kb() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="✏️ Изменить текст", callback_data="admin_author_support_edit_text")
     )
     builder.row(
+        InlineKeyboardButton(text="🎁 Оформление подарка", callback_data="admin_gift_design")
+    )
+    builder.row(
         InlineKeyboardButton(text="🎫 Тикеты поддержки", callback_data="admin_support_tickets")
+    )
+    builder.row(back_button("admin_panel"), home_button())
+    return builder.as_markup()
+
+
+def gift_design_kb() -> InlineKeyboardMarkup:
+    """Клавиатура раздела оформления подарочных карточек."""
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(text="🖼 Карточка отправителю", callback_data="admin_gift_sender_card_edit")
+    )
+    builder.row(
+        InlineKeyboardButton(text="📩 Карточка получателю", callback_data="admin_gift_receiver_card_edit")
     )
     builder.row(back_button("admin_panel"), home_button())
     return builder.as_markup()

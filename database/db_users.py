@@ -41,6 +41,8 @@ __all__ = [
     'get_direct_referrals_conversion_stats',
     'get_referrers_with_stats',
     'get_direct_referrals_with_purchase_info',
+    'set_abandoned_payment_reminders_enabled',
+    'is_abandoned_payment_reminders_enabled',
 ]
 
 def _generate_referral_code() -> str:
@@ -384,6 +386,50 @@ def get_user_internal_id(telegram_id: int) -> Optional[int]:
         )
         row = cursor.fetchone()
         return row['id'] if row else None
+
+
+def set_abandoned_payment_reminders_enabled(user_id: int, enabled: bool) -> bool:
+    """
+    Включает/выключает уведомления о незавершённой оплате для пользователя.
+
+    Args:
+        user_id: Внутренний ID пользователя
+        enabled: True - включить, False - выключить
+
+    Returns:
+        True если запись пользователя обновлена
+    """
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE users
+            SET abandoned_payment_reminders_enabled = ?
+            WHERE id = ?
+            """,
+            (1 if enabled else 0, user_id),
+        )
+        return cursor.rowcount > 0
+
+
+def is_abandoned_payment_reminders_enabled(user_id: int) -> bool:
+    """
+    Проверяет, включены ли пользователю напоминания о незавершённой оплате.
+
+    По умолчанию (если колонка/значение отсутствуют) считаем, что включены.
+    """
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            SELECT COALESCE(abandoned_payment_reminders_enabled, 1) AS enabled
+            FROM users
+            WHERE id = ?
+            """,
+            (user_id,),
+        )
+        row = cursor.fetchone()
+        if not row:
+            return True
+        return int(row["enabled"] or 1) == 1
 
 def get_user_by_referral_code(code: str) -> Optional[Dict[str, Any]]:
     """

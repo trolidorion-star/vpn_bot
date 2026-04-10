@@ -1,13 +1,16 @@
 ﻿import logging
 import secrets
 from aiogram import F, Router
-from aiogram.types import CallbackQuery, InlineKeyboardButton
+from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
+from aiogram.fsm.context import FSMContext
+from aiogram.filters import StateFilter
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.keyboards.user import tariff_select_kb, yookassa_qr_kb
 from bot.services.flash_sale import apply_flash_sale_to_tariff, apply_flash_sale_to_tariffs
 from bot.services.billing import build_crypto_payment_url, extract_item_id_from_url, create_yookassa_qr_payment
 from bot.utils.text import escape_html, safe_edit_or_send
+from bot.states.user_states import GiftFlow
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -15,6 +18,10 @@ router = Router()
 
 def _new_gift_token() -> str:
     return secrets.token_urlsafe(16).replace("-", "").replace("_", "")[:24]
+
+
+def _gift_recipient_name(data: dict) -> str:
+    return (data.get("gift_recipient_name") or "").strip() or "Друг"
 
 
 def _gift_methods_kb(stars_enabled: bool, cards_enabled: bool, crypto_enabled: bool, qr_enabled: bool):
@@ -27,12 +34,12 @@ def _gift_methods_kb(stars_enabled: bool, cards_enabled: bool, crypto_enabled: b
         builder.row(InlineKeyboardButton(text="💳 Карта", callback_data="gift_pay_cards"))
     if qr_enabled:
         builder.row(InlineKeyboardButton(text="📱 QR (СБП/Карта)", callback_data="gift_pay_qr"))
+    builder.row(InlineKeyboardButton(text="✏️ Изменить имя получателя", callback_data="gift_change_recipient"))
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="buy_key"))
     return builder.as_markup()
 
 
-@router.callback_query(F.data == "buy_key_gift")
-async def buy_key_gift_menu(callback: CallbackQuery):
+async def _show_gift_payment_methods(callback: CallbackQuery, state: FSMContext) -> None:
     from database.requests import is_crypto_configured, is_stars_enabled, is_cards_enabled, is_yookassa_qr_configured
 
     crypto_enabled = is_crypto_configured()
@@ -44,12 +51,14 @@ async def buy_key_gift_menu(callback: CallbackQuery):
         await callback.answer("❌ Нет доступных способов оплаты", show_alert=True)
         return
 
+    data = await state.get_data()
+    recipient_name = _gift_recipient_name(data)
+
     text = (
         "🎁 <b>VPN в подарок</b>\n\n"
+        f"Получатель: <b>{escape_html(recipient_name)}</b>\n\n"
         "Подарите близкому безопасный интернет без лишних шагов.\n"
-        "Вы оплачиваете тариф, а мы выдаём красивую ссылку-активацию,\n"
-        "которую можно переслать получателю.\n\n"
-        "После активации получатель сам выберет сервер и протокол."
+        "После оплаты вы получите красивую карточку и ссылку активации."
         "\n\nВыберите способ оплаты:"
     )
     await safe_edit_or_send(
@@ -60,24 +69,113 @@ async def buy_key_gift_menu(callback: CallbackQuery):
     await callback.answer()
 
 
+@router.callback_query(F.data == "buy_key_gift")
+async def buy_key_gift_menu(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(GiftFlow.waiting_for_recipient_name)
+    await state.update_data(gift_recipient_name=None)
+
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="⏭ Пропустить", callback_data="gift_skip_recipient"))
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="buy_key"))
+
+    await safe_edit_or_send(
+        callback.message,
+        (
+            "🎁 <b>Подарочная карточка</b>\n\n"
+            "Введите имя получателя (например: <i>Алексей</i>).\n"
+            "Это имя будет показано в карточке подарка."
+        ),
+        reply_markup=builder.as_markup(),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "gift_skip_recipient")
+async def gift_skip_recipient(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(gift_recipient_name="Друг")
+    await state.set_state(None)
+    await _show_gift_payment_methods(callback, state)
+
+
+@router.callback_query(F.data == "gift_change_recipient")
+async def gift_change_recipient(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(GiftFlow.waiting_for_recipient_name)
+
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="⏭ Пропустить", callback_data="gift_skip_recipient"))
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="buy_key_gift"))
+
+    await safe_edit_or_send(
+        callback.message,
+        "✏️ Введите имя получателя для подарочной карточки:",
+        reply_markup=builder.as_markup(),
+    )
+    await callback.answer()
+
+
+@router.message(StateFilter(GiftFlow.waiting_for_recipient_name))
+async def gift_recipient_name_input(message: Message, state: FSMContext):
+    name = (message.text or "").strip()
+    if not name:
+        await message.answer("Введите имя текстом или нажмите «Пропустить».")
+        return
+    if len(name) > 64:
+        await message.answer("Слишком длинно. До 64 символов.")
+        return
+
+    await state.update_data(gift_recipient_name=name)
+    await state.set_state(None)
+
+    from database.requests import is_crypto_configured, is_stars_enabled, is_cards_enabled, is_yookassa_qr_configured
+
+    crypto_enabled = is_crypto_configured()
+    stars_enabled = is_stars_enabled()
+    cards_enabled = is_cards_enabled()
+    qr_enabled = is_yookassa_qr_configured()
+
+    if not any([crypto_enabled, stars_enabled, cards_enabled, qr_enabled]):
+        await safe_edit_or_send(message, "❌ Нет доступных способов оплаты", force_new=True)
+        return
+
+    text = (
+        "🎁 <b>Получатель сохранён</b>\n\n"
+        f"Карточка для: <b>{escape_html(name)}</b>\n\n"
+        "Теперь выберите способ оплаты:"
+    )
+    await safe_edit_or_send(
+        message,
+        text,
+        reply_markup=_gift_methods_kb(stars_enabled, cards_enabled, crypto_enabled, qr_enabled),
+        force_new=True,
+    )
+
+
 @router.callback_query(F.data == "gift_pay_stars")
-async def gift_stars_select_tariff(callback: CallbackQuery):
+async def gift_stars_select_tariff(callback: CallbackQuery, state: FSMContext):
     from database.requests import get_all_tariffs
+
+    data = await state.get_data()
+    recipient_name = _gift_recipient_name(data)
+
     tariffs = get_all_tariffs(include_hidden=False)
     if not tariffs:
         await callback.answer("❌ Нет доступных тарифов", show_alert=True)
         return
     await safe_edit_or_send(
         callback.message,
-        "🎁 <b>Подарок за Stars</b>\n\nВыберите тариф:",
+        f"🎁 <b>Подарок за Stars</b>\n\nПолучатель: <b>{escape_html(recipient_name)}</b>\n\nВыберите тариф:",
         reply_markup=tariff_select_kb(tariffs, back_callback="buy_key_gift", is_gift=True),
     )
     await callback.answer()
 
 
 @router.callback_query(F.data == "gift_pay_cards")
-async def gift_cards_select_tariff(callback: CallbackQuery):
+async def gift_cards_select_tariff(callback: CallbackQuery, state: FSMContext):
     from database.requests import get_all_tariffs
+
+    data = await state.get_data()
+    recipient_name = _gift_recipient_name(data)
+
     tariffs = apply_flash_sale_to_tariffs(get_all_tariffs(include_hidden=False))
     rub_tariffs = [t for t in tariffs if (t.get("price_rub") or 0) > 0]
     if not rub_tariffs:
@@ -85,7 +183,7 @@ async def gift_cards_select_tariff(callback: CallbackQuery):
         return
     await safe_edit_or_send(
         callback.message,
-        "🎁 <b>Подарок с оплатой картой</b>\n\nВыберите тариф:",
+        f"🎁 <b>Подарок с оплатой картой</b>\n\nПолучатель: <b>{escape_html(recipient_name)}</b>\n\nВыберите тариф:",
         reply_markup=tariff_select_kb(
             rub_tariffs,
             back_callback="buy_key_gift",
@@ -97,8 +195,12 @@ async def gift_cards_select_tariff(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "gift_pay_qr")
-async def gift_qr_select_tariff(callback: CallbackQuery):
+async def gift_qr_select_tariff(callback: CallbackQuery, state: FSMContext):
     from database.requests import get_all_tariffs
+
+    data = await state.get_data()
+    recipient_name = _gift_recipient_name(data)
+
     tariffs = apply_flash_sale_to_tariffs(get_all_tariffs(include_hidden=False))
     rub_tariffs = [t for t in tariffs if (t.get("price_rub") or 0) > 0]
     if not rub_tariffs:
@@ -106,7 +208,7 @@ async def gift_qr_select_tariff(callback: CallbackQuery):
         return
     await safe_edit_or_send(
         callback.message,
-        "🎁 <b>Подарок с QR-оплатой</b>\n\nВыберите тариф:",
+        f"🎁 <b>Подарок с QR-оплатой</b>\n\nПолучатель: <b>{escape_html(recipient_name)}</b>\n\nВыберите тариф:",
         reply_markup=tariff_select_kb(
             rub_tariffs,
             back_callback="buy_key_gift",
@@ -118,15 +220,19 @@ async def gift_qr_select_tariff(callback: CallbackQuery):
 
 
 @router.callback_query(F.data == "gift_pay_crypto")
-async def gift_crypto_select_tariff(callback: CallbackQuery):
+async def gift_crypto_select_tariff(callback: CallbackQuery, state: FSMContext):
     from database.requests import get_all_tariffs
+
+    data = await state.get_data()
+    recipient_name = _gift_recipient_name(data)
+
     tariffs = get_all_tariffs(include_hidden=False)
     if not tariffs:
         await callback.answer("❌ Нет доступных тарифов", show_alert=True)
         return
     await safe_edit_or_send(
         callback.message,
-        "🎁 <b>Подарок за USDT</b>\n\nВыберите тариф:",
+        f"🎁 <b>Подарок за USDT</b>\n\nПолучатель: <b>{escape_html(recipient_name)}</b>\n\nВыберите тариф:",
         reply_markup=tariff_select_kb(
             tariffs,
             back_callback="buy_key_gift",
@@ -138,9 +244,15 @@ async def gift_crypto_select_tariff(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("gift_stars_pay:"))
-async def gift_stars_invoice(callback: CallbackQuery):
+async def gift_stars_invoice(callback: CallbackQuery, state: FSMContext):
     from aiogram.types import LabeledPrice
-    from database.requests import get_tariff_by_id, get_user_internal_id, create_pending_order, mark_order_as_gift
+    from database.requests import (
+        get_tariff_by_id,
+        get_user_internal_id,
+        create_pending_order,
+        mark_order_as_gift,
+        set_gift_recipient_name,
+    )
 
     tariff_id = int(callback.data.split(":")[1])
     tariff = get_tariff_by_id(tariff_id)
@@ -155,6 +267,7 @@ async def gift_stars_invoice(callback: CallbackQuery):
 
     (_, order_id) = create_pending_order(user_id=user_id, tariff_id=tariff_id, payment_type="stars", vpn_key_id=None)
     mark_order_as_gift(order_id, user_id, _new_gift_token())
+    set_gift_recipient_name(order_id, _gift_recipient_name(await state.get_data()))
 
     bot_info = await callback.bot.get_me()
     price_stars = tariff["price_stars"]
@@ -175,7 +288,7 @@ async def gift_stars_invoice(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("gift_cards_pay:"))
-async def gift_cards_invoice(callback: CallbackQuery):
+async def gift_cards_invoice(callback: CallbackQuery, state: FSMContext):
     from aiogram.types import LabeledPrice
     from database.requests import (
         get_tariff_by_id,
@@ -183,6 +296,7 @@ async def gift_cards_invoice(callback: CallbackQuery):
         create_pending_order,
         get_setting,
         mark_order_as_gift,
+        set_gift_recipient_name,
     )
 
     tariff_id = int(callback.data.split(":")[1])
@@ -203,6 +317,7 @@ async def gift_cards_invoice(callback: CallbackQuery):
 
     (_, order_id) = create_pending_order(user_id=user_id, tariff_id=tariff_id, payment_type="cards", vpn_key_id=None)
     mark_order_as_gift(order_id, user_id, _new_gift_token())
+    set_gift_recipient_name(order_id, _gift_recipient_name(await state.get_data()))
 
     price_rub = float(tariff.get("price_rub") or 0)
     amount = int(round(price_rub * 100))
@@ -229,13 +344,14 @@ async def gift_cards_invoice(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("gift_crypto_pay:"))
-async def gift_crypto_invoice(callback: CallbackQuery):
+async def gift_crypto_invoice(callback: CallbackQuery, state: FSMContext):
     from database.requests import (
         get_tariff_by_id,
         get_user_internal_id,
         create_pending_order,
         get_setting,
         mark_order_as_gift,
+        set_gift_recipient_name,
     )
 
     tariff_id = int(callback.data.split(":")[1])
@@ -251,6 +367,7 @@ async def gift_crypto_invoice(callback: CallbackQuery):
 
     (_, order_id) = create_pending_order(user_id=user_id, tariff_id=tariff_id, payment_type="crypto", vpn_key_id=None)
     mark_order_as_gift(order_id, user_id, _new_gift_token())
+    set_gift_recipient_name(order_id, _gift_recipient_name(await state.get_data()))
 
     item_id = extract_item_id_from_url(get_setting("crypto_item_url", ""))
     if not item_id:
@@ -283,7 +400,7 @@ async def gift_crypto_invoice(callback: CallbackQuery):
 
 
 @router.callback_query(F.data.startswith("gift_qr_pay:"))
-async def gift_qr_create(callback: CallbackQuery):
+async def gift_qr_create(callback: CallbackQuery, state: FSMContext):
     from aiogram.types import BufferedInputFile
     from database.requests import (
         get_tariff_by_id,
@@ -291,6 +408,7 @@ async def gift_qr_create(callback: CallbackQuery):
         create_pending_order,
         save_yookassa_payment_id,
         mark_order_as_gift,
+        set_gift_recipient_name,
     )
 
     tariff_id = int(callback.data.split(":")[1])
@@ -311,6 +429,7 @@ async def gift_qr_create(callback: CallbackQuery):
 
     (_, order_id) = create_pending_order(user_id=user_id, tariff_id=tariff_id, payment_type="yookassa_qr", vpn_key_id=None)
     mark_order_as_gift(order_id, user_id, _new_gift_token())
+    set_gift_recipient_name(order_id, _gift_recipient_name(await state.get_data()))
 
     await safe_edit_or_send(callback.message, "⏳ Создаём QR-код для подарка...")
 

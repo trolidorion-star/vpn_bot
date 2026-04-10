@@ -85,8 +85,10 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
             mark_gift_redeemed,
             create_pending_order,
             complete_order,
+            get_user_by_id,
         )
         from bot.handlers.user.payments.keys_config import start_new_key_config
+        from bot.utils.message_editor import get_message_data, send_editor_message
 
         gift_token = args[5:].strip()
         gift = find_gift_order_by_token(gift_token) if gift_token else None
@@ -157,11 +159,32 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
         )
         complete_order(gift_order_id)
 
-        await safe_edit_or_send(
+        sender_user = get_user_by_id(int(gift.get("gift_sender_user_id") or gift.get("user_id") or 0))
+        sender_name_raw = (sender_user or {}).get("username") or "Отправитель"
+        sender_name = escape_html(str(sender_name_raw))
+        recipient_name = escape_html(str(gift.get("gift_recipient_name") or "Друг"))
+        tariff_name = escape_html(str(gift.get("tariff_name") or "VPN-тариф"))
+
+        default_receiver_text = (
+            "🎁 <b>Вам отправили подарок VPN</b>\n\n"
+            "От: <b>%отправитель%</b>\n"
+            "Для: <b>%получатель%</b>\n"
+            "Тариф: <b>%тариф%</b>\n\n"
+            "Остался последний шаг: выберите сервер для нового ключа."
+        )
+        receiver_data = get_message_data("gift_card_receiver_text", default_receiver_text)
+        receiver_text = (receiver_data.get("text") or default_receiver_text)
+        receiver_text = (
+            receiver_text.replace("%отправитель%", sender_name)
+            .replace("%получатель%", recipient_name)
+            .replace("%тариф%", tariff_name)
+        )
+
+        await send_editor_message(
             message,
-            "🎁 <b>Подарок принят!</b>\n\n"
-            "Остался последний шаг: выберите сервер для вашего нового ключа.",
-            force_new=True,
+            data=receiver_data,
+            default_text=default_receiver_text,
+            text_override=receiver_text,
         )
         await start_new_key_config(message, state, gift_order_id, key_id=None)
         return
@@ -297,17 +320,45 @@ async def noop_handler(callback: CallbackQuery):
 @router.callback_query(F.data == "abandoned_reminders_off")
 async def abandoned_reminders_off_handler(callback: CallbackQuery):
     """Отключить напоминания о незавершённых оплатах для текущего пользователя."""
-    from database.requests import get_user_internal_id, suppress_abandoned_payment_reminders_for_user
+    from database.requests import (
+        get_user_internal_id,
+        suppress_abandoned_payment_reminders_for_user,
+        set_abandoned_payment_reminders_enabled,
+    )
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    from aiogram.types import InlineKeyboardButton
 
     internal_user_id = get_user_internal_id(callback.from_user.id)
     if not internal_user_id:
         await callback.answer("❌ Пользователь не найден", show_alert=True)
         return
 
+    set_abandoned_payment_reminders_enabled(internal_user_id, False)
     changed = suppress_abandoned_payment_reminders_for_user(internal_user_id)
     text = (
         "🔕 Уведомления о незавершённой оплате отключены."
         if changed > 0
         else "🔕 Уведомления уже были отключены."
     )
+    kb = InlineKeyboardBuilder()
+    kb.row(InlineKeyboardButton(text="🔔 Включить уведомления обратно", callback_data="abandoned_reminders_on"))
+    kb.row(InlineKeyboardButton(text="🈴 На главную", callback_data="start"))
+    try:
+        await callback.message.edit_reply_markup(reply_markup=kb.as_markup())
+    except Exception:
+        pass
     await callback.answer(text, show_alert=True)
+
+
+@router.callback_query(F.data == "abandoned_reminders_on")
+async def abandoned_reminders_on_handler(callback: CallbackQuery):
+    """Включить напоминания о незавершённых оплатах обратно."""
+    from database.requests import get_user_internal_id, set_abandoned_payment_reminders_enabled
+
+    internal_user_id = get_user_internal_id(callback.from_user.id)
+    if not internal_user_id:
+        await callback.answer("❌ Пользователь не найден", show_alert=True)
+        return
+
+    set_abandoned_payment_reminders_enabled(internal_user_id, True)
+    await callback.answer("🔔 Уведомления снова включены.", show_alert=True)

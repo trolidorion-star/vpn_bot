@@ -1,4 +1,4 @@
-"""
+﻿"""
 Главный роутер админ-панели.
 
 Обрабатывает вход в админку и главное меню.
@@ -9,56 +9,92 @@ from aiogram.types import CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest
 
-from database.requests import get_all_servers
+from database.requests import get_all_servers, get_business_metrics
 from bot.services.vpn_api import get_client_from_server_data, format_traffic
 from bot.states.admin_states import AdminStates
-from bot.keyboards.admin import admin_main_menu_kb, author_support_kb
+from bot.keyboards.admin import admin_main_menu_kb, author_support_kb, gift_design_kb
 from bot.utils.admin import is_admin
-from bot.utils.text import safe_edit_or_send
+from bot.utils.text import safe_edit_or_send, escape_html
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+async def _collect_server_load_summary() -> dict:
+    servers = get_all_servers()
+    if not servers:
+        return {
+            "text": "Серверы не добавлены",
+            "active_count": 0,
+            "online_clients": 0,
+            "avg_cpu": None,
+            "total_traffic_bytes": 0,
+        }
+
+    lines = []
+    active_count = 0
+    online_clients = 0
+    total_traffic_bytes = 0
+    cpu_values = []
+
+    for server in servers:
+        if not server.get("is_active"):
+            lines.append(f"🔴 <b>{escape_html(server['name'])}</b> — деактивирован")
+            continue
+
+        active_count += 1
+        try:
+            client = get_client_from_server_data(server)
+            stats = await client.get_stats()
+            if stats.get("online"):
+                online = int(stats.get("online_clients") or 0)
+                traffic_bytes = int(stats.get("total_traffic_bytes") or 0)
+                traffic_text = format_traffic(traffic_bytes)
+                cpu = stats.get("cpu_percent")
+
+                online_clients += online
+                total_traffic_bytes += traffic_bytes
+                cpu_text = ""
+                if cpu is not None:
+                    try:
+                        cpu_value = float(cpu)
+                        cpu_values.append(cpu_value)
+                        cpu_text = f" | CPU: {cpu_value:.1f}%"
+                    except Exception:
+                        cpu_text = f" | CPU: {escape_html(str(cpu))}%"
+
+                lines.append(
+                    f"🟢 <b>{escape_html(server['name'])}</b>: {online} онлайн | {traffic_text}{cpu_text}"
+                )
+            else:
+                lines.append(f"⚠️ <b>{escape_html(server['name'])}</b>: {escape_html(str(stats.get('error') or 'нет ответа'))}")
+        except Exception as e:
+            logger.warning(f"Ошибка получения статистики {server['name']}: {e}")
+            lines.append(f"⚠️ <b>{escape_html(server['name'])}</b>: ошибка подключения")
+
+    avg_cpu = (sum(cpu_values) / len(cpu_values)) if cpu_values else None
+    return {
+        "text": "\n".join(lines) if lines else "Нет данных",
+        "active_count": active_count,
+        "online_clients": online_clients,
+        "avg_cpu": avg_cpu,
+        "total_traffic_bytes": total_traffic_bytes,
+    }
 
 
 async def get_admin_stats_text() -> str:
     """
     Формирует текст со статистикой всех серверов.
     """
-    servers = get_all_servers()
-    if not servers:
+    load = await _collect_server_load_summary()
+    if load["active_count"] == 0:
         return (
             "⚙️ <b>Админ-панель</b>\n\n"
             "🖥️ Серверов пока нет.\n"
             "Добавьте первый сервер в разделе «Сервера»."
         )
 
-    lines = ["⚙️ <b>Админ-панель</b>\n"]
-    for server in servers:
-        status_emoji = "🟢" if server["is_active"] else "🔴"
-        lines.append(f"{status_emoji} <b>{server['name']}</b> (<code>{server['host']}:{server['port']}</code>)")
-
-        if server["is_active"]:
-            try:
-                client = get_client_from_server_data(server)
-                stats = await client.get_stats()
-                if stats.get("online"):
-                    traffic = format_traffic(stats.get("total_traffic_bytes", 0))
-                    online = stats.get("online_clients", 0)
-                    cpu_text = ""
-                    if stats.get("cpu_percent") is not None:
-                        cpu_text = f" | 💻 {stats['cpu_percent']}% CPU"
-                    lines.append(f"   🔑 {online} онлайн | 📊 {traffic}{cpu_text}")
-                else:
-                    lines.append(f"   ⚠️ {stats.get('error', 'Нет подключения')}")
-            except Exception as e:
-                logger.warning(f"Ошибка получения статистики {server['name']}: {e}")
-                lines.append("   ⚠️ Ошибка подключения")
-        else:
-            lines.append("   ⏸️ Деактивирован")
-
-        lines.append("")
-
-    return "\n".join(lines)
+    return "⚙️ <b>Админ-панель</b>\n\n🖥️ <b>Состояние серверов:</b>\n" + load["text"]
 
 
 @router.callback_query(F.data == "admin_panel")
@@ -77,6 +113,56 @@ async def show_admin_panel(callback: CallbackQuery, state: FSMContext):
     except TelegramBadRequest as e:
         if "is not modified" not in str(e):
             logger.error(f"Ошибка при обновлении меню: {e}")
+
+
+@router.callback_query(F.data == "admin_business_stats")
+async def show_admin_business_stats(callback: CallbackQuery):
+    """Расширенная бизнес-статистика за 24 часа и 7 дней."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    await callback.answer()
+
+    day = get_business_metrics(24)
+    week = get_business_metrics(24 * 7)
+    load = await _collect_server_load_summary()
+
+    def _fmt_rub(cents: int) -> str:
+        return f"{(int(cents) / 100):,.2f} ₽".replace(",", " ")
+
+    def _fmt_usdt(cents: int) -> str:
+        return f"{(int(cents) / 100):,.2f} USDT".replace(",", " ")
+
+    avg_cpu_text = "н/д"
+    if load["avg_cpu"] is not None:
+        avg_cpu_text = f"{load['avg_cpu']:.1f}%"
+
+    text = (
+        "📊 <b>Бизнес-статистика</b>\n\n"
+        "<b>За 24 часа:</b>\n"
+        f"• Новые пользователи: <b>{day['new_users']}</b>\n"
+        f"• Оплаченных заказов: <b>{day['paid_count']}</b>\n"
+        f"• Выручка RUB: <b>{_fmt_rub(day['paid_rub_cents'])}</b>\n"
+        f"• Выручка USDT: <b>{_fmt_usdt(day['paid_usdt_cents'])}</b>\n"
+        f"• Получено Stars: <b>{day['paid_stars']}</b>\n"
+        f"• Отвалилось (не продлили): <b>{day['churned_users']}</b>\n\n"
+        "<b>За 7 дней:</b>\n"
+        f"• Новые пользователи: <b>{week['new_users']}</b>\n"
+        f"• Оплаченных заказов: <b>{week['paid_count']}</b>\n"
+        f"• Выручка RUB: <b>{_fmt_rub(week['paid_rub_cents'])}</b>\n"
+        f"• Выручка USDT: <b>{_fmt_usdt(week['paid_usdt_cents'])}</b>\n"
+        f"• Получено Stars: <b>{week['paid_stars']}</b>\n"
+        f"• Отвалилось (не продлили): <b>{week['churned_users']}</b>\n\n"
+        "<b>Нагрузка на сервера:</b>\n"
+        f"• Активных серверов: <b>{load['active_count']}</b>\n"
+        f"• Онлайн клиентов (суммарно): <b>{load['online_clients']}</b>\n"
+        f"• Средний CPU: <b>{avg_cpu_text}</b>\n"
+        f"• Суммарный трафик: <b>{format_traffic(load['total_traffic_bytes'])}</b>\n\n"
+        f"{load['text']}"
+    )
+
+    await safe_edit_or_send(callback.message, text, reply_markup=admin_main_menu_kb())
 
 
 @router.callback_query(F.data == "admin_author_support")
@@ -124,6 +210,75 @@ async def edit_author_support_text(callback: CallbackQuery, state: FSMContext):
         key="author_support_text",
         back_callback="admin_author_support",
         allowed_types=["text", "photo"],
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_gift_design")
+async def show_gift_design(callback: CallbackQuery):
+    """Экран управления оформлением подарочных карточек."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    await callback.answer()
+    text = (
+        "🎁 <b>Оформление подарка</b>\n\n"
+        "Здесь можно настроить текст и картинку подарочной карточки:\n"
+        "• карточка, которую видит отправитель после оплаты\n"
+        "• карточка, которую видит получатель при активации"
+    )
+    await safe_edit_or_send(callback.message, text, reply_markup=gift_design_kb())
+
+
+@router.callback_query(F.data == "admin_gift_sender_card_edit")
+async def edit_gift_sender_card(callback: CallbackQuery, state: FSMContext):
+    """Редактор карточки отправителя подарка."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    from bot.handlers.admin.message_editor import show_message_editor
+
+    await show_message_editor(
+        callback.message,
+        state,
+        key="gift_card_sender_text",
+        back_callback="admin_gift_design",
+        allowed_types=["text", "photo"],
+        help_text=(
+            "Плейсхолдеры:\n"
+            "%получатель% — имя получателя\n"
+            "%тариф% — название тарифа\n"
+            "%дни% — срок\n"
+            "%gift_link% — ссылка активации\n"
+            "%отправитель% — имя отправителя"
+        ),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_gift_receiver_card_edit")
+async def edit_gift_receiver_card(callback: CallbackQuery, state: FSMContext):
+    """Редактор карточки получателя подарка."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    from bot.handlers.admin.message_editor import show_message_editor
+
+    await show_message_editor(
+        callback.message,
+        state,
+        key="gift_card_receiver_text",
+        back_callback="admin_gift_design",
+        allowed_types=["text", "photo"],
+        help_text=(
+            "Плейсхолдеры:\n"
+            "%отправитель% — имя отправителя\n"
+            "%получатель% — имя получателя\n"
+            "%тариф% — название тарифа"
+        ),
     )
     await callback.answer()
 

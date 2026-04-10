@@ -764,9 +764,17 @@ async def complete_payment_flow(
     from bot.handlers.user.payments.base import finalize_payment_ui
     from bot.keyboards.admin import home_only_kb
     from bot.services.user_locks import user_locks
-    from database.requests import find_order_by_order_id, is_order_already_paid, complete_order, mark_order_as_gift
+    from database.requests import (
+        find_order_by_order_id,
+        is_order_already_paid,
+        complete_order,
+        mark_order_as_gift,
+        get_user_by_id,
+    )
     from aiogram.utils.keyboard import InlineKeyboardBuilder
     from aiogram.types import InlineKeyboardButton
+    from bot.utils.message_editor import get_message_data, send_editor_message
+    from bot.utils.text import escape_html
     
     state_data = await state.get_data()
     balance_to_deduct = state_data.get('balance_to_deduct', 0)
@@ -797,18 +805,39 @@ async def complete_payment_flow(
                 bot_info = await message.bot.get_me()
                 bot_username = bot_info.username
             gift_link = f"https://t.me/{bot_username}?start=gift_{gift_token}"
-            tariff_name = order_preview.get('tariff_name') or 'VPN-тариф'
+            tariff_name = escape_html(str(order_preview.get('tariff_name') or 'VPN-тариф'))
+            recipient_name = escape_html(str(order_preview.get('gift_recipient_name') or 'Друг'))
 
-            text = (
+            sender_user = get_user_by_id(int(order_preview.get('gift_sender_user_id') or order_preview.get('user_id') or 0))
+            sender_name_raw = (sender_user or {}).get('username') or 'Отправитель'
+            sender_name = escape_html(str(sender_name_raw))
+
+            default_text = (
                 "🎁 <b>Подарок готов!</b>\n\n"
-                f"Тариф: <b>{tariff_name}</b>\n"
-                f"Срок: <b>{days} дн.</b>\n\n"
-                "Отправьте ссылку получателю. Он откроет её, активирует подарок и сам выберет сервер:\n"
-                f"<code>{gift_link}</code>"
+                "Для: <b>%получатель%</b>\n"
+                "Тариф: <b>%тариф%</b>\n"
+                "Срок: <b>%дни%</b>\n\n"
+                "Отправьте получателю эту ссылку:\n"
+                "<code>%gift_link%</code>"
+            )
+            sender_card_data = get_message_data("gift_card_sender_text", default_text)
+            text = (sender_card_data.get("text") or default_text)
+            text = (
+                text.replace("%получатель%", recipient_name)
+                .replace("%тариф%", tariff_name)
+                .replace("%дни%", escape_html(f"{int(days)} дн."))
+                .replace("%gift_link%", escape_html(gift_link))
+                .replace("%отправитель%", sender_name)
             )
             builder = InlineKeyboardBuilder()
             builder.row(InlineKeyboardButton(text="🎁 Открыть подарок", url=gift_link))
-            await message.answer(text, parse_mode="HTML", reply_markup=builder.as_markup())
+            await send_editor_message(
+                message,
+                data=sender_card_data,
+                default_text=default_text,
+                text_override=text,
+                reply_markup=builder.as_markup(),
+            )
             return
         except Exception as e:
             logger.exception(f'Ошибка gift-финализации оплаты: {e}')
