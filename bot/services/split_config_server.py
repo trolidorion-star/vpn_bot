@@ -191,7 +191,15 @@ async def _split_config_handler(request: web.Request) -> web.Response:
         cfg = _prepare_reality_config(cfg)
 
         exclusions = list_key_exclusions(int(key["id"]))
-        fmt = (request.query.get("format") or "xray").strip().lower()
+        fmt = (request.query.get("format") or "").strip().lower()
+        if not fmt:
+            path = (request.path or "").lower()
+            user_agent = (request.headers.get("User-Agent") or "").lower()
+            # HApp/Hiddify and /sub endpoints expect sing-box JSON format by default.
+            if path.startswith("/sub/") or any(x in user_agent for x in ("hiddify", "happ", "sing-box", "nekobox")):
+                fmt = "singbox"
+            else:
+                fmt = "xray"
         download = (request.query.get("download") or "").strip().lower() in {"1", "true", "yes"}
         logger.info(
             "Split-config request: key_id=%s format=%s download=%s exclusions=%s",
@@ -216,6 +224,7 @@ async def _split_config_handler(request: web.Request) -> web.Response:
         headers = {
             **_cache_headers(),
             "X-Split-Config": "1",
+            "X-Split-Config-Format": fmt,
         }
         if download:
             headers["Content-Disposition"] = f'attachment; filename="split_{fmt}_{key["id"]}.json"'

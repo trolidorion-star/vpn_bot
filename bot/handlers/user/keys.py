@@ -464,7 +464,8 @@ async def key_excl_smart_link(callback: CallbackQuery):
         await callback.answer()
         return
 
-    # Keep plain URL without format query for better client import compatibility.
+    separator = "&" if "?" in link else "?"
+    link = f"{link}{separator}format=singbox"
     await _show_key_exclusions_menu(
         callback.message,
         callback.from_user.id,
@@ -472,7 +473,7 @@ async def key_excl_smart_link(callback: CallbackQuery):
         prepend=(
             "🔗 <b>Умная ссылка с автообновлением</b>\n"
             f"<code>{escape_html(link)}</code>\n"
-            "Импортируйте её в Xray-клиент как URL-конфиг (JSON по ссылке)."
+            "Импортируйте её в HApp/Hiddify (sing-box JSON по ссылке)."
         ),
     )
     await callback.answer("Ссылка готова")
@@ -482,7 +483,7 @@ async def key_excl_smart_link(callback: CallbackQuery):
 async def key_excl_export(callback: CallbackQuery):
     from database.requests import get_key_details_for_user, list_key_exclusions_for_user
     from bot.services.vpn_api import get_client
-    from bot.utils.key_generator import apply_exclusions_to_json, generate_json
+    from bot.utils.key_generator import generate_singbox_split_json
 
     key_id = int(callback.data.split(":")[1])
     telegram_id = callback.from_user.id
@@ -505,17 +506,16 @@ async def key_excl_export(callback: CallbackQuery):
         if not config:
             await callback.answer("❌ Не удалось получить конфиг с сервера", show_alert=True)
             return
-        base_json = generate_json(config)
-        split_json = apply_exclusions_to_json(base_json, exclusions)
+        split_json = generate_singbox_split_json(config, exclusions)
         doc = BufferedInputFile(
             split_json.encode("utf-8"),
-            filename=f"vpn_split_tunnel_xray_{key_id}.json",
+            filename=f"vpn_split_tunnel_singbox_{key_id}.json",
         )
         await callback.message.answer_document(
             document=doc,
             caption=(
-                "📦 <b>Готово: Xray config с исключениями</b>\n\n"
-                "Импортируйте этот JSON в Xray-клиент.\n"
+                "📦 <b>Готово: sing-box config с исключениями</b>\n\n"
+                "Импортируйте этот JSON в HApp/Hiddify.\n"
                 "Указанные сайты/приложения пойдут напрямую, без VPN."
             ),
             parse_mode="HTML",
