@@ -14,7 +14,7 @@ from bot.services.split_config_settings import (
     get_split_config_enabled,
     get_split_config_public_base_url,
 )
-from bot.services.vpn_api import get_client
+from bot.services.vpn_api import get_isolated_client
 from bot.utils.key_generator import (
     apply_exclusions_to_json,
     generate_json,
@@ -177,8 +177,14 @@ async def _split_config_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": "key not ready"}, status=409, headers=_cache_headers())
 
     try:
-        client = await get_client(int(key["server_id"]))
-        cfg = await client.get_client_config(str(key["panel_email"]))
+        client = await get_isolated_client(int(key["server_id"]))
+        try:
+            cfg = await client.get_client_config(str(key["panel_email"]))
+        finally:
+            try:
+                await client.close()
+            except Exception:
+                logger.exception("CRITICAL ERROR: failed to close isolated panel client")
         if not cfg:
             return web.json_response({"error": "config unavailable"}, status=502, headers=_cache_headers())
 

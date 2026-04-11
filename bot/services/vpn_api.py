@@ -11,15 +11,41 @@ from .panels.marzban import MarzbanClient
 
 logger = logging.getLogger(__name__)
 
-_clients: Dict[int, BaseVPNClient] = {}
+_clients: Dict[tuple[int, int], BaseVPNClient] = {}
 
-def get_client_from_server_data(server: Dict[str, Any]) -> BaseVPNClient:
+
+def _current_loop_id() -> int:
+    try:
+        return id(asyncio.get_running_loop())
+    except RuntimeError:
+        return 0
+
+
+def _cache_key(server_id: int) -> tuple[int, int]:
+    return (server_id, _current_loop_id())
+
+
+def _server_cache_keys(server_id: int) -> list[tuple[int, int]]:
+    return [key for key in _clients.keys() if key[0] == server_id]
+
+
+def _close_client_safely(client: BaseVPNClient) -> None:
+    try:
+        asyncio.get_running_loop().create_task(client.close())
+    except RuntimeError:
+        try:
+            asyncio.run(client.close())
+        except Exception:
+            pass
+
+def get_client_from_server_data(server: Dict[str, Any], isolated: bool = False) -> BaseVPNClient:
     """
     Создает или возвращает экземпляр клиента для API панели.
     """
     server_id = server['id']
-    if server_id in _clients:
-        return _clients[server_id]
+    key = _cache_key(server_id)
+    if not isolated and key in _clients:
+        return _clients[key]
         
     pass_type = server.get('panel_type', 'xui')
     if pass_type == 'marzban':
@@ -27,17 +53,19 @@ def get_client_from_server_data(server: Dict[str, Any]) -> BaseVPNClient:
     else:
         client = XUIClient(server)
         
-    _clients[server_id] = client
+    if not isolated:
+        _clients[key] = client
     return client
 
 def invalidate_client_cache(server_id: int):
-    """Инвалидирует сессию клиента."""
-    if server_id in _clients:
-        client = _clients[server_id]
-        import asyncio
-        asyncio.create_task(client.close())
-        del _clients[server_id]
-        logger.debug(f'Кэш клиента {server_id} очищен')
+    """Invalidate client sessions for all cached event loops."""
+    removed = False
+    for key in _server_cache_keys(server_id):
+        client = _clients.pop(key)
+        _close_client_safely(client)
+        removed = True
+    if removed:
+        logger.debug(f"Client cache for server {server_id} cleared")
 
 def format_traffic(bytes_count: int) -> str:
     """Форматирует байты в читабельный вид."""
@@ -75,12 +103,25 @@ async def get_client(server_id: int) -> XUIClient:
         ValueError: Если сервер не найден
     """
     from database.requests import get_server_by_id
-    if server_id in _clients:
-        return _clients[server_id]
+    key = _cache_key(server_id)
+    if key in _clients:
+        return _clients[key]
     server = get_server_by_id(server_id)
     if not server:
         raise ValueError(f'Сервер с ID {server_id} не найден')
-    return get_client_from_server_data(server)
+    return get_client_from_server_data(server, isolated=False)
+
+
+async def get_isolated_client(server_id: int) -> XUIClient:
+    """
+    Return a fresh client instance without using global cache.
+    Use this for isolated event loops (for example split-config server thread).
+    """
+    from database.requests import get_server_by_id
+    server = get_server_by_id(server_id)
+    if not server:
+        raise ValueError(f"Server with ID {server_id} was not found")
+    return get_client_from_server_data(server, isolated=True)
 
 async def test_server_connection(server_data: Dict[str, Any]) -> Dict[str, Any]:
     """
@@ -373,7 +414,7 @@ def restore_traffic_limit_in_db(key_id: int) -> bool:
 
 __all__ = [
     "VPNAPIError", "get_client_from_server_data", "invalidate_client_cache",
-    "format_traffic", "close_all_clients", "get_client", "test_server_connection",
+    "format_traffic", "close_all_clients", "get_client", "get_isolated_client", "test_server_connection",
     "reset_key_traffic_if_active", "extend_key_on_server", "restore_key_traffic_limit",
     "push_key_to_panel", "restore_traffic_limit_in_db"
 ]

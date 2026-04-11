@@ -49,18 +49,41 @@ class XUIClient(BaseVPNClient):
         self.base_url = f"{self.protocol}://{self.host}:{self.port}{path}"
         
         self.session: Optional[aiohttp.ClientSession] = None
+        self._session_loop_id: Optional[int] = None
         self.is_authenticated = False
         
         logger.debug(f"Инициализирован XUIClient для {server['name']}: {self.base_url}")
     
     async def _ensure_session(self) -> aiohttp.ClientSession:
         """Создаёт сессию если её нет."""
+        current_loop_id = id(asyncio.get_running_loop())
+        if (
+            self.session is not None
+            and not self.session.closed
+            and self._session_loop_id is not None
+            and self._session_loop_id != current_loop_id
+        ):
+            logger.warning(
+                "XUIClient session loop mismatch for %s: old=%s new=%s; recreating",
+                self.server.get("name"),
+                self._session_loop_id,
+                current_loop_id,
+            )
+            try:
+                await self.session.close()
+            except Exception:
+                pass
+            self.session = None
+            self._session_loop_id = None
+            self.is_authenticated = False
+
         if self.session is None or self.session.closed:
             # Unsafe=True важно для IP-адресов и самоподписанных сертификатов
             connector = aiohttp.TCPConnector(ssl=False)
             jar = aiohttp.CookieJar(unsafe=True)
             timeout = aiohttp.ClientTimeout(total=5)
             self.session = aiohttp.ClientSession(connector=connector, cookie_jar=jar, timeout=timeout)
+            self._session_loop_id = current_loop_id
             self.is_authenticated = False
             logger.debug(f"Создана новая сессия для {self.server['name']}")
         return self.session
@@ -77,6 +100,7 @@ class XUIClient(BaseVPNClient):
             except Exception as e:
                 logger.debug(f"Ошибка при закрытии сессии: {e}")
         self.session = None
+        self._session_loop_id = None
         self.is_authenticated = False
         logger.debug(f"Сессия сброшена для {self.server['name']}")
     
