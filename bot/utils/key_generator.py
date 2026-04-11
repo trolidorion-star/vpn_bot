@@ -150,6 +150,180 @@ def apply_exclusions_to_json(base_json: str, exclusions: List[Dict[str, Any]]) -
     return json.dumps(data, indent=2, ensure_ascii=False)
 
 
+def _split_exclusions(exclusions: List[Dict[str, Any]]) -> tuple[List[str], List[str]]:
+    domains: List[str] = []
+    ips: List[str] = []
+    for item in exclusions or []:
+        if (item.get("rule_type") or "").lower() != "domain":
+            continue
+        value = (item.get("rule_value") or "").strip().lower()
+        if not value:
+            continue
+        value = value.replace("https://", "").replace("http://", "")
+        value = value.split("/")[0].strip().strip(".")
+        if value.startswith("www."):
+            value = value[4:]
+        if not value:
+            continue
+        try:
+            if "/" in value:
+                ips.append(str(ipaddress.ip_network(value, strict=False)))
+            else:
+                ips.append(str(ipaddress.ip_address(value)))
+            continue
+        except ValueError:
+            pass
+
+        if "." not in value:
+            continue
+        if not re.fullmatch(r"[a-z0-9.-]+", value):
+            continue
+        if ".." in value:
+            continue
+        domains.append(value)
+    return sorted(set(domains)), sorted(set(ips))
+
+
+def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[str, Any]]) -> str:
+    """
+    Generates sing-box client JSON with split rules (direct for exclusions).
+    """
+    protocol = (config.get("protocol") or "vless").lower()
+    stream = config.get("stream_settings", {}) or {}
+    network = stream.get("network", "tcp")
+    security = (stream.get("security") or "none").lower()
+    host = config.get("host")
+    port = int(config.get("port", 443))
+    domains, ips = _split_exclusions(exclusions)
+
+    proxy: Dict[str, Any]
+    if protocol == "vmess":
+        proxy = {
+            "type": "vmess",
+            "tag": "proxy",
+            "server": host,
+            "server_port": port,
+            "uuid": config.get("uuid", ""),
+            "security": config.get("security_method", "auto"),
+        }
+    elif protocol == "trojan":
+        proxy = {
+            "type": "trojan",
+            "tag": "proxy",
+            "server": host,
+            "server_port": port,
+            "password": config.get("password") or config.get("uuid", ""),
+        }
+    elif protocol == "shadowsocks":
+        proxy = {
+            "type": "shadowsocks",
+            "tag": "proxy",
+            "server": host,
+            "server_port": port,
+            "method": config.get("method", "aes-256-gcm"),
+            "password": config.get("password", ""),
+        }
+    else:
+        proxy = {
+            "type": "vless",
+            "tag": "proxy",
+            "server": host,
+            "server_port": port,
+            "uuid": config.get("uuid", ""),
+        }
+        flow = config.get("flow", "")
+        if flow:
+            proxy["flow"] = flow
+
+    # TLS / Reality mapping
+    if security in {"tls", "reality"}:
+        tls: Dict[str, Any] = {"enabled": True}
+        sni = ""
+        fp = ""
+        if security == "tls":
+            tls_settings = stream.get("tlsSettings", {}) or {}
+            sni = tls_settings.get("serverName") or ""
+            fp = (
+                (tls_settings.get("settings", {}) or {}).get("fingerprint")
+                or tls_settings.get("fingerprint")
+                or ""
+            )
+        else:
+            reality = stream.get("realitySettings", {}) or {}
+            inner = reality.get("settings", {}) or {}
+            sni = (
+                inner.get("serverName")
+                or reality.get("serverName")
+                or (reality.get("serverNames", [None])[0] or "")
+                or (str(reality.get("dest", "")).split(":")[0] if reality.get("dest") else "")
+            )
+            fp = inner.get("fingerprint") or reality.get("fingerprint") or "chrome"
+            pbk = inner.get("publicKey") or reality.get("publicKey") or ""
+            short_ids = reality.get("shortIds", []) or []
+            sid = (short_ids[0] if short_ids else "") or reality.get("shortId") or ""
+            reality_obj: Dict[str, Any] = {"enabled": True}
+            if pbk:
+                reality_obj["public_key"] = pbk
+            if sid:
+                reality_obj["short_id"] = sid
+            tls["reality"] = reality_obj
+        if sni:
+            tls["server_name"] = sni
+        if fp:
+            tls["utls"] = {"enabled": True, "fingerprint": fp}
+        proxy["tls"] = tls
+
+    # Transport mapping
+    transport: Dict[str, Any] = {}
+    if network == "ws":
+        ws = stream.get("wsSettings", {}) or {}
+        headers = ws.get("headers", {}) or {}
+        host_header = headers.get("Host") or headers.get("host") or ws.get("host") or ""
+        transport = {"type": "ws", "path": ws.get("path", "/")}
+        if host_header:
+            transport["headers"] = {"Host": host_header}
+    elif network == "grpc":
+        grpc = stream.get("grpcSettings", {}) or {}
+        transport = {"type": "grpc", "service_name": grpc.get("serviceName", "")}
+        if grpc.get("authority"):
+            transport["authority"] = grpc.get("authority")
+    # Unsupported/rare transport modes are skipped to keep config valid.
+    if transport:
+        proxy["transport"] = transport
+
+    route_rules: List[Dict[str, Any]] = [{"protocol": "dns", "outbound": "dns-out"}]
+    dns_rules: List[Dict[str, Any]] = []
+    if domains:
+        route_rules.append({"domain_suffix": domains, "outbound": "direct"})
+        dns_rules.append({"domain_suffix": domains, "server": "dns-local"})
+    if ips:
+        route_rules.append({"ip_cidr": ips, "outbound": "direct"})
+
+    result = {
+        "log": {"level": "warn"},
+        "dns": {
+            "servers": [
+                {"tag": "dns-remote", "address": "https://1.1.1.1/dns-query", "detour": "proxy"},
+                {"tag": "dns-local", "address": "local", "detour": "direct"},
+            ],
+            "rules": dns_rules,
+            "final": "dns-remote",
+            "strategy": "prefer_ipv4",
+        },
+        "outbounds": [
+            proxy,
+            {"type": "direct", "tag": "direct"},
+            {"type": "dns", "tag": "dns-out"},
+        ],
+        "route": {
+            "auto_detect_interface": True,
+            "rules": route_rules,
+            "final": "proxy",
+        },
+    }
+    return json.dumps(result, indent=2, ensure_ascii=False)
+
+
 # ============================================================================
 # ОБЩИЕ УТИЛИТЫ
 # ============================================================================

@@ -10,7 +10,11 @@ from bot.services.split_config_settings import (
     get_split_config_public_base_url,
 )
 from bot.services.vpn_api import get_client
-from bot.utils.key_generator import apply_exclusions_to_json, generate_json
+from bot.utils.key_generator import (
+    apply_exclusions_to_json,
+    generate_json,
+    generate_singbox_split_json,
+)
 from database.requests import (
     get_key_by_split_token,
     list_key_exclusions,
@@ -50,9 +54,13 @@ async def _split_config_handler(request: web.Request) -> web.Response:
         if not cfg:
             return web.json_response({"error": "config unavailable"}, status=502, headers=_cache_headers())
 
-        base_json = generate_json(cfg)
         exclusions = list_key_exclusions(int(key["id"]))
-        final_json = apply_exclusions_to_json(base_json, exclusions)
+        fmt = (request.query.get("format") or "singbox").strip().lower()
+        if fmt == "xray":
+            base_json = generate_json(cfg)
+            final_json = apply_exclusions_to_json(base_json, exclusions)
+        else:
+            final_json = generate_singbox_split_json(cfg, exclusions)
         return web.Response(
             text=final_json,
             status=200,
