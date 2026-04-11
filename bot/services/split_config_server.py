@@ -11,6 +11,7 @@ from bot.services.split_config_settings import (
     get_split_config_bind_host,
     get_split_config_bind_port,
     get_split_config_enabled,
+    get_split_config_public_base_url,
 )
 from bot.services.vpn_api import get_client
 from bot.utils.key_generator import apply_exclusions_to_json, generate_json
@@ -60,11 +61,12 @@ async def start_split_config_server() -> None:
 
     enabled = get_split_config_enabled()
     if not enabled:
-        logger.info("Split-config server disabled by settings.")
+        logger.info("Split-config server disabled by settings (resolved enabled=False).")
         return
 
     host = get_split_config_bind_host() or "0.0.0.0"
     port = get_split_config_bind_port()
+    public_base = get_split_config_public_base_url()
 
     app = web.Application()
     app.add_routes([web.get("/split/{token}", _split_config_handler)])
@@ -73,7 +75,12 @@ async def start_split_config_server() -> None:
     _site = web.TCPSite(_runner, host=host, port=port)
     try:
         await _site.start()
-        logger.info("Split-config server started on %s:%s", host, port)
+        logger.info(
+            "Split-config server started on %s:%s (public_base=%s)",
+            host,
+            port,
+            public_base or "<empty>",
+        )
     except Exception:
         await _runner.cleanup()
         _runner = None

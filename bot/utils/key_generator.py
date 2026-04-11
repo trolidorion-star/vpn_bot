@@ -81,7 +81,8 @@ def apply_exclusions_to_json(base_json: str, exclusions: List[Dict[str, Any]]) -
             elif value.replace(".", "").isdigit():
                 ips.append(value)
             else:
-                domains.append(value)
+                domains.append(f"domain:{value}")
+                domains.append(f"full:{value}")
 
     custom_rules: List[Dict[str, Any]] = []
     if domains:

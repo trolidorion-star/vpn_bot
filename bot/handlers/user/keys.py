@@ -449,7 +449,8 @@ async def key_excl_smart_link(callback: CallbackQuery):
             key_id,
             prepend=(
                 "🔗 <b>Умная ссылка пока не настроена на сервере</b>\n"
-                "Нужно включить split-config endpoint в settings.\n"
+                f"resolved: enabled=<code>{enabled}</code>, base_url=<code>{escape_html(base_url or '')}</code>\n"
+                "Проверьте config.py и перезапустите бота.\n"
                 "Пока используйте «📦 Скачать config»."
             ),
         )

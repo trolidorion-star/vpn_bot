@@ -13,10 +13,17 @@ from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import BOT_TOKEN
+import config as app_config
 from database.migrations import run_migrations
 
 from bot.services.vpn_api import close_all_clients
 from bot.services.split_config_server import start_split_config_server, stop_split_config_server
+from bot.services.split_config_settings import (
+    get_split_config_bind_host,
+    get_split_config_bind_port,
+    get_split_config_enabled,
+    get_split_config_public_base_url,
+)
 from bot.services.scheduler import (
     run_daily_tasks,
     run_update_check_scheduler,
@@ -61,6 +68,20 @@ logger = logging.getLogger(__name__)
 async def on_startup(bot: Bot):
     """Действия при запуске бота."""
     logger.info("🚀 Бот запускается...")
+    logger.info(
+        "DEBUG split-config raw: enabled=%s host=%s port=%s public_base=%s",
+        getattr(app_config, "SPLIT_CONFIG_ENABLED", None),
+        getattr(app_config, "SPLIT_CONFIG_BIND_HOST", None),
+        getattr(app_config, "SPLIT_CONFIG_BIND_PORT", None),
+        getattr(app_config, "SPLIT_CONFIG_PUBLIC_BASE_URL", None),
+    )
+    logger.info(
+        "DEBUG split-config resolved: enabled=%s host=%s port=%s public_base=%s",
+        get_split_config_enabled(),
+        get_split_config_bind_host(),
+        get_split_config_bind_port(),
+        get_split_config_public_base_url(),
+    )
     
     # Применяем миграции БД
     run_migrations()
