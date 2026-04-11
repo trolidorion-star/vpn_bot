@@ -1,6 +1,7 @@
 import logging
 import uuid
 import asyncio
+import math
 from datetime import datetime
 from typing import Optional
 from aiogram import Router, F
@@ -12,6 +13,7 @@ from config import ADMIN_IDS
 from database.requests import get_or_create_user, is_user_banned, get_all_servers, get_setting, is_referral_enabled, get_user_by_referral_code, set_user_referrer
 from bot.keyboards.user import main_menu_kb
 from bot.services.buy_key_timer import cancel_buy_key_timer
+from bot.services.exclusions_catalog import find_app, get_apps_for_category, get_categories
 from bot.services.key_limits import get_key_connection_limit
 from bot.states.user_states import KeyExclusions, RenameKey, ReplaceKey
 from bot.utils.text import escape_html, safe_edit_or_send
@@ -20,32 +22,7 @@ logger = logging.getLogger(__name__)
 
 router = Router()
 
-DISCORD_PRESET = {
-    "domains": [
-        "discord.com",
-        "discord.gg",
-        "discordapp.com",
-        "discordapp.net",
-        "discord.media",
-        "discordcdn.com",
-    ],
-    "processes": [
-        "discord.exe",
-        "discordcanary.exe",
-    ],
-}
-
-RU_PRESET_DOMAINS = [
-    "gosuslugi.ru",
-    "sberbank.ru",
-    "tinkoff.ru",
-    "vtb.ru",
-    "alfabank.ru",
-    "yandex.ru",
-    "mail.ru",
-    "vk.com",
-    "kinopoisk.ru",
-]
+APPS_PER_PAGE = 8
 
 
 def _normalize_domain(value: str) -> str:
@@ -57,19 +34,8 @@ def _normalize_domain(value: str) -> str:
     return v
 
 
-def _normalize_process(value: str) -> str:
-    return (value or "").strip().lower()
-
-
-def _is_package_name(value: str) -> bool:
-    v = (value or "").strip()
-    return "." in v and " " not in v and "/" not in v
-
-
 def _build_exclusions_text(key_name: str, exclusions: list[dict]) -> str:
     domains = [e["rule_value"] for e in exclusions if e.get("rule_type") == "domain"]
-    processes = [e["rule_value"] for e in exclusions if e.get("rule_type") == "process"]
-    packages = [e["rule_value"] for e in exclusions if e.get("rule_type") == "package"]
 
     lines = [
         f"🚫 <b>Исключения для ключа</b> <b>{escape_html(key_name)}</b>\n",
@@ -77,16 +43,12 @@ def _build_exclusions_text(key_name: str, exclusions: list[dict]) -> str:
         "выбранные сайты/приложения будут ходить <b>без VPN</b> (напрямую).\n",
     ]
     lines.append(f"🌐 Домены: <b>{len(domains)}</b>")
-    lines.append(f"🖥 Процессы (PC): <b>{len(processes)}</b>")
-    lines.append(f"📱 Пакеты (Android): <b>{len(packages)}</b>")
 
     preview = exclusions[:8]
     if preview:
         lines.append("\n<b>Текущий список:</b>")
         for item in preview:
-            kind = item["rule_type"]
-            icon = "🌐" if kind == "domain" else ("📱" if kind == "package" else "🖥")
-            lines.append(f"• {icon} {escape_html(item['rule_value'])}")
+            lines.append(f"• 🌐 {escape_html(item['rule_value'])}")
         if len(exclusions) > len(preview):
             lines.append(f"… и ещё {len(exclusions) - len(preview)}")
     else:
@@ -98,7 +60,15 @@ def _build_exclusions_text(key_name: str, exclusions: list[dict]) -> str:
     return "\n".join(lines)
 
 
-async def _show_key_exclusions_menu(message, telegram_id: int, key_id: int, state: Optional[FSMContext] = None, prepend: str = "") -> bool:
+async def _show_key_exclusions_menu(
+    message,
+    telegram_id: int,
+    key_id: int,
+    state: Optional[FSMContext] = None,
+    prepend: str = "",
+    category: str = "social",
+    page: int = 0,
+) -> bool:
     from bot.keyboards.user import key_exclusions_kb
     from database.requests import get_key_details_for_user, list_key_exclusions_for_user
 
@@ -110,12 +80,31 @@ async def _show_key_exclusions_menu(message, telegram_id: int, key_id: int, stat
     text = _build_exclusions_text(key["display_name"], exclusions)
     if prepend:
         text = f"{prepend}\n\n{text}"
+
+    categories = get_categories()
+    category_ids = [c[0] for c in categories]
+    if category not in category_ids and category_ids:
+        category = category_ids[0]
+    app_cards = get_apps_for_category(category)
+    total_pages = max(1, math.ceil(len(app_cards) / APPS_PER_PAGE))
+    page = max(0, min(page, total_pages - 1))
+    start = page * APPS_PER_PAGE
+    items = app_cards[start : start + APPS_PER_PAGE]
+
     if state:
         await state.clear()
     await safe_edit_or_send(
         message,
         text,
-        reply_markup=key_exclusions_kb(key_id, has_rules=bool(exclusions)),
+        reply_markup=key_exclusions_kb(
+            key_id=key_id,
+            has_rules=bool(exclusions),
+            categories=categories,
+            current_category=category,
+            apps=items,
+            page=page,
+            total_pages=total_pages,
+        ),
     )
     return True
 
@@ -343,75 +332,82 @@ async def key_exclusions_menu(callback: CallbackQuery, state: FSMContext):
 async def key_excl_add_domain(callback: CallbackQuery, state: FSMContext):
     key_id = int(callback.data.split(":")[1])
     await state.set_state(KeyExclusions.waiting_for_rule_value)
-    await state.update_data(key_excl_key_id=key_id, key_excl_mode="domain")
+    await state.update_data(key_excl_key_id=key_id)
     await safe_edit_or_send(
         callback.message,
         "🌐 <b>Добавление доменов в исключения</b>\n\n"
-        "Отправьте домен или список доменов через запятую/новую строку.\n"
+        "Отправьте домен (или IP/CIDR) списком через запятую/новую строку.\n"
         "Пример:\n<code>discord.com\nkinopoisk.ru\nsberbank.ru</code>",
     )
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("key_excl_add_app:"))
-async def key_excl_add_app(callback: CallbackQuery, state: FSMContext):
-    key_id = int(callback.data.split(":")[1])
-    await state.set_state(KeyExclusions.waiting_for_rule_value)
-    await state.update_data(key_excl_key_id=key_id, key_excl_mode="app")
-    await safe_edit_or_send(
+@router.callback_query(F.data.startswith("key_excl_cat:"))
+async def key_excl_category(callback: CallbackQuery):
+    parts = callback.data.split(":")
+    if len(parts) < 4:
+        await callback.answer()
+        return
+    key_id = int(parts[1])
+    category = parts[2]
+    try:
+        page = int(parts[3])
+    except ValueError:
+        page = 0
+    ok = await _show_key_exclusions_menu(
         callback.message,
-        "🖥 <b>Добавление приложений в исключения</b>\n\n"
-        "Для ПК укажите процесс (например <code>discord.exe</code>).\n"
-        "Для Android укажите package name (например <code>com.discord</code>).\n"
-        "Можно отправить несколько значений через запятую/новую строку.",
+        callback.from_user.id,
+        key_id,
+        category=category,
+        page=page,
     )
+    if not ok:
+        await callback.answer("❌ Ключ не найден", show_alert=True)
+        return
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("key_excl_preset_discord:"))
-async def key_excl_preset_discord(callback: CallbackQuery):
+@router.callback_query(F.data.startswith("key_excl_app:"))
+async def key_excl_add_popular_app(callback: CallbackQuery):
     from database.requests import add_key_exclusion_for_user, get_key_details_for_user
 
-    key_id = int(callback.data.split(":")[1])
+    parts = callback.data.split(":")
+    if len(parts) < 5:
+        await callback.answer()
+        return
+    key_id = int(parts[1])
+    app_id = parts[2]
+    category = parts[3]
+    try:
+        page = int(parts[4])
+    except ValueError:
+        page = 0
+
     telegram_id = callback.from_user.id
     key = get_key_details_for_user(key_id, telegram_id)
     if not key:
         await callback.answer("❌ Ключ не найден", show_alert=True)
         return
-
-    for domain in DISCORD_PRESET["domains"]:
-        add_key_exclusion_for_user(key_id, telegram_id, "domain", domain)
-    for proc in DISCORD_PRESET["processes"]:
-        add_key_exclusion_for_user(key_id, telegram_id, "process", proc)
-
-    await _show_key_exclusions_menu(
-        callback.message,
-        telegram_id,
-        key_id,
-        prepend="✅ Discord preset добавлен",
-    )
-    await callback.answer()
-
-
-@router.callback_query(F.data.startswith("key_excl_preset_ru:"))
-async def key_excl_preset_ru(callback: CallbackQuery):
-    from database.requests import add_key_exclusion_for_user, get_key_details_for_user
-
-    key_id = int(callback.data.split(":")[1])
-    telegram_id = callback.from_user.id
-    key = get_key_details_for_user(key_id, telegram_id)
-    if not key:
-        await callback.answer("❌ Ключ не найден", show_alert=True)
+    app = find_app(app_id)
+    if not app:
+        await callback.answer("❌ Приложение не найдено", show_alert=True)
         return
 
-    for domain in RU_PRESET_DOMAINS:
-        add_key_exclusion_for_user(key_id, telegram_id, "domain", domain)
+    added = 0
+    for domain in app.get("domains", []):
+        value = _normalize_domain(str(domain))
+        if not value:
+            continue
+        if add_key_exclusion_for_user(key_id, telegram_id, "domain", value):
+            added += 1
 
     await _show_key_exclusions_menu(
         callback.message,
         telegram_id,
         key_id,
-        prepend="✅ RU preset добавлен",
+        prepend=f"✅ {escape_html(app.get('name', 'Приложение'))}: добавлено {added} доменов",
+        category=category,
+        page=page,
     )
     await callback.answer()
 
@@ -427,14 +423,55 @@ async def key_excl_clear(callback: CallbackQuery):
         callback.from_user.id,
         key_id,
         prepend=f"🧹 Удалено правил: {deleted}",
+        category="social",
+        page=0,
     )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("key_excl_link:"))
+async def key_excl_smart_link(callback: CallbackQuery):
+    from database.requests import ensure_split_config_token_for_user, get_setting
+
+    key_id = int(callback.data.split(":")[1])
+    token = ensure_split_config_token_for_user(key_id, callback.from_user.id)
+    if not token:
+        await callback.answer("❌ Ключ не найден", show_alert=True)
+        return
+
+    base_url = (get_setting("split_config_public_base_url", "") or "").strip().rstrip("/")
+    enabled = get_setting("split_config_enabled", "0") == "1"
+    if not enabled or not base_url:
+        await _show_key_exclusions_menu(
+            callback.message,
+            callback.from_user.id,
+            key_id,
+            prepend=(
+                "🔗 <b>Умная ссылка пока не настроена на сервере</b>\n"
+                "Нужно включить split-config endpoint в settings.\n"
+                "Пока используйте «📦 Скачать config»."
+            ),
+        )
+        await callback.answer()
+        return
+
+    link = f"{base_url}/split/{token}"
+    await _show_key_exclusions_menu(
+        callback.message,
+        callback.from_user.id,
+        key_id,
+        prepend=(
+            "🔗 <b>Умная ссылка с автообновлением</b>\n"
+            f"<code>{escape_html(link)}</code>\n"
+            "Импортируйте её в клиент как конфиг по URL."
+        ),
+    )
+    await callback.answer("Ссылка готова")
 
 
 @router.callback_query(F.data.startswith("key_excl_export:"))
 async def key_excl_export(callback: CallbackQuery):
     from database.requests import get_key_details_for_user, list_key_exclusions_for_user
-    from bot.keyboards.user import key_exclusions_kb
     from bot.services.vpn_api import get_client
     from bot.utils.key_generator import apply_exclusions_to_json, generate_json
 
@@ -474,10 +511,11 @@ async def key_excl_export(callback: CallbackQuery):
             ),
             parse_mode="HTML",
         )
-        await safe_edit_or_send(
+        await _show_key_exclusions_menu(
             callback.message,
-            _build_exclusions_text(key["display_name"], exclusions),
-            reply_markup=key_exclusions_kb(key_id, has_rules=True),
+            telegram_id,
+            key_id,
+            prepend="✅ Файл с исключениями обновлён",
         )
     except Exception as e:
         logger.error("Ошибка экспорта split-tunnel config: %s", e)
@@ -488,8 +526,7 @@ async def key_excl_export(callback: CallbackQuery):
 
 @router.message(StateFilter(KeyExclusions.waiting_for_rule_value))
 async def key_excl_submit(message: Message, state: FSMContext):
-    from database.requests import add_key_exclusion_for_user, get_key_details_for_user, list_key_exclusions_for_user
-    from bot.keyboards.user import key_exclusions_kb
+    from database.requests import add_key_exclusion_for_user, get_key_details_for_user
 
     text = (message.text or "").strip()
     if not text:
@@ -503,7 +540,6 @@ async def key_excl_submit(message: Message, state: FSMContext):
         await safe_edit_or_send(message, "❌ Сессия добавления истекла. Откройте «Исключения» заново.", force_new=True)
         return
     key_id = int(raw_key_id)
-    mode = data.get("key_excl_mode")
     telegram_id = message.from_user.id
 
     key = get_key_details_for_user(key_id, telegram_id)
@@ -515,34 +551,21 @@ async def key_excl_submit(message: Message, state: FSMContext):
     chunks = [x.strip() for x in text.replace("\n", ",").split(",") if x.strip()]
     added = 0
     for raw in chunks:
-        if mode == "domain":
-            value = _normalize_domain(raw)
-            if not value:
-                continue
-            if add_key_exclusion_for_user(key_id, telegram_id, "domain", value):
-                added += 1
-            continue
-
-        value = _normalize_process(raw)
+        value = _normalize_domain(raw)
         if not value:
             continue
-        if _is_package_name(value):
-            if add_key_exclusion_for_user(key_id, telegram_id, "package", value):
-                added += 1
-        else:
-            if add_key_exclusion_for_user(key_id, telegram_id, "process", value):
-                added += 1
+        if add_key_exclusion_for_user(key_id, telegram_id, "domain", value):
+            added += 1
 
-    exclusions = list_key_exclusions_for_user(key_id, telegram_id)
     await state.clear()
-    await safe_edit_or_send(
+    await _show_key_exclusions_menu(
         message,
-        (
-            f"✅ Добавлено правил: <b>{added}</b>\n\n"
-            + _build_exclusions_text(key["display_name"], exclusions)
+        telegram_id,
+        key_id,
+        prepend=(
+            f"✅ Добавлено правил: <b>{added}</b>\n"
+            "Пример корректного значения: <code>discord.com</code> или <code>api.tbank.ru</code>"
         ),
-        reply_markup=key_exclusions_kb(key_id, has_rules=bool(exclusions)),
-        force_new=True,
     )
 
 @router.callback_query(F.data.startswith('key_renew:'))

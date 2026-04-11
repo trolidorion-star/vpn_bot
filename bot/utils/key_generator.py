@@ -67,8 +67,7 @@ def apply_exclusions_to_json(base_json: str, exclusions: List[Dict[str, Any]]) -
     rules = routing.setdefault("rules", [])
 
     domains: List[str] = []
-    processes: List[str] = []
-    packages: List[str] = []
+    ips: List[str] = []
 
     for item in exclusions:
         rule_type = (item.get("rule_type") or "").lower()
@@ -76,30 +75,13 @@ def apply_exclusions_to_json(base_json: str, exclusions: List[Dict[str, Any]]) -
         if not value:
             continue
         if rule_type == "domain":
-            # Универсальный вариант для Xray доменных правил.
-            domains.append(f"domain:{value}")
-        elif rule_type == "process":
-            processes.append(value)
-        elif rule_type == "package":
-            packages.append(value)
+            # Поддержка domain и raw IP/CIDR.
+            if "/" in value or value.replace(".", "").isdigit():
+                ips.append(value)
+            else:
+                domains.append(f"domain:{value}")
 
     custom_rules: List[Dict[str, Any]] = []
-    if processes:
-        custom_rules.append(
-            {
-                "type": "field",
-                "processName": sorted(set(processes)),
-                "outboundTag": "direct",
-            }
-        )
-    if packages:
-        custom_rules.append(
-            {
-                "type": "field",
-                "packageName": sorted(set(packages)),
-                "outboundTag": "direct",
-            }
-        )
     if domains:
         custom_rules.append(
             {
@@ -108,6 +90,18 @@ def apply_exclusions_to_json(base_json: str, exclusions: List[Dict[str, Any]]) -
                 "outboundTag": "direct",
             }
         )
+    if ips:
+        custom_rules.append(
+            {
+                "type": "field",
+                "ip": sorted(set(ips)),
+                "outboundTag": "direct",
+            }
+        )
+
+    # Важно: если не получилось собрать валидные поля, не добавляем пустые правила.
+    if not custom_rules:
+        return base_json
 
     routing["rules"] = custom_rules + rules
     return json.dumps(data, indent=2, ensure_ascii=False)

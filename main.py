@@ -16,6 +16,7 @@ from config import BOT_TOKEN
 from database.migrations import run_migrations
 
 from bot.services.vpn_api import close_all_clients
+from bot.services.split_config_server import start_split_config_server, stop_split_config_server
 from bot.services.scheduler import (
     run_daily_tasks,
     run_update_check_scheduler,
@@ -63,6 +64,7 @@ async def on_startup(bot: Bot):
     
     # Применяем миграции БД
     run_migrations()
+    await start_split_config_server()
     
     # Информация о боте
     bot_info = await bot.get_me()
@@ -76,6 +78,7 @@ async def on_shutdown(bot: Bot):
     
     # Закрываем все VPN API сессии
     await close_all_clients()
+    await stop_split_config_server()
     
     logger.info("✅ Бот остановлен")
 

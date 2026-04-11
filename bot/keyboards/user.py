@@ -499,17 +499,59 @@ def key_manage_kb(key_id: int, is_unconfigured: bool = False, is_active: bool = 
     return builder.as_markup()
 
 
-def key_exclusions_kb(key_id: int, has_rules: bool) -> InlineKeyboardMarkup:
-    """Клавиатура управления split-tunnel исключениями."""
+def key_exclusions_kb(
+    key_id: int,
+    has_rules: bool,
+    categories: list,
+    current_category: str,
+    apps: list,
+    page: int,
+    total_pages: int,
+) -> InlineKeyboardMarkup:
+    """Клавиатура управления split-tunnel исключениями с вкладками и карточками."""
     builder = InlineKeyboardBuilder()
 
+    tab_row = []
+    for cat_id, cat_title in categories:
+        mark = "● " if cat_id == current_category else ""
+        tab_row.append(
+            InlineKeyboardButton(
+                text=f"{mark}{cat_title}",
+                callback_data=f"key_excl_cat:{key_id}:{cat_id}:{page}",
+            )
+        )
+    if tab_row:
+        builder.row(*tab_row)
+
+    for app in apps:
+        app_id = app.get("id")
+        name = app.get("name", "App")
+        domains = app.get("domains", [])
+        builder.row(
+            InlineKeyboardButton(
+                text=f"➕ {name} ({len(domains)})",
+                callback_data=f"key_excl_app:{key_id}:{app_id}:{current_category}:{page}",
+            )
+        )
+
+    if total_pages > 1:
+        prev_page = max(0, page - 1)
+        next_page = min(total_pages - 1, page + 1)
+        builder.row(
+            InlineKeyboardButton(
+                text="⬅️",
+                callback_data=f"key_excl_cat:{key_id}:{current_category}:{prev_page}",
+            ),
+            InlineKeyboardButton(text=f"{page + 1}/{total_pages}", callback_data="noop"),
+            InlineKeyboardButton(
+                text="➡️",
+                callback_data=f"key_excl_cat:{key_id}:{current_category}:{next_page}",
+            ),
+        )
+
     builder.row(
-        InlineKeyboardButton(text="➕ Сайт / домен", callback_data=f"key_excl_add_domain:{key_id}"),
-        InlineKeyboardButton(text="➕ Приложение", callback_data=f"key_excl_add_app:{key_id}"),
-    )
-    builder.row(
-        InlineKeyboardButton(text="🎮 Discord preset", callback_data=f"key_excl_preset_discord:{key_id}"),
-        InlineKeyboardButton(text="🏦 RU preset", callback_data=f"key_excl_preset_ru:{key_id}"),
+        InlineKeyboardButton(text="➕ Добавить своё", callback_data=f"key_excl_add_domain:{key_id}"),
+        InlineKeyboardButton(text="🔗 Умная ссылка", callback_data=f"key_excl_link:{key_id}"),
     )
     builder.row(
         InlineKeyboardButton(text="📦 Скачать config", callback_data=f"key_excl_export:{key_id}")

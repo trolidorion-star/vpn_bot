@@ -28,7 +28,7 @@ def _add_column(conn: sqlite3.Connection, table: str, column_def: str) -> None:
 
 
 # Текущая версия схемы БД
-LATEST_VERSION = 24
+LATEST_VERSION = 25
 
 
 def get_current_version() -> int:
@@ -1658,6 +1658,39 @@ def migration_24(conn: sqlite3.Connection) -> None:
     logger.info("Migration v24 applied")
 
 
+def migration_25(conn: sqlite3.Connection) -> None:
+    """
+    Migration v25:
+    - Adds split-config token to vpn_keys for smart URL delivery.
+    - Adds settings for split-config HTTP endpoint.
+    """
+    logger.info("Applying migration v25 (split-config smart links)...")
+
+    _add_column(conn, "vpn_keys", "split_config_token TEXT")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_vpn_keys_split_config_token ON vpn_keys(split_config_token)"
+    )
+
+    defaults = [
+        ("split_config_enabled", "0"),
+        ("split_config_bind_host", "0.0.0.0"),
+        ("split_config_bind_port", "8081"),
+        ("split_config_public_base_url", ""),
+    ]
+    for key, value in defaults:
+        conn.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+            (key, value),
+        )
+
+    # Удаляем legacy-правила неподдерживаемых типов, чтобы не ломать клиентов.
+    conn.execute(
+        "DELETE FROM key_exclusions WHERE rule_type NOT IN ('domain')"
+    )
+
+    logger.info("Migration v25 applied")
+
+
 MIGRATIONS = {
     1: migration_1,
     2: migration_2,
@@ -1683,6 +1716,7 @@ MIGRATIONS = {
     22: migration_22,
     23: migration_23,
     24: migration_24,
+    25: migration_25,
 }
 
 

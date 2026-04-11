@@ -3,6 +3,7 @@ import logging
 import secrets
 import string
 import datetime
+import uuid
 from typing import Optional, List, Dict, Any, Tuple
 from .connection import get_db
 
@@ -36,6 +37,9 @@ __all__ = [
     'list_key_exclusions_for_user',
     'add_key_exclusion_for_user',
     'clear_key_exclusions_for_user',
+    'ensure_split_config_token_for_user',
+    'get_key_by_split_token',
+    'list_key_exclusions',
 ]
 
 def get_user_vpn_keys(user_id: int) -> List[Dict[str, Any]]:
@@ -692,9 +696,9 @@ def add_key_exclusion_for_user(
 ) -> bool:
     """
     Добавляет исключение для ключа (только для владельца ключа).
-    rule_type: domain | process | package
+    rule_type: domain
     """
-    if rule_type not in {"domain", "process", "package"}:
+    if rule_type not in {"domain"}:
         return False
     value = (rule_value or "").strip().lower()
     if not value:
@@ -743,3 +747,71 @@ def clear_key_exclusions_for_user(key_id: int, telegram_id: int) -> int:
             (key_id, telegram_id),
         )
         return cursor.rowcount
+
+
+def ensure_split_config_token_for_user(key_id: int, telegram_id: int) -> Optional[str]:
+    """
+    Возвращает (и при необходимости создаёт) токен умной ссылки для ключа пользователя.
+    """
+    with get_db() as conn:
+        row = conn.execute(
+            """
+            SELECT vk.split_config_token
+            FROM vpn_keys vk
+            JOIN users u ON u.id = vk.user_id
+            WHERE vk.id = ? AND u.telegram_id = ?
+            """,
+            (key_id, telegram_id),
+        ).fetchone()
+        if not row:
+            return None
+        token = row["split_config_token"]
+        if token:
+            return token
+        token = uuid.uuid4().hex
+        conn.execute(
+            "UPDATE vpn_keys SET split_config_token = ? WHERE id = ?",
+            (token, key_id),
+        )
+        return token
+
+
+def get_key_by_split_token(token: str) -> Optional[Dict[str, Any]]:
+    """
+    Находит ключ по split-конфиг токену для HTTP endpoint.
+    """
+    with get_db() as conn:
+        row = conn.execute(
+            """
+            SELECT
+                vk.id,
+                vk.server_id,
+                vk.panel_email,
+                vk.client_uuid,
+                vk.expires_at,
+                s.is_active as server_active
+            FROM vpn_keys vk
+            LEFT JOIN servers s ON s.id = vk.server_id
+            WHERE vk.split_config_token = ?
+            LIMIT 1
+            """,
+            (token,),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def list_key_exclusions(key_id: int) -> List[Dict[str, Any]]:
+    """
+    Возвращает все исключения по ключу без проверки владельца (для серверного endpoint).
+    """
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            SELECT id, rule_type, rule_value, created_at
+            FROM key_exclusions
+            WHERE key_id = ?
+            ORDER BY rule_type ASC, rule_value ASC
+            """,
+            (key_id,),
+        )
+        return [dict(row) for row in cursor.fetchall()]
