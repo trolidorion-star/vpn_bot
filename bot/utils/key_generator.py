@@ -7,6 +7,8 @@ import base64
 import urllib.parse
 import io
 import logging
+import ipaddress
+import re
 import qrcode
 from typing import Dict, Any, List
 
@@ -55,8 +57,8 @@ def generate_json(config: Dict[str, Any]) -> str:
 
 def apply_exclusions_to_json(base_json: str, exclusions: List[Dict[str, Any]]) -> str:
     """
-    Добавляет split-tunnel исключения в клиентский JSON.
-    Исключения направляются в outboundTag=direct.
+    Adds split-tunnel exclusions to client JSON.
+    Excluded destinations are routed via outboundTag=direct.
     """
     if not exclusions:
         return base_json
@@ -72,17 +74,34 @@ def apply_exclusions_to_json(base_json: str, exclusions: List[Dict[str, Any]]) -
     for item in exclusions:
         rule_type = (item.get("rule_type") or "").lower()
         value = (item.get("rule_value") or "").strip().lower()
+        if not value or rule_type != "domain":
+            continue
+
+        value = value.replace("https://", "").replace("http://", "")
+        value = value.split("/")[0].strip().strip(".")
+        if value.startswith("www."):
+            value = value[4:]
         if not value:
             continue
-        if rule_type == "domain":
-            # Поддержка обычных доменов и IP/CIDR.
+
+        # Normalize IP / CIDR values.
+        try:
             if "/" in value:
-                ips.append(value)
-            elif value.replace(".", "").isdigit():
-                ips.append(value)
-            else:
-                domains.append(f"domain:{value}")
-                domains.append(f"full:{value}")
+                ips.append(str(ipaddress.ip_network(value, strict=False)))
+                continue
+            ips.append(str(ipaddress.ip_address(value)))
+            continue
+        except ValueError:
+            pass
+
+        # Keep only valid domain-like values.
+        if "." not in value:
+            continue
+        if not re.fullmatch(r"[a-z0-9.-]+", value):
+            continue
+        if ".." in value:
+            continue
+        domains.append(f"domain:{value}")
 
     custom_rules: List[Dict[str, Any]] = []
     if domains:
@@ -102,11 +121,32 @@ def apply_exclusions_to_json(base_json: str, exclusions: List[Dict[str, Any]]) -
             }
         )
 
-    # Важно: если не получилось собрать валидные поля, не добавляем пустые правила.
     if not custom_rules:
         return base_json
 
-    routing["rules"] = custom_rules + rules
+    # Keep only valid pre-existing rules to avoid broken legacy entries.
+    valid_existing_rules: List[Dict[str, Any]] = []
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        if any(
+            rule.get(field)
+            for field in (
+                "domain",
+                "ip",
+                "port",
+                "sourcePort",
+                "network",
+                "protocol",
+                "attrs",
+                "source",
+                "user",
+                "inboundTag",
+            )
+        ):
+            valid_existing_rules.append(rule)
+
+    routing["rules"] = custom_rules + valid_existing_rules
     return json.dumps(data, indent=2, ensure_ascii=False)
 
 

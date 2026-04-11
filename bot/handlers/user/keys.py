@@ -15,7 +15,12 @@ from bot.keyboards.user import main_menu_kb
 from bot.services.buy_key_timer import cancel_buy_key_timer
 from bot.services.exclusions_catalog import find_app, get_apps_for_category, get_categories
 from bot.services.key_limits import get_key_connection_limit
-from bot.services.split_config_settings import get_split_config_enabled, get_split_config_public_base_url
+from bot.services.split_config_settings import (
+    get_split_config_enabled,
+    get_split_config_public_base_url,
+    get_split_config_public_url,
+    is_split_config_ready,
+)
 from bot.states.user_states import KeyExclusions, RenameKey, ReplaceKey
 from bot.utils.text import escape_html, safe_edit_or_send
 
@@ -440,9 +445,10 @@ async def key_excl_smart_link(callback: CallbackQuery):
         await callback.answer("❌ Ключ не найден", show_alert=True)
         return
 
-    base_url = get_split_config_public_base_url()
+    link = get_split_config_public_url(token)
     enabled = get_split_config_enabled()
-    if not enabled or not base_url:
+    base_url = get_split_config_public_base_url()
+    if not is_split_config_ready():
         await _show_key_exclusions_menu(
             callback.message,
             callback.from_user.id,
@@ -450,14 +456,13 @@ async def key_excl_smart_link(callback: CallbackQuery):
             prepend=(
                 "🔗 <b>Умная ссылка пока не настроена на сервере</b>\n"
                 f"resolved: enabled=<code>{enabled}</code>, base_url=<code>{escape_html(base_url or '')}</code>\n"
-                "Проверьте config.py и перезапустите бота.\n"
+                "Укажите в config.py параметр <code>SPLIT_CONFIG_PUBLIC_BASE_URL</code> и перезапустите бота.\n"
                 "Пока используйте «📦 Скачать config»."
             ),
         )
         await callback.answer()
         return
 
-    link = f"{base_url}/split/{token}"
     await _show_key_exclusions_menu(
         callback.message,
         callback.from_user.id,
@@ -465,7 +470,7 @@ async def key_excl_smart_link(callback: CallbackQuery):
         prepend=(
             "🔗 <b>Умная ссылка с автообновлением</b>\n"
             f"<code>{escape_html(link)}</code>\n"
-            "Импортируйте её в клиент как конфиг по URL."
+            "Импортируйте её в клиент как URL-конфиг (JSON по ссылке)."
         ),
     )
     await callback.answer("Ссылка готова")
