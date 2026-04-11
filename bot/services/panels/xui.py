@@ -867,6 +867,7 @@ class XUIClient(BaseVPNClient):
                 if target_client:
                     # Нашли клиента, возвращаем конфигурацию
                     stream_settings = json.loads(inbound.get("streamSettings", "{}"))
+                    stream_settings = self._ensure_reality_stream_settings(stream_settings, inbound)
                     protocol = inbound.get("protocol", "vless")
                     
                     # DEBUG: логируем stream_settings для отладки Reality-параметров
@@ -903,6 +904,104 @@ class XUIClient(BaseVPNClient):
         except Exception as e:
             logger.error(f"Error getting client config for {email}: {e}")
         return None
+
+    def _ensure_reality_stream_settings(self, stream_settings: Dict[str, Any], inbound: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(stream_settings, dict):
+            return stream_settings
+        if (stream_settings.get("security") or "").lower() != "reality":
+            return stream_settings
+
+        normalized = dict(stream_settings)
+        reality = normalized.get("realitySettings")
+        if not isinstance(reality, dict):
+            reality = {}
+        else:
+            reality = dict(reality)
+
+        settings = reality.get("settings")
+        if not isinstance(settings, dict):
+            settings = {}
+        else:
+            settings = dict(settings)
+
+        inbound_settings_raw = inbound.get("settings", "{}")
+        inbound_settings: Dict[str, Any] = {}
+        if isinstance(inbound_settings_raw, str):
+            try:
+                inbound_settings = json.loads(inbound_settings_raw or "{}")
+            except Exception:
+                inbound_settings = {}
+        elif isinstance(inbound_settings_raw, dict):
+            inbound_settings = inbound_settings_raw
+
+        inbound_stream_raw = inbound.get("streamSettings", {})
+        inbound_stream: Dict[str, Any] = {}
+        if isinstance(inbound_stream_raw, str):
+            try:
+                inbound_stream = json.loads(inbound_stream_raw or "{}")
+            except Exception:
+                inbound_stream = {}
+        elif isinstance(inbound_stream_raw, dict):
+            inbound_stream = inbound_stream_raw
+
+        inbound_reality = inbound_stream.get("realitySettings", {}) if isinstance(inbound_stream, dict) else {}
+        inbound_reality_settings = inbound_reality.get("settings", {}) if isinstance(inbound_reality, dict) else {}
+        settings_reality = inbound_settings.get("realitySettings", {}) if isinstance(inbound_settings, dict) else {}
+        settings_reality_inner = settings_reality.get("settings", {}) if isinstance(settings_reality, dict) else {}
+
+        def pick(*values: Any) -> str:
+            for value in values:
+                if value is None:
+                    continue
+                text = str(value).strip()
+                if text:
+                    return text
+            return ""
+
+        sni = pick(
+            settings.get("serverName"),
+            reality.get("serverName"),
+            ((reality.get("serverNames") or [None])[0] if isinstance(reality.get("serverNames"), list) else ""),
+            (str(reality.get("dest", "")).split(":")[0] if reality.get("dest") else ""),
+            settings_reality_inner.get("serverName"),
+            settings_reality.get("serverName"),
+            inbound_reality_settings.get("serverName"),
+            inbound_reality.get("serverName"),
+            inbound.get("serverName"),
+            inbound.get("sni"),
+            "www.microsoft.com",
+        )
+
+        pbk = pick(
+            settings.get("publicKey"),
+            reality.get("publicKey"),
+            settings_reality_inner.get("publicKey"),
+            settings_reality.get("publicKey"),
+            inbound_reality_settings.get("publicKey"),
+            inbound_reality.get("publicKey"),
+            inbound.get("publicKey"),
+            inbound.get("pbk"),
+        )
+
+        if sni:
+            settings["serverName"] = sni
+            reality["serverName"] = sni
+            server_names = reality.get("serverNames")
+            if not isinstance(server_names, list) or not any(pick(x) for x in server_names):
+                reality["serverNames"] = [sni]
+
+        if pbk:
+            settings["publicKey"] = pbk
+            reality["publicKey"] = pbk
+        else:
+            logger.error(
+                "[CRITICAL] Panel returned empty Reality settings for Inbound ID: %s.",
+                inbound.get("id"),
+            )
+
+        reality["settings"] = settings
+        normalized["realitySettings"] = reality
+        return normalized
 
     async def get_subscription_link(self, sub_id: str) -> Optional[str]:
         """

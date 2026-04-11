@@ -1,5 +1,6 @@
 import asyncio
 import copy
+import json
 import logging
 import os
 import threading
@@ -9,7 +10,6 @@ import config as app_config
 from aiohttp import web
 
 from bot.services.split_config_settings import (
-    get_split_config_bind_host,
     get_split_config_bind_port,
     get_split_config_enabled,
     get_split_config_public_base_url,
@@ -163,6 +163,7 @@ async def _split_config_handler(request: web.Request) -> web.Response:
     token = request.match_info.get("token", "").strip()
     if token.endswith(".json"):
         token = token[:-5]
+    logger.info("Request for token %s from IP %s", token or "<empty>", request.remote or "<unknown>")
     if not token:
         return web.json_response({"error": "invalid token"}, status=400, headers=_cache_headers())
 
@@ -199,6 +200,12 @@ async def _split_config_handler(request: web.Request) -> web.Response:
         else:
             base_json = generate_json(cfg)
             final_json = apply_exclusions_to_json(base_json, exclusions)
+        try:
+            parsed = json.loads(final_json)
+            if isinstance(parsed, dict) and parsed.get("error"):
+                raise web.HTTPInternalServerError(reason=str(parsed["error"]))
+        except json.JSONDecodeError:
+            pass
 
         headers = {
             **_cache_headers(),
@@ -213,6 +220,13 @@ async def _split_config_handler(request: web.Request) -> web.Response:
             content_type="application/json",
             charset="utf-8",
             headers=headers,
+        )
+    except web.HTTPException as http_exc:
+        logger.exception("Split-config HTTP error for token %s", token)
+        return web.json_response(
+            {"error": http_exc.reason or "internal error"},
+            status=500,
+            headers=_cache_headers(),
         )
     except Exception:
         logger.exception("Split-config endpoint error")
@@ -324,7 +338,7 @@ async def start_split_config_server(startup_timeout: float = 10.0) -> None:
         logger.info("Split-config server disabled: enabled=False and public_base_url is empty.")
         return
 
-    host = get_split_config_bind_host() or "0.0.0.0"
+    host = "0.0.0.0"
     port = get_split_config_bind_port()
 
     with _state_lock:

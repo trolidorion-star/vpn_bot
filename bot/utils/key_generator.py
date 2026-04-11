@@ -8,11 +8,130 @@ import urllib.parse
 import io
 import logging
 import ipaddress
+import os
 import re
 import qrcode
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
+
+try:
+    import config as app_config
+except Exception:
+    app_config = None
 
 logger = logging.getLogger(__name__)
+
+REALITY_CONFIG_MISSING_ERROR = "Reality configuration is missing on server side"
+
+
+def _first_non_blank(*values: Any) -> str:
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
+def _from_config_or_env(attr_names: tuple[str, ...], env_names: tuple[str, ...], default: str = "") -> str:
+    if app_config is not None:
+        for attr in attr_names:
+            if hasattr(app_config, attr):
+                value = _first_non_blank(getattr(app_config, attr))
+                if value:
+                    return value
+
+    for name in env_names:
+        value = _first_non_blank(os.getenv(name))
+        if value:
+            return value
+
+    return default
+
+
+def _fallback_reality_sni() -> str:
+    return _from_config_or_env(
+        (
+            "FALLBACK_REALITY_SNI",
+            "SPLIT_CONFIG_REALITY_FALLBACK_SNI",
+            "REALITY_FALLBACK_SNI",
+            "DEFAULT_REALITY_SNI",
+        ),
+        (
+            "FALLBACK_REALITY_SNI",
+            "SPLIT_CONFIG_REALITY_FALLBACK_SNI",
+            "REALITY_FALLBACK_SNI",
+            "DEFAULT_REALITY_SNI",
+        ),
+        default="www.microsoft.com",
+    )
+
+
+def _fallback_reality_pbk() -> str:
+    return _from_config_or_env(
+        (
+            "FALLBACK_REALITY_PBK",
+            "SPLIT_CONFIG_REALITY_FALLBACK_PUBLIC_KEY",
+            "REALITY_FALLBACK_PUBLIC_KEY",
+        ),
+        (
+            "FALLBACK_REALITY_PBK",
+            "SPLIT_CONFIG_REALITY_FALLBACK_PUBLIC_KEY",
+            "REALITY_FALLBACK_PUBLIC_KEY",
+        ),
+        default="",
+    )
+
+
+def _normalize_reality_stream(stream: Dict[str, Any]) -> tuple[Dict[str, Any], Optional[str]]:
+    security = (stream.get("security") or "").lower()
+    if security != "reality":
+        return stream, None
+
+    normalized_stream = dict(stream)
+    reality = normalized_stream.get("realitySettings")
+    if not isinstance(reality, dict):
+        reality = {}
+    else:
+        reality = dict(reality)
+
+    inner = reality.get("settings")
+    if not isinstance(inner, dict):
+        inner = {}
+    else:
+        inner = dict(inner)
+
+    sni = _first_non_blank(
+        inner.get("serverName"),
+        reality.get("serverName"),
+        ((reality.get("serverNames") or [None])[0] if isinstance(reality.get("serverNames"), list) else ""),
+        (str(reality.get("dest", "")).split(":")[0] if reality.get("dest") else ""),
+        _fallback_reality_sni(),
+    )
+    pbk = _first_non_blank(
+        inner.get("publicKey"),
+        reality.get("publicKey"),
+        _fallback_reality_pbk(),
+    )
+
+    if sni:
+        inner["serverName"] = sni
+        reality["serverName"] = sni
+        server_names = reality.get("serverNames")
+        if not isinstance(server_names, list) or not any(_first_non_blank(x) for x in server_names):
+            reality["serverNames"] = [sni]
+
+    if pbk:
+        inner["publicKey"] = pbk
+        reality["publicKey"] = pbk
+
+    reality["settings"] = inner
+    normalized_stream["realitySettings"] = reality
+
+    if not pbk:
+        return normalized_stream, REALITY_CONFIG_MISSING_ERROR
+
+    return normalized_stream, None
 
 
 # ============================================================================
@@ -42,7 +161,15 @@ def generate_json(config: Dict[str, Any]) -> str:
     Генерирует JSON-конфигурацию для Xray/V2Ray клиентов.
     Поддерживает: vless, vmess, trojan, shadowsocks.
     """
-    protocol = config.get('protocol', 'vless')
+    effective_config = dict(config or {})
+    stream = effective_config.get("stream_settings")
+    if isinstance(stream, dict):
+        normalized_stream, reality_error = _normalize_reality_stream(stream)
+        effective_config["stream_settings"] = normalized_stream
+        if reality_error:
+            return json.dumps({"error": reality_error}, ensure_ascii=False)
+
+    protocol = effective_config.get('protocol', 'vless')
     
     generators = {
         'vless': generate_vless_json,
@@ -52,7 +179,7 @@ def generate_json(config: Dict[str, Any]) -> str:
     }
     
     gen = generators.get(protocol, generate_vless_json)
-    return gen(config)
+    return gen(effective_config)
 
 
 def apply_exclusions_to_json(base_json: str, exclusions: List[Dict[str, Any]]) -> str:
@@ -191,12 +318,19 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
     """
     Generates sing-box client JSON with split rules (direct for exclusions).
     """
-    protocol = (config.get("protocol") or "vless").lower()
-    stream = config.get("stream_settings", {}) or {}
+    effective_config = dict(config or {})
+    stream = effective_config.get("stream_settings", {}) or {}
+    if isinstance(stream, dict):
+        stream, reality_error = _normalize_reality_stream(stream)
+        effective_config["stream_settings"] = stream
+        if reality_error:
+            return json.dumps({"error": reality_error}, ensure_ascii=False)
+
+    protocol = (effective_config.get("protocol") or "vless").lower()
     network = stream.get("network", "tcp")
     security = (stream.get("security") or "none").lower()
-    host = config.get("host")
-    port = int(config.get("port", 443))
+    host = effective_config.get("host")
+    port = int(effective_config.get("port", 443))
     domains, ips = _split_exclusions(exclusions)
 
     proxy: Dict[str, Any]
@@ -206,8 +340,8 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
             "tag": "proxy",
             "server": host,
             "server_port": port,
-            "uuid": config.get("uuid", ""),
-            "security": config.get("security_method", "auto"),
+            "uuid": effective_config.get("uuid", ""),
+            "security": effective_config.get("security_method", "auto"),
         }
     elif protocol == "trojan":
         proxy = {
@@ -215,7 +349,7 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
             "tag": "proxy",
             "server": host,
             "server_port": port,
-            "password": config.get("password") or config.get("uuid", ""),
+            "password": effective_config.get("password") or effective_config.get("uuid", ""),
         }
     elif protocol == "shadowsocks":
         proxy = {
@@ -223,8 +357,8 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
             "tag": "proxy",
             "server": host,
             "server_port": port,
-            "method": config.get("method", "aes-256-gcm"),
-            "password": config.get("password", ""),
+            "method": effective_config.get("method", "aes-256-gcm"),
+            "password": effective_config.get("password", ""),
         }
     else:
         proxy = {
@@ -232,9 +366,9 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
             "tag": "proxy",
             "server": host,
             "server_port": port,
-            "uuid": config.get("uuid", ""),
+            "uuid": effective_config.get("uuid", ""),
         }
-        flow = config.get("flow", "")
+        flow = effective_config.get("flow", "")
         if flow:
             proxy["flow"] = flow
 
@@ -427,7 +561,8 @@ def _parse_security_params(stream: dict, params: dict) -> None:
     
     elif security == 'reality':
         params['security'] = 'reality'
-        reality_settings = stream.get('realitySettings', {})
+        normalized_stream, _ = _normalize_reality_stream(stream if isinstance(stream, dict) else {})
+        reality_settings = normalized_stream.get('realitySettings', {}) if isinstance(normalized_stream, dict) else {}
         settings_inner = reality_settings.get('settings', {})
         
         # SNI
@@ -448,7 +583,7 @@ def _parse_security_params(stream: dict, params: dict) -> None:
         params['fp'] = fp
         
         # Public Key
-        pbk = settings_inner.get('publicKey', '') or reality_settings.get('publicKey', '')
+        pbk = settings_inner.get('publicKey', '') or reality_settings.get('publicKey', '') or _fallback_reality_pbk()
         if pbk:
             params['pbk'] = pbk
         
