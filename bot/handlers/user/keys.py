@@ -464,7 +464,7 @@ async def key_excl_smart_link(callback: CallbackQuery):
         await callback.answer()
         return
 
-    link = f"{link}?format=xray"
+    # Keep plain URL without format query for better client import compatibility.
     await _show_key_exclusions_menu(
         callback.message,
         callback.from_user.id,

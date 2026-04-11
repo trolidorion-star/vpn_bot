@@ -43,9 +43,11 @@ async def _split_config_handler(request: web.Request) -> web.Response:
 
     key = get_key_by_split_token(token)
     if not key:
+        logger.warning("Split-config token not found: %s", token)
         return web.json_response({"error": "not found"}, status=404, headers=_cache_headers())
 
     if not key.get("server_id") or not key.get("panel_email") or not key.get("server_active"):
+        logger.warning("Split-config key not ready: key_id=%s", key.get("id"))
         return web.json_response({"error": "key not ready"}, status=409, headers=_cache_headers())
 
     try:
@@ -56,21 +58,31 @@ async def _split_config_handler(request: web.Request) -> web.Response:
 
         exclusions = list_key_exclusions(int(key["id"]))
         fmt = (request.query.get("format") or "xray").strip().lower()
+        download = (request.query.get("download") or "").strip().lower() in {"1", "true", "yes"}
+        logger.info(
+            "Split-config request: key_id=%s format=%s download=%s exclusions=%s",
+            key.get("id"),
+            fmt,
+            download,
+            len(exclusions or []),
+        )
         if fmt == "singbox":
             final_json = generate_singbox_split_json(cfg, exclusions)
         else:
             base_json = generate_json(cfg)
             final_json = apply_exclusions_to_json(base_json, exclusions)
+        headers = {
+            **_cache_headers(),
+            "X-Split-Config": "1",
+        }
+        if download:
+            headers["Content-Disposition"] = f'attachment; filename="split_{fmt}_{key["id"]}.json"'
         return web.Response(
             text=final_json,
             status=200,
-            content_type="text/plain",
+            content_type="application/json",
             charset="utf-8",
-            headers={
-                **_cache_headers(),
-                "Content-Disposition": f'attachment; filename="split_{fmt}_{key["id"]}.json"',
-                "X-Split-Config": "1",
-            },
+            headers=headers,
         )
     except Exception as e:
         logger.error("Split-config endpoint error: %s", e)
@@ -101,6 +113,8 @@ async def start_split_config_server() -> None:
         [
             web.get("/split/{token}", _split_config_handler),
             web.get("/split/{token}.json", _split_config_handler),
+            web.get("/sub/{token}", _split_config_handler),
+            web.get("/sub/{token}.json", _split_config_handler),
             web.get("/split/health", _health_handler),
         ]
     )

@@ -520,18 +520,20 @@ def generate_vless_json(config: Dict[str, Any]) -> str:
     network = stream.get('network', 'tcp')
     security = stream.get('security', 'none')
     flow = config.get('flow', '')
-    
+    user = {
+        "id": config['uuid'],
+        "encryption": "none",
+    }
+    if flow:
+        user["flow"] = flow
+
     outbound = {
         "protocol": "vless",
         "settings": {
             "vnext": [{
                 "address": config['host'],
                 "port": config['port'],
-                "users": [{
-                    "id": config['uuid'],
-                    "encryption": "none",
-                    "flow": flow
-                }]
+                "users": [user]
             }]
         },
         "streamSettings": _build_stream_settings(stream),
@@ -762,7 +764,7 @@ def generate_shadowsocks_json(config: Dict[str, Any]) -> str:
 # ОБЩИЕ ХЕЛПЕРЫ ДЛЯ JSON
 # ============================================================================
 
-def _build_stream_settings(stream: dict) -> dict:
+def _build_stream_settings_legacy(stream: dict) -> dict:
     """Строит объект streamSettings для JSON-конфига."""
     network = stream.get('network', 'tcp')
     security = stream.get('security', 'none')
@@ -792,6 +794,128 @@ def _build_stream_settings(stream: dict) -> dict:
         result['realitySettings'] = stream['realitySettings']
     
     return result
+
+
+def _compact_dict(data: dict) -> dict:
+    return {k: v for k, v in data.items() if v not in ("", None, [], {})}
+
+
+def _first_non_empty(*values):
+    for value in values:
+        if value not in (None, "", [], {}):
+            return value
+    return ""
+
+
+def _build_stream_settings(stream: dict) -> dict:
+    """РЎС‚СЂРѕРёС‚ outbound streamSettings РґР»СЏ Xray-РєР»РёРµРЅС‚Р° РёР· inbound РјРѕРґРµР»Рё 3x-ui."""
+    network = (stream.get("network") or "tcp").lower()
+    security = (stream.get("security") or "none").lower()
+
+    result = {
+        "network": network,
+        "security": security,
+    }
+
+    if network == "ws":
+        ws = stream.get("wsSettings", {}) or {}
+        headers = ws.get("headers", {}) or {}
+        host = _first_non_empty(ws.get("host"), headers.get("Host"), headers.get("host"))
+        result["wsSettings"] = _compact_dict(
+            {
+                "path": ws.get("path") or "/",
+                "headers": {"Host": host} if host else {},
+            }
+        )
+    elif network == "grpc":
+        grpc = stream.get("grpcSettings", {}) or {}
+        result["grpcSettings"] = _compact_dict(
+            {
+                "serviceName": grpc.get("serviceName"),
+                "authority": grpc.get("authority"),
+                "multiMode": grpc.get("multiMode") if isinstance(grpc.get("multiMode"), bool) else None,
+            }
+        )
+    elif network == "tcp":
+        tcp = stream.get("tcpSettings", {}) or {}
+        header = tcp.get("header", {}) or {}
+        header_type = (header.get("type") or "none").strip()
+        if header_type and header_type != "none":
+            result["tcpSettings"] = {"header": _compact_dict({"type": header_type})}
+    elif network == "kcp":
+        kcp = stream.get("kcpSettings", {}) or {}
+        header = kcp.get("header", {}) or {}
+        result["kcpSettings"] = _compact_dict(
+            {
+                "mtu": kcp.get("mtu"),
+                "tti": kcp.get("tti"),
+                "uplinkCapacity": kcp.get("uplinkCapacity"),
+                "downlinkCapacity": kcp.get("downlinkCapacity"),
+                "congestion": kcp.get("congestion") if isinstance(kcp.get("congestion"), bool) else None,
+                "readBufferSize": kcp.get("readBufferSize"),
+                "writeBufferSize": kcp.get("writeBufferSize"),
+                "seed": kcp.get("seed"),
+                "header": _compact_dict({"type": header.get("type") or "none"}),
+            }
+        )
+    elif network == "httpupgrade":
+        hu = stream.get("httpupgradeSettings", {}) or {}
+        headers = hu.get("headers", {}) or {}
+        host = _first_non_empty(hu.get("host"), headers.get("Host"), headers.get("host"))
+        result["httpupgradeSettings"] = _compact_dict(
+            {
+                "path": hu.get("path") or "/",
+                "host": host,
+            }
+        )
+    elif network == "xhttp":
+        xhttp = stream.get("xhttpSettings", {}) or {}
+        headers = xhttp.get("headers", {}) or {}
+        host = _first_non_empty(xhttp.get("host"), headers.get("Host"), headers.get("host"))
+        result["xhttpSettings"] = _compact_dict(
+            {
+                "path": xhttp.get("path") or "/",
+                "host": host,
+                "mode": xhttp.get("mode"),
+            }
+        )
+
+    if security == "tls":
+        tls_settings = stream.get("tlsSettings", {}) or {}
+        inner = tls_settings.get("settings", {}) or {}
+        alpn = tls_settings.get("alpn")
+        if isinstance(alpn, str):
+            alpn = [x.strip() for x in alpn.split(",") if x.strip()]
+        result["tlsSettings"] = _compact_dict(
+            {
+                "serverName": tls_settings.get("serverName"),
+                "fingerprint": _first_non_empty(inner.get("fingerprint"), tls_settings.get("fingerprint")),
+                "alpn": alpn if isinstance(alpn, list) else None,
+                "allowInsecure": tls_settings.get("allowInsecure") if isinstance(tls_settings.get("allowInsecure"), bool) else None,
+            }
+        )
+    elif security == "reality":
+        reality = stream.get("realitySettings", {}) or {}
+        inner = reality.get("settings", {}) or {}
+        short_ids = reality.get("shortIds", []) or []
+        short_id = _first_non_empty(short_ids[0] if short_ids else "", reality.get("shortId"))
+        result["realitySettings"] = _compact_dict(
+            {
+                "show": False,
+                "fingerprint": _first_non_empty(inner.get("fingerprint"), reality.get("fingerprint"), "chrome"),
+                "serverName": _first_non_empty(
+                    inner.get("serverName"),
+                    reality.get("serverName"),
+                    (reality.get("serverNames") or [None])[0],
+                    (str(reality.get("dest", "")).split(":")[0] if reality.get("dest") else ""),
+                ),
+                "publicKey": _first_non_empty(inner.get("publicKey"), reality.get("publicKey")),
+                "shortId": short_id,
+                "spiderX": _first_non_empty(inner.get("spiderX"), reality.get("spiderX"), "/"),
+            }
+        )
+
+    return _compact_dict(result)
 
 
 def _wrap_outbound(outbound: dict) -> str:
