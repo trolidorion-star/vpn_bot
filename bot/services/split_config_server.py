@@ -11,9 +11,8 @@ from bot.services.split_config_settings import (
 )
 from bot.services.vpn_api import get_client
 from bot.utils.key_generator import (
-    apply_exclusions_to_json,
-    generate_json,
     generate_singbox_split_json,
+    generate_xray_split_json,
 )
 from database.requests import (
     get_key_by_split_token,
@@ -69,8 +68,7 @@ async def _split_config_handler(request: web.Request) -> web.Response:
         if fmt == "singbox":
             final_json = generate_singbox_split_json(cfg, exclusions)
         else:
-            base_json = generate_json(cfg)
-            final_json = apply_exclusions_to_json(base_json, exclusions)
+            final_json = generate_xray_split_json(cfg, exclusions)
         headers = {
             **_cache_headers(),
             "X-Split-Config": "1",

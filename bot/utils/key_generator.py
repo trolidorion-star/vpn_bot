@@ -57,100 +57,13 @@ def generate_json(config: Dict[str, Any]) -> str:
 
 def apply_exclusions_to_json(base_json: str, exclusions: List[Dict[str, Any]]) -> str:
     """
-    Adds split-tunnel exclusions to client JSON.
-    Excluded destinations are routed via outboundTag=direct.
+    Добавляет split-tunnel правила к Xray JSON.
+    Гарантирует валидный routing без пустых полей.
     """
     data = json.loads(base_json)
-    routing = data.setdefault("routing", {})
-    routing.setdefault("domainStrategy", "IPIfNonMatch")
-    rules = routing.setdefault("rules", [])
-
-    domains: List[str] = []
-    ips: List[str] = []
-
-    for item in exclusions:
-        rule_type = (item.get("rule_type") or "").lower()
-        value = (item.get("rule_value") or "").strip().lower()
-        if not value or rule_type != "domain":
-            continue
-
-        value = value.replace("https://", "").replace("http://", "")
-        value = value.split("/")[0].strip().strip(".")
-        if value.startswith("www."):
-            value = value[4:]
-        if not value:
-            continue
-
-        # Normalize IP / CIDR values.
-        try:
-            if "/" in value:
-                ips.append(str(ipaddress.ip_network(value, strict=False)))
-                continue
-            ips.append(str(ipaddress.ip_address(value)))
-            continue
-        except ValueError:
-            pass
-
-        # Keep only valid domain-like values.
-        if "." not in value:
-            continue
-        if not re.fullmatch(r"[a-z0-9.-]+", value):
-            continue
-        if ".." in value:
-            continue
-        domains.append(f"domain:{value}")
-
-    custom_rules: List[Dict[str, Any]] = []
-    if domains:
-        custom_rules.append(
-            {
-                "type": "field",
-                "domain": sorted(set(domains)),
-                "outboundTag": "direct",
-            }
-        )
-    if ips:
-        custom_rules.append(
-            {
-                "type": "field",
-                "ip": sorted(set(ips)),
-                "outboundTag": "direct",
-            }
-        )
-
-    # Keep only valid pre-existing rules to avoid broken legacy entries.
-    valid_existing_rules: List[Dict[str, Any]] = []
-    for rule in rules:
-        if not isinstance(rule, dict):
-            continue
-        if any(
-            rule.get(field)
-            for field in (
-                "domain",
-                "ip",
-                "port",
-                "sourcePort",
-                "network",
-                "protocol",
-                "attrs",
-                "source",
-                "user",
-                "inboundTag",
-            )
-        ):
-            valid_existing_rules.append(rule)
-
-    if not valid_existing_rules:
-        valid_existing_rules = [
-            {
-                "type": "field",
-                "ip": ["geoip:private"],
-                "outboundTag": "direct",
-            }
-        ]
-
-    routing["rules"] = custom_rules + valid_existing_rules
-    return json.dumps(data, indent=2, ensure_ascii=False)
+    outbounds = data.get("outbounds", [])
+    proxy_outbound = outbounds[0] if outbounds and isinstance(outbounds[0], dict) else {}
+    return _build_xray_split_client_json(proxy_outbound, exclusions)
 
 
 def _split_exclusions(exclusions: List[Dict[str, Any]]) -> tuple[List[str], List[str]]:
@@ -185,6 +98,115 @@ def _split_exclusions(exclusions: List[Dict[str, Any]]) -> tuple[List[str], List
             continue
         domains.append(value)
     return sorted(set(domains)), sorted(set(ips))
+
+
+def _build_xray_split_rules(domains: List[str], ips: List[str]) -> List[Dict[str, Any]]:
+    rules: List[Dict[str, Any]] = []
+    if domains:
+        rules.append(
+            {
+                "type": "field",
+                "domain": [f"domain:{domain}" for domain in domains],
+                "outboundTag": "direct",
+            }
+        )
+    if ips:
+        rules.append(
+            {
+                "type": "field",
+                "ip": ips,
+                "outboundTag": "direct",
+            }
+        )
+    rules.append(
+        {
+            "type": "field",
+            "ip": ["geoip:private"],
+            "outboundTag": "direct",
+        }
+    )
+    if not domains and not ips:
+        rules.append(
+            {
+                "type": "field",
+                "domain": ["geosite:category-ads-all"],
+                "outboundTag": "blocked",
+            }
+        )
+    return rules
+
+
+def _normalize_vless_flow(flow: str, security: str, network: str) -> str:
+    value = (flow or "").strip()
+    if not value or value.lower() == "none":
+        return ""
+    if value != "xtls-rprx-vision":
+        return ""
+    if security not in {"reality", "tls"}:
+        return ""
+    if network not in {"tcp", "raw"}:
+        return ""
+    return value
+
+
+def _build_xray_split_client_json(proxy_outbound: Dict[str, Any], exclusions: List[Dict[str, Any]]) -> str:
+    domains, ips = _split_exclusions(exclusions)
+    proxy = proxy_outbound if proxy_outbound else {"protocol": "vless", "tag": "proxy", "settings": {"vnext": []}}
+    proxy["tag"] = "proxy"
+    final_config = {
+        "log": {"loglevel": "warning"},
+        "inbounds": [
+            {
+                "port": 1080,
+                "listen": "127.0.0.1",
+                "protocol": "socks",
+                "settings": {"udp": True},
+            }
+        ],
+        "outbounds": [
+            proxy,
+            {"protocol": "freedom", "tag": "direct"},
+            {"protocol": "blackhole", "tag": "blocked"},
+        ],
+        "routing": {
+            "domainStrategy": "IPIfNonMatch",
+            "rules": _build_xray_split_rules(domains, ips),
+        },
+    }
+    return json.dumps(final_config, indent=2, ensure_ascii=False)
+
+
+def generate_xray_split_json(config: Dict[str, Any], exclusions: List[Dict[str, Any]]) -> str:
+    """
+    Генерирует эталонный Xray JSON для VLESS+Reality с split-tunneling.
+    Outbounds: proxy, direct, blocked.
+    """
+    stream = config.get("stream_settings", {}) or {}
+    network = (stream.get("network") or "tcp").lower()
+    security = (stream.get("security") or "none").lower()
+    user: Dict[str, Any] = {
+        "id": config.get("uuid", ""),
+        "encryption": "none",
+    }
+    flow = _normalize_vless_flow(config.get("flow", ""), security, network)
+    if flow:
+        user["flow"] = flow
+
+    proxy_outbound: Dict[str, Any] = {
+        "tag": "proxy",
+        "protocol": "vless",
+        "settings": {
+            "vnext": [
+                {
+                    "address": config.get("host", ""),
+                    "port": int(config.get("port", 443)),
+                    "users": [user],
+                }
+            ]
+        },
+        "streamSettings": _build_stream_settings(stream),
+    }
+    return _build_xray_split_client_json(proxy_outbound, exclusions)
 
 
 def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[str, Any]]) -> str:
@@ -503,7 +525,8 @@ def generate_vless_link(config: Dict[str, Any]) -> str:
     _parse_security_params(stream, params)
     
     # Flow (для VLESS TCP + Reality/TLS)
-    flow = config.get('flow', '')
+    security = (stream.get('security') or 'none').lower()
+    flow = _normalize_vless_flow(config.get('flow', ''), security, network)
     if flow:
         params['flow'] = flow
     
@@ -519,7 +542,7 @@ def generate_vless_json(config: Dict[str, Any]) -> str:
     stream = config.get('stream_settings', {})
     network = stream.get('network', 'tcp')
     security = stream.get('security', 'none')
-    flow = config.get('flow', '')
+    flow = _normalize_vless_flow(config.get('flow', ''), security, network)
     user = {
         "id": config['uuid'],
         "encryption": "none",
