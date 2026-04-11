@@ -11,6 +11,7 @@ from bot.utils.admin import is_admin
 from bot.utils.text import escape_html, safe_edit_or_send
 from bot.states.admin_states import AdminStates
 from bot.keyboards.admin import users_menu_kb, users_list_kb, user_view_kb, user_ban_confirm_kb, key_view_kb, add_key_server_kb, add_key_inbound_kb, add_key_step_kb, add_key_confirm_kb, users_input_cancel_kb, key_action_cancel_kb, back_and_home_kb, home_only_kb
+from bot.services.key_limits import get_key_connection_limit
 from bot.services.vpn_api import get_client_from_server_data, VPNAPIError, format_traffic
 from bot.handlers.admin.users_manage import format_user_display, _show_user_view_edit
 from bot.handlers.admin.users_list import show_users_menu
@@ -333,7 +334,15 @@ async def confirm_add_key(callback: CallbackQuery, state: FSMContext, bot: Bot):
     try:
         client = get_client_from_server_data(server)
         flow = await client.get_inbound_flow(inbound_id)
-        result = await client.add_client(inbound_id=inbound_id, email=email, total_gb=traffic_gb, expire_days=days, limit_ip=1, tg_id=str(user_telegram_id), flow=flow)
+        result = await client.add_client(
+            inbound_id=inbound_id,
+            email=email,
+            total_gb=traffic_gb,
+            expire_days=days,
+            limit_ip=get_key_connection_limit(),
+            tg_id=str(user_telegram_id),
+            flow=flow,
+        )
         client_uuid = result['uuid']
         from database.requests import get_admin_tariff
         admin_tariff = get_admin_tariff()

@@ -8,6 +8,7 @@ from aiogram.filters import Command, CommandObject, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramForbiddenError
 from config import ADMIN_IDS
+from bot.services.buy_key_timer import cancel_buy_key_timer
 from database.requests import get_or_create_user, is_user_banned, get_all_servers, get_setting, is_referral_enabled, get_user_by_referral_code, set_user_referrer
 from bot.keyboards.user import main_menu_kb
 from bot.states.user_states import RenameKey, ReplaceKey
@@ -61,6 +62,7 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
     """Обработчик команды /start."""
     user_id = message.from_user.id
     username = message.from_user.username
+    cancel_buy_key_timer(user_id)
     logger.info(f'CMD_START: User {user_id} started bot')
     await state.clear()
     
@@ -170,7 +172,8 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
             "От: <b>%отправитель%</b>\n"
             "Для: <b>%получатель%</b>\n"
             "Тариф: <b>%тариф%</b>\n\n"
-            "Остался последний шаг: выберите сервер для нового ключа."
+            "Остался последний шаг: выберите сервер для нового ключа.\n"
+            "<i>Один ключ работает на 2 устройства.</i>"
         )
         receiver_data = get_message_data("gift_card_receiver_text", default_receiver_text)
         receiver_text = (receiver_data.get("text") or default_receiver_text)
@@ -238,6 +241,7 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
 async def callback_start(callback: CallbackQuery, state: FSMContext):
     """Возврат на главный экран по кнопке."""
     user_id = callback.from_user.id
+    cancel_buy_key_timer(user_id)
     if is_user_banned(user_id):
         await callback.answer('⛔ Доступ заблокирован', show_alert=True)
         return
@@ -257,6 +261,7 @@ async def cmd_help(message: Message, state: FSMContext):
     if is_user_banned(message.from_user.id):
         await safe_edit_or_send(message, '⛔ <b>Доступ заблокирован</b>\n\nВаш аккаунт заблокирован. Обратитесь в поддержку.', force_new=True)
         return
+    cancel_buy_key_timer(message.from_user.id)
     await state.clear()
     await show_help(message, is_callback=False)
 
@@ -308,6 +313,7 @@ async def show_help(message: 'Message', is_callback: bool = False):
 @router.callback_query(F.data == 'help')
 async def help_handler(callback: CallbackQuery):
     """Показывает справку по кнопке."""
+    cancel_buy_key_timer(callback.from_user.id)
     await show_help(callback.message, is_callback=True)
     await callback.answer()
 

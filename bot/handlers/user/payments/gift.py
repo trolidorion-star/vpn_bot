@@ -7,6 +7,7 @@ from aiogram.filters import StateFilter
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from bot.keyboards.user import tariff_select_kb, yookassa_qr_kb
+from bot.services.buy_key_timer import cancel_buy_key_timer
 from bot.services.flash_sale import apply_flash_sale_to_tariff, apply_flash_sale_to_tariffs
 from bot.services.billing import build_crypto_payment_url, extract_item_id_from_url, create_yookassa_qr_payment
 from bot.utils.text import escape_html, safe_edit_or_send
@@ -57,8 +58,9 @@ async def _show_gift_payment_methods(callback: CallbackQuery, state: FSMContext)
     text = (
         "🎁 <b>VPN в подарок</b>\n\n"
         f"Получатель: <b>{escape_html(recipient_name)}</b>\n\n"
-        "Подарите близкому безопасный интернет без лишних шагов.\n"
-        "После оплаты вы получите красивую карточку и ссылку активации."
+        "✨ Сделайте практичный цифровой подарок за 2 минуты.\n"
+        "После оплаты получите красивую карточку и личную ссылку активации."
+        "\n💡 Один ключ работает до 2 устройств одновременно."
         "\n\nВыберите способ оплаты:"
     )
     await safe_edit_or_send(
@@ -71,6 +73,7 @@ async def _show_gift_payment_methods(callback: CallbackQuery, state: FSMContext)
 
 @router.callback_query(F.data == "buy_key_gift")
 async def buy_key_gift_menu(callback: CallbackQuery, state: FSMContext):
+    cancel_buy_key_timer(callback.from_user.id)
     await state.set_state(GiftFlow.waiting_for_recipient_name)
     await state.update_data(gift_recipient_name=None)
 
@@ -83,7 +86,7 @@ async def buy_key_gift_menu(callback: CallbackQuery, state: FSMContext):
         (
             "🎁 <b>Подарочная карточка</b>\n\n"
             "Введите имя получателя (например: <i>Алексей</i>).\n"
-            "Это имя будет показано в карточке подарка."
+            "Это имя красиво появится в подарочной карточке."
         ),
         reply_markup=builder.as_markup(),
     )
@@ -138,9 +141,9 @@ async def gift_recipient_name_input(message: Message, state: FSMContext):
         return
 
     text = (
-        "🎁 <b>Получатель сохранён</b>\n\n"
+        "🎉 <b>Получатель сохранён</b>\n\n"
         f"Карточка для: <b>{escape_html(name)}</b>\n\n"
-        "Теперь выберите способ оплаты:"
+        "Остался последний шаг: выберите способ оплаты."
     )
     await safe_edit_or_send(
         message,
@@ -392,7 +395,8 @@ async def gift_crypto_invoice(callback: CallbackQuery, state: FSMContext):
             "🎁 <b>Подарок VPN (USDT)</b>\n\n"
             f"Тариф: <b>{escape_html(tariff['name'])}</b>\n"
             f"Сумма: <b>${price_usd:g}</b>\n\n"
-            "Нажмите кнопку ниже для оплаты."
+            "Нажмите кнопку ниже для оплаты.\n"
+            "<i>После оплаты вы получите готовую карточку со ссылкой для получателя.</i>"
         ),
         reply_markup=builder.as_markup(),
     )
@@ -447,7 +451,8 @@ async def gift_qr_create(callback: CallbackQuery, state: FSMContext):
         "🎁 <b>QR для оплаты подарка</b>\n\n"
         f"Тариф: <b>{escape_html(tariff['name'])}</b>\n"
         f"Сумма: <b>{int(price_rub)} ₽</b>\n\n"
-        "После оплаты нажмите «✅ Я оплатил»."
+        "После оплаты нажмите «✅ Я оплатил».\n"
+        "<i>Подарочная карточка сформируется автоматически.</i>"
     )
     await safe_edit_or_send(
         callback.message,

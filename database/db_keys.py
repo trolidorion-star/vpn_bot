@@ -33,6 +33,9 @@ __all__ = [
     'add_days_to_first_active_key',
     'set_key_expiration_hours',
     'get_user_by_panel_email',
+    'list_key_exclusions_for_user',
+    'add_key_exclusion_for_user',
+    'clear_key_exclusions_for_user',
 ]
 
 def get_user_vpn_keys(user_id: int) -> List[Dict[str, Any]]:
@@ -660,3 +663,83 @@ def get_user_by_panel_email(email: str) -> Optional[Dict[str, Any]]:
         """, (email,))
         row = cursor.fetchone()
         return dict(row) if row else None
+
+
+def list_key_exclusions_for_user(key_id: int, telegram_id: int) -> List[Dict[str, Any]]:
+    """
+    Возвращает список исключений для ключа пользователя.
+    """
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            SELECT e.id, e.rule_type, e.rule_value, e.created_at
+            FROM key_exclusions e
+            JOIN vpn_keys vk ON vk.id = e.key_id
+            JOIN users u ON u.id = vk.user_id
+            WHERE e.key_id = ? AND u.telegram_id = ?
+            ORDER BY e.rule_type ASC, e.rule_value ASC
+            """,
+            (key_id, telegram_id),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def add_key_exclusion_for_user(
+    key_id: int,
+    telegram_id: int,
+    rule_type: str,
+    rule_value: str,
+) -> bool:
+    """
+    Добавляет исключение для ключа (только для владельца ключа).
+    rule_type: domain | process | package
+    """
+    if rule_type not in {"domain", "process", "package"}:
+        return False
+    value = (rule_value or "").strip().lower()
+    if not value:
+        return False
+
+    with get_db() as conn:
+        owner = conn.execute(
+            """
+            SELECT 1
+            FROM vpn_keys vk
+            JOIN users u ON u.id = vk.user_id
+            WHERE vk.id = ? AND u.telegram_id = ?
+            """,
+            (key_id, telegram_id),
+        ).fetchone()
+        if not owner:
+            return False
+
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO key_exclusions (key_id, rule_type, rule_value)
+            VALUES (?, ?, ?)
+            """,
+            (key_id, rule_type, value),
+        )
+        return True
+
+
+def clear_key_exclusions_for_user(key_id: int, telegram_id: int) -> int:
+    """
+    Удаляет все исключения ключа пользователя.
+    Возвращает число удаленных записей.
+    """
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            DELETE FROM key_exclusions
+            WHERE key_id = ?
+              AND EXISTS (
+                SELECT 1
+                FROM vpn_keys vk
+                JOIN users u ON u.id = vk.user_id
+                WHERE vk.id = key_exclusions.key_id AND u.telegram_id = ?
+              )
+            """,
+            (key_id, telegram_id),
+        )
+        return cursor.rowcount

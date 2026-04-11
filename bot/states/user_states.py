@@ -20,3 +20,7 @@ class NewKeyConfig(StatesGroup):
 
 class GiftFlow(StatesGroup):
     waiting_for_recipient_name = State()
+
+
+class KeyExclusions(StatesGroup):
+    waiting_for_rule_value = State()

@@ -1,12 +1,11 @@
 import logging
 import uuid
-import asyncio
 from datetime import datetime
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command, CommandObject, StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.exceptions import TelegramForbiddenError, TelegramBadRequest
+from aiogram.exceptions import TelegramForbiddenError
 from config import ADMIN_IDS
 from database.requests import (
     get_or_create_user,
@@ -18,82 +17,17 @@ from database.requests import (
     set_user_referrer,
 )
 from bot.keyboards.user import main_menu_kb
+from bot.services.buy_key_timer import (
+    build_buy_key_text,
+    cancel_buy_key_timer,
+    start_buy_key_timer,
+)
 from bot.states.user_states import RenameKey, ReplaceKey
 from bot.utils.text import escape_html, safe_edit_or_send
 
 logger = logging.getLogger(__name__)
 
 router = Router()
-
-BUY_KEY_TIMER_INTERVAL_SECONDS = 5
-BUY_KEY_TIMER_MAX_SECONDS = 3600
-_buy_key_timer_tasks: dict[int, asyncio.Task] = {}
-
-
-def _build_sale_block(sale: dict, format_remaining_hms) -> str:
-    if not sale.get("active"):
-        return ""
-    return (
-        "\n\n🔥 <b>Скидка активна</b>\n"
-        f"Промокод: <code>{sale['promo_code']}</code>\n"
-        f"Цена: <b>{sale['sale_price_rub']} ₽</b> вместо <s>{sale['base_price_rub']} ₽</s>\n"
-        f"До конца: <b>{format_remaining_hms(sale['remaining_seconds'])}</b>"
-    )
-
-
-def _build_buy_key_text(prepayment_text: str, sale: dict, format_remaining_hms) -> str:
-    sale_block = _build_sale_block(sale, format_remaining_hms)
-    if prepayment_text:
-        return f"{prepayment_text}{sale_block}\n\nВыберите способ оплаты:"
-    return f"Выберите способ оплаты:{sale_block}"
-
-
-def _cancel_buy_key_timer(chat_id: int) -> None:
-    task = _buy_key_timer_tasks.pop(chat_id, None)
-    if task and not task.done():
-        task.cancel()
-
-
-async def _update_buy_key_message(message: Message, text: str, reply_markup) -> bool:
-    try:
-        if message.photo or message.video or message.animation or message.document:
-            await message.edit_caption(
-                caption=text,
-                parse_mode="HTML",
-                reply_markup=reply_markup,
-            )
-        else:
-            await message.edit_text(
-                text=text,
-                parse_mode="HTML",
-                reply_markup=reply_markup,
-            )
-        return True
-    except TelegramBadRequest as e:
-        err = str(e).lower()
-        if "message is not modified" in err:
-            return True
-        if "message to edit not found" in err or "message can't be edited" in err:
-            return False
-        logger.debug("Не удалось обновить экран покупки: %s", e)
-        return False
-    except Exception as e:
-        logger.debug("Фоновое обновление таймера остановлено: %s", e)
-        return False
-
-
-async def _run_buy_key_timer(message: Message, prepayment_text: str, reply_markup) -> None:
-    from bot.services.flash_sale import get_flash_sale_state, format_remaining_hms
-
-    steps = max(1, BUY_KEY_TIMER_MAX_SECONDS // BUY_KEY_TIMER_INTERVAL_SECONDS)
-    for _ in range(steps):
-        await asyncio.sleep(BUY_KEY_TIMER_INTERVAL_SECONDS)
-        sale = get_flash_sale_state()
-        text = _build_buy_key_text(prepayment_text, sale, format_remaining_hms)
-        ok = await _update_buy_key_message(message, text, reply_markup)
-        if not ok or not sale["active"]:
-            return
-
 
 @router.callback_query(F.data == "buy_key")
 async def buy_key_handler(callback: CallbackQuery):
@@ -165,7 +99,7 @@ async def buy_key_handler(callback: CallbackQuery):
     prepayment_text = prepayment_data.get("text", "") or ""
 
     sale = get_flash_sale_state()
-    text_override = _build_buy_key_text(prepayment_text, sale, format_remaining_hms)
+    text_override = build_buy_key_text(prepayment_text, sale, format_remaining_hms)
 
     kb = buy_key_kb(
         crypto_url=crypto_url,
@@ -200,8 +134,11 @@ async def buy_key_handler(callback: CallbackQuery):
             force_new=True,
         )
 
-    # Важно: фоновое обновление таймера отключено.
-    # Ранее оно могло перезаписывать текущий экран пользователя (например, "Справка" или flow оплаты)
-    # и возвращать его обратно на страницу покупки.
+    # Обновляем таймер только для текущего экрана «Купить ключ».
+    # Как только пользователь уходит в flow оплаты, таймер отменяется в платежных хендлерах.
+    if sale.get("active") and sent_message:
+        start_buy_key_timer(callback.from_user.id, sent_message, prepayment_text, kb)
+    else:
+        cancel_buy_key_timer(callback.from_user.id)
 
     await callback.answer()

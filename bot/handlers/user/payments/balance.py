@@ -4,6 +4,7 @@ from aiogram.types import Message, CallbackQuery, PreCheckoutQuery, LabeledPrice
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
+from bot.services.buy_key_timer import cancel_buy_key_timer
 from bot.utils.text import escape_html, safe_edit_or_send
 from config import ADMIN_IDS
 from bot.handlers.user.payments.base import _format_price_compact, _is_cards_via_yookassa_direct
@@ -62,6 +63,7 @@ async def _show_balance_payment_screen(callback: CallbackQuery, state: FSMContex
 @router.callback_query(F.data == 'pay_use_balance')
 async def pay_use_balance_buy_handler(callback: CallbackQuery, state: FSMContext):
     """Выбор тарифа для оплаты с баланса (новый ключ)."""
+    cancel_buy_key_timer(callback.from_user.id)
     from database.requests import get_all_tariffs, get_user_internal_id, is_referral_enabled, get_referral_reward_type, get_user_balance
     from bot.keyboards.user import tariff_select_kb
     from bot.keyboards.admin import home_only_kb

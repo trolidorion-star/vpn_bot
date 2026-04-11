@@ -484,6 +484,11 @@ def key_manage_kb(key_id: int, is_unconfigured: bool = False, is_active: bool = 
             InlineKeyboardButton(text="🔄 Заменить", callback_data=f"key_replace:{key_id}"),
             InlineKeyboardButton(text="✏️ Переименовать", callback_data=f"key_rename:{key_id}")
         )
+
+    if is_active:
+        builder.row(
+            InlineKeyboardButton(text="🚫 Исключения", callback_data=f"key_exclusions:{key_id}")
+        )
     
     # ТРЕТИЙ ряд (унифицированный): Инструкция и Мои ключи
     builder.row(
@@ -491,6 +496,31 @@ def key_manage_kb(key_id: int, is_unconfigured: bool = False, is_active: bool = 
         InlineKeyboardButton(text="🈴 На главную", callback_data="start")
     )
     
+    return builder.as_markup()
+
+
+def key_exclusions_kb(key_id: int, has_rules: bool) -> InlineKeyboardMarkup:
+    """Клавиатура управления split-tunnel исключениями."""
+    builder = InlineKeyboardBuilder()
+
+    builder.row(
+        InlineKeyboardButton(text="➕ Сайт / домен", callback_data=f"key_excl_add_domain:{key_id}"),
+        InlineKeyboardButton(text="➕ Приложение", callback_data=f"key_excl_add_app:{key_id}"),
+    )
+    builder.row(
+        InlineKeyboardButton(text="🎮 Discord preset", callback_data=f"key_excl_preset_discord:{key_id}"),
+        InlineKeyboardButton(text="🏦 RU preset", callback_data=f"key_excl_preset_ru:{key_id}"),
+    )
+    builder.row(
+        InlineKeyboardButton(text="📦 Скачать config", callback_data=f"key_excl_export:{key_id}")
+    )
+    if has_rules:
+        builder.row(
+            InlineKeyboardButton(text="🧹 Очистить", callback_data=f"key_excl_clear:{key_id}")
+        )
+    builder.row(
+        InlineKeyboardButton(text="⬅️ Назад к ключу", callback_data=f"key:{key_id}")
+    )
     return builder.as_markup()
 
 

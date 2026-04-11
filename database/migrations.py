@@ -28,7 +28,7 @@ def _add_column(conn: sqlite3.Connection, table: str, column_def: str) -> None:
 
 
 # Текущая версия схемы БД
-LATEST_VERSION = 23
+LATEST_VERSION = 24
 
 
 def get_current_version() -> int:
@@ -553,7 +553,7 @@ def migration_10(conn: sqlite3.Connection) -> None:
         "💳 *Купить ключ*\n\n"
         "🔐 *Что вы получаете:*\n"
         "• Доступ к нескольким серверам и протоколам\n"
-        "• 1 ключ \\= 1 устройство \\(одновременное подключение\\)\n"
+        "• 1 ключ \\= 2 устройства \\(одновременное подключение\\)\n"
         "• Лимит трафика: до 1 ТБ в месяц \\(сброс каждые 30 дней\\)\n\n"
         "⚠️ *Важно знать:*\n"
         "• Средства не возвращаются — услуга считается оказанной в момент получения ключа\n"
@@ -1152,7 +1152,7 @@ def migration_15(conn: sqlite3.Connection) -> None:
         "💳 *Купить ключ*\n\n"
         "🔐 *Что вы получаете:*\n"
         "• Доступ к нескольким серверам и протоколам\n"
-        "• 1 ключ \\= 1 устройство \\(одновременное подключение\\)\n"
+        "• 1 ключ \\= 2 устройства \\(одновременное подключение\\)\n"
         "• Лимит трафика: до 1 ТБ в месяц \\(сброс каждые 30 дней\\)\n\n"
         "⚠️ *Важно знать:*\n"
         "• Средства не возвращаются — услуга считается оказанной в момент получения ключа\n"
@@ -1164,7 +1164,7 @@ def migration_15(conn: sqlite3.Connection) -> None:
         "💳 <b>Купить ключ</b>\n\n"
         "🔐 <b>Что вы получаете:</b>\n"
         "• Доступ к нескольким серверам и протоколам\n"
-        "• 1 ключ = 1 устройство (одновременное подключение)\n"
+        "• 1 ключ = 2 устройства (одновременное подключение)\n"
         "• Лимит трафика: до 1 ТБ в месяц (сброс каждые 30 дней)\n\n"
         "⚠️ <b>Важно знать:</b>\n"
         "• Средства не возвращаются — услуга считается оказанной в момент получения ключа\n"
@@ -1579,7 +1579,8 @@ def migration_23(conn: sqlite3.Connection) -> None:
                 "🎁 <b>Подарок готов!</b>\n\n"
                 "Для: <b>%получатель%</b>\n"
                 "Тариф: <b>%тариф%</b>\n"
-                "Срок: <b>%дни%</b>\n\n"
+                "Срок: <b>%дни%</b>\n"
+                "Устройства: <b>до 2</b>\n\n"
                 "Отправьте получателю эту ссылку:\n"
                 "<code>%gift_link%</code>"
             ),
@@ -1591,7 +1592,8 @@ def migration_23(conn: sqlite3.Connection) -> None:
                 "От: <b>%отправитель%</b>\n"
                 "Для: <b>%получатель%</b>\n"
                 "Тариф: <b>%тариф%</b>\n\n"
-                "Остался последний шаг: выберите сервер для нового ключа."
+                "Остался последний шаг: выберите сервер для нового ключа.\n"
+                "<i>Один ключ работает на 2 устройства.</i>"
             ),
         ),
     ]
@@ -1602,6 +1604,58 @@ def migration_23(conn: sqlite3.Connection) -> None:
         )
 
     logger.info("Migration v23 applied")
+
+
+def migration_24(conn: sqlite3.Connection) -> None:
+    """
+    Migration v24:
+    - Adds key_exclusions table (split-tunnel rules per key).
+    - Sets default connection limit for one key to 2 devices.
+    - Updates default prepayment wording from 1 device to 2 devices.
+    """
+    logger.info("Applying migration v24 (key exclusions + 2 devices)...")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS key_exclusions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            key_id INTEGER NOT NULL,
+            rule_type TEXT NOT NULL,
+            rule_value TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (key_id) REFERENCES vpn_keys(id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_key_exclusions_unique ON key_exclusions(key_id, rule_type, rule_value)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_key_exclusions_key_id ON key_exclusions(key_id)"
+    )
+
+    conn.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+        ("key_connection_limit", "2"),
+    )
+
+    prepayment_row = conn.execute(
+        "SELECT value FROM settings WHERE key = ?",
+        ("prepayment_text",),
+    ).fetchone()
+    if prepayment_row and prepayment_row[0]:
+        updated = (
+            str(prepayment_row[0])
+            .replace("1 ключ \\= 1 устройство", "1 ключ \\= 2 устройства")
+            .replace("1 ключ = 1 устройство", "1 ключ = 2 устройства")
+        )
+        if updated != prepayment_row[0]:
+            conn.execute(
+                "UPDATE settings SET value = ? WHERE key = ?",
+                (updated, "prepayment_text"),
+            )
+
+    logger.info("Migration v24 applied")
 
 
 MIGRATIONS = {
@@ -1628,6 +1682,7 @@ MIGRATIONS = {
     21: migration_21,
     22: migration_22,
     23: migration_23,
+    24: migration_24,
 }
 
 

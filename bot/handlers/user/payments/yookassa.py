@@ -4,6 +4,7 @@ from aiogram.types import Message, CallbackQuery, PreCheckoutQuery, LabeledPrice
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
+from bot.services.buy_key_timer import cancel_buy_key_timer
 from bot.utils.text import escape_html, safe_edit_or_send
 from config import ADMIN_IDS
 from bot.handlers.user.payments.base import finalize_payment_ui
@@ -21,6 +22,7 @@ router = Router()
 @router.callback_query(F.data.startswith('pay_cards'))
 async def pay_cards_select_tariff(callback: CallbackQuery):
     """Выбор тарифа для оплаты Картой (Новый ключ)."""
+    cancel_buy_key_timer(callback.from_user.id)
     from database.requests import get_all_tariffs
     from bot.keyboards.user import tariff_select_kb
     from bot.keyboards.admin import home_only_kb
@@ -167,6 +169,7 @@ async def renew_cards_invoice(callback: CallbackQuery):
 @router.callback_query(F.data == 'pay_qr')
 async def pay_qr_select_tariff(callback: CallbackQuery):
     """Выбор тарифа для QR-оплаты (Новый ключ)."""
+    cancel_buy_key_timer(callback.from_user.id)
     from database.requests import get_all_tariffs
     from bot.keyboards.user import tariff_select_kb
     from bot.keyboards.admin import home_only_kb

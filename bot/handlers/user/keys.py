@@ -2,20 +2,122 @@ import logging
 import uuid
 import asyncio
 from datetime import datetime
+from typing import Optional
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, BufferedInputFile
 from aiogram.filters import Command, CommandObject, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramForbiddenError
 from config import ADMIN_IDS
 from database.requests import get_or_create_user, is_user_banned, get_all_servers, get_setting, is_referral_enabled, get_user_by_referral_code, set_user_referrer
 from bot.keyboards.user import main_menu_kb
-from bot.states.user_states import RenameKey, ReplaceKey
+from bot.services.buy_key_timer import cancel_buy_key_timer
+from bot.services.key_limits import get_key_connection_limit
+from bot.states.user_states import KeyExclusions, RenameKey, ReplaceKey
 from bot.utils.text import escape_html, safe_edit_or_send
 
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+DISCORD_PRESET = {
+    "domains": [
+        "discord.com",
+        "discord.gg",
+        "discordapp.com",
+        "discordapp.net",
+        "discord.media",
+        "discordcdn.com",
+    ],
+    "processes": [
+        "discord.exe",
+        "discordcanary.exe",
+    ],
+}
+
+RU_PRESET_DOMAINS = [
+    "gosuslugi.ru",
+    "sberbank.ru",
+    "tinkoff.ru",
+    "vtb.ru",
+    "alfabank.ru",
+    "yandex.ru",
+    "mail.ru",
+    "vk.com",
+    "kinopoisk.ru",
+]
+
+
+def _normalize_domain(value: str) -> str:
+    v = (value or "").strip().lower()
+    v = v.replace("https://", "").replace("http://", "")
+    v = v.split("/")[0].strip(".")
+    if v.startswith("www."):
+        v = v[4:]
+    return v
+
+
+def _normalize_process(value: str) -> str:
+    return (value or "").strip().lower()
+
+
+def _is_package_name(value: str) -> bool:
+    v = (value or "").strip()
+    return "." in v and " " not in v and "/" not in v
+
+
+def _build_exclusions_text(key_name: str, exclusions: list[dict]) -> str:
+    domains = [e["rule_value"] for e in exclusions if e.get("rule_type") == "domain"]
+    processes = [e["rule_value"] for e in exclusions if e.get("rule_type") == "process"]
+    packages = [e["rule_value"] for e in exclusions if e.get("rule_type") == "package"]
+
+    lines = [
+        f"🚫 <b>Исключения для ключа</b> <b>{escape_html(key_name)}</b>\n",
+        "Здесь можно настроить split-tunnel:",
+        "выбранные сайты/приложения будут ходить <b>без VPN</b> (напрямую).\n",
+    ]
+    lines.append(f"🌐 Домены: <b>{len(domains)}</b>")
+    lines.append(f"🖥 Процессы (PC): <b>{len(processes)}</b>")
+    lines.append(f"📱 Пакеты (Android): <b>{len(packages)}</b>")
+
+    preview = exclusions[:8]
+    if preview:
+        lines.append("\n<b>Текущий список:</b>")
+        for item in preview:
+            kind = item["rule_type"]
+            icon = "🌐" if kind == "domain" else ("📱" if kind == "package" else "🖥")
+            lines.append(f"• {icon} {escape_html(item['rule_value'])}")
+        if len(exclusions) > len(preview):
+            lines.append(f"… и ещё {len(exclusions) - len(preview)}")
+    else:
+        lines.append("\nПока пусто. Добавьте домен или приложение ниже.")
+
+    lines.append(
+        "\n<i>Важно: эти правила работают в JSON-конфиге, который вы скачиваете кнопкой «Скачать config».</i>"
+    )
+    return "\n".join(lines)
+
+
+async def _show_key_exclusions_menu(message, telegram_id: int, key_id: int, state: Optional[FSMContext] = None, prepend: str = "") -> bool:
+    from bot.keyboards.user import key_exclusions_kb
+    from database.requests import get_key_details_for_user, list_key_exclusions_for_user
+
+    key = get_key_details_for_user(key_id, telegram_id)
+    if not key:
+        return False
+
+    exclusions = list_key_exclusions_for_user(key_id, telegram_id)
+    text = _build_exclusions_text(key["display_name"], exclusions)
+    if prepend:
+        text = f"{prepend}\n\n{text}"
+    if state:
+        await state.clear()
+    await safe_edit_or_send(
+        message,
+        text,
+        reply_markup=key_exclusions_kb(key_id, has_rules=bool(exclusions)),
+    )
+    return True
 
 @router.message(Command('mykeys'))
 async def cmd_mykeys(message: Message, state: FSMContext):
@@ -23,6 +125,7 @@ async def cmd_mykeys(message: Message, state: FSMContext):
     if is_user_banned(message.from_user.id):
         await safe_edit_or_send(message, '⛔ <b>Доступ заблокирован</b>\n\nВаш аккаунт заблокирован. Обратитесь в поддержку.', force_new=True)
         return
+    cancel_buy_key_timer(message.from_user.id)
     await state.clear()
     await show_my_keys(message.from_user.id, message)
 
@@ -84,6 +187,7 @@ async def show_my_keys(telegram_id: int, message, is_callback: bool = True):
 async def my_keys_handler(callback: CallbackQuery):
     """Список VPN-ключей пользователя."""
     telegram_id = callback.from_user.id
+    cancel_buy_key_timer(telegram_id)
     await show_my_keys(telegram_id, callback.message)
     await callback.answer()
 
@@ -222,6 +326,224 @@ async def key_show_handler(callback: CallbackQuery):
         pass
     await send_key_with_qr(callback, key, key_show_kb(key_id))
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("key_exclusions:"))
+async def key_exclusions_menu(callback: CallbackQuery, state: FSMContext):
+    key_id = int(callback.data.split(":")[1])
+    telegram_id = callback.from_user.id
+    ok = await _show_key_exclusions_menu(callback.message, telegram_id, key_id, state=state)
+    if not ok:
+        await callback.answer("❌ Ключ не найден", show_alert=True)
+        return
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("key_excl_add_domain:"))
+async def key_excl_add_domain(callback: CallbackQuery, state: FSMContext):
+    key_id = int(callback.data.split(":")[1])
+    await state.set_state(KeyExclusions.waiting_for_rule_value)
+    await state.update_data(key_excl_key_id=key_id, key_excl_mode="domain")
+    await safe_edit_or_send(
+        callback.message,
+        "🌐 <b>Добавление доменов в исключения</b>\n\n"
+        "Отправьте домен или список доменов через запятую/новую строку.\n"
+        "Пример:\n<code>discord.com\nkinopoisk.ru\nsberbank.ru</code>",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("key_excl_add_app:"))
+async def key_excl_add_app(callback: CallbackQuery, state: FSMContext):
+    key_id = int(callback.data.split(":")[1])
+    await state.set_state(KeyExclusions.waiting_for_rule_value)
+    await state.update_data(key_excl_key_id=key_id, key_excl_mode="app")
+    await safe_edit_or_send(
+        callback.message,
+        "🖥 <b>Добавление приложений в исключения</b>\n\n"
+        "Для ПК укажите процесс (например <code>discord.exe</code>).\n"
+        "Для Android укажите package name (например <code>com.discord</code>).\n"
+        "Можно отправить несколько значений через запятую/новую строку.",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("key_excl_preset_discord:"))
+async def key_excl_preset_discord(callback: CallbackQuery):
+    from database.requests import add_key_exclusion_for_user, get_key_details_for_user
+
+    key_id = int(callback.data.split(":")[1])
+    telegram_id = callback.from_user.id
+    key = get_key_details_for_user(key_id, telegram_id)
+    if not key:
+        await callback.answer("❌ Ключ не найден", show_alert=True)
+        return
+
+    for domain in DISCORD_PRESET["domains"]:
+        add_key_exclusion_for_user(key_id, telegram_id, "domain", domain)
+    for proc in DISCORD_PRESET["processes"]:
+        add_key_exclusion_for_user(key_id, telegram_id, "process", proc)
+
+    await _show_key_exclusions_menu(
+        callback.message,
+        telegram_id,
+        key_id,
+        prepend="✅ Discord preset добавлен",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("key_excl_preset_ru:"))
+async def key_excl_preset_ru(callback: CallbackQuery):
+    from database.requests import add_key_exclusion_for_user, get_key_details_for_user
+
+    key_id = int(callback.data.split(":")[1])
+    telegram_id = callback.from_user.id
+    key = get_key_details_for_user(key_id, telegram_id)
+    if not key:
+        await callback.answer("❌ Ключ не найден", show_alert=True)
+        return
+
+    for domain in RU_PRESET_DOMAINS:
+        add_key_exclusion_for_user(key_id, telegram_id, "domain", domain)
+
+    await _show_key_exclusions_menu(
+        callback.message,
+        telegram_id,
+        key_id,
+        prepend="✅ RU preset добавлен",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("key_excl_clear:"))
+async def key_excl_clear(callback: CallbackQuery):
+    from database.requests import clear_key_exclusions_for_user
+
+    key_id = int(callback.data.split(":")[1])
+    deleted = clear_key_exclusions_for_user(key_id, callback.from_user.id)
+    await _show_key_exclusions_menu(
+        callback.message,
+        callback.from_user.id,
+        key_id,
+        prepend=f"🧹 Удалено правил: {deleted}",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("key_excl_export:"))
+async def key_excl_export(callback: CallbackQuery):
+    from database.requests import get_key_details_for_user, list_key_exclusions_for_user
+    from bot.keyboards.user import key_exclusions_kb
+    from bot.services.vpn_api import get_client
+    from bot.utils.key_generator import apply_exclusions_to_json, generate_json
+
+    key_id = int(callback.data.split(":")[1])
+    telegram_id = callback.from_user.id
+    key = get_key_details_for_user(key_id, telegram_id)
+    if not key:
+        await callback.answer("❌ Ключ не найден", show_alert=True)
+        return
+    if not key.get("server_id") or not key.get("panel_email"):
+        await callback.answer("❌ Ключ ещё не настроен", show_alert=True)
+        return
+
+    exclusions = list_key_exclusions_for_user(key_id, telegram_id)
+    if not exclusions:
+        await callback.answer("Добавьте хотя бы одно исключение", show_alert=True)
+        return
+
+    try:
+        client = await get_client(key["server_id"])
+        config = await client.get_client_config(key["panel_email"])
+        if not config:
+            await callback.answer("❌ Не удалось получить конфиг с сервера", show_alert=True)
+            return
+        base_json = generate_json(config)
+        split_json = apply_exclusions_to_json(base_json, exclusions)
+        doc = BufferedInputFile(
+            split_json.encode("utf-8"),
+            filename=f"vpn_split_tunnel_{key_id}.json",
+        )
+        await callback.message.answer_document(
+            document=doc,
+            caption=(
+                "📦 <b>Готово: config с исключениями</b>\n\n"
+                "Импортируйте этот JSON в клиент.\n"
+                "Указанные сайты/приложения пойдут напрямую, без VPN."
+            ),
+            parse_mode="HTML",
+        )
+        await safe_edit_or_send(
+            callback.message,
+            _build_exclusions_text(key["display_name"], exclusions),
+            reply_markup=key_exclusions_kb(key_id, has_rules=True),
+        )
+    except Exception as e:
+        logger.error("Ошибка экспорта split-tunnel config: %s", e)
+        await callback.answer("❌ Ошибка при формировании файла", show_alert=True)
+        return
+    await callback.answer()
+
+
+@router.message(StateFilter(KeyExclusions.waiting_for_rule_value))
+async def key_excl_submit(message: Message, state: FSMContext):
+    from database.requests import add_key_exclusion_for_user, get_key_details_for_user, list_key_exclusions_for_user
+    from bot.keyboards.user import key_exclusions_kb
+
+    text = (message.text or "").strip()
+    if not text:
+        await safe_edit_or_send(message, "Введите значение текстом.")
+        return
+
+    data = await state.get_data()
+    raw_key_id = data.get("key_excl_key_id")
+    if raw_key_id is None:
+        await state.clear()
+        await safe_edit_or_send(message, "❌ Сессия добавления истекла. Откройте «Исключения» заново.", force_new=True)
+        return
+    key_id = int(raw_key_id)
+    mode = data.get("key_excl_mode")
+    telegram_id = message.from_user.id
+
+    key = get_key_details_for_user(key_id, telegram_id)
+    if not key:
+        await state.clear()
+        await safe_edit_or_send(message, "❌ Ключ не найден.", force_new=True)
+        return
+
+    chunks = [x.strip() for x in text.replace("\n", ",").split(",") if x.strip()]
+    added = 0
+    for raw in chunks:
+        if mode == "domain":
+            value = _normalize_domain(raw)
+            if not value:
+                continue
+            if add_key_exclusion_for_user(key_id, telegram_id, "domain", value):
+                added += 1
+            continue
+
+        value = _normalize_process(raw)
+        if not value:
+            continue
+        if _is_package_name(value):
+            if add_key_exclusion_for_user(key_id, telegram_id, "package", value):
+                added += 1
+        else:
+            if add_key_exclusion_for_user(key_id, telegram_id, "process", value):
+                added += 1
+
+    exclusions = list_key_exclusions_for_user(key_id, telegram_id)
+    await state.clear()
+    await safe_edit_or_send(
+        message,
+        (
+            f"✅ Добавлено правил: <b>{added}</b>\n\n"
+            + _build_exclusions_text(key["display_name"], exclusions)
+        ),
+        reply_markup=key_exclusions_kb(key_id, has_rules=bool(exclusions)),
+        force_new=True,
+    )
 
 @router.callback_query(F.data.startswith('key_renew:'))
 async def key_renew_select_payment(callback: CallbackQuery):
@@ -405,8 +727,18 @@ async def key_replace_execute(callback: CallbackQuery, state: FSMContext):
             days_left += 1
         if days_left < 1:
             days_left = 1
+        connection_limit = get_key_connection_limit()
         flow = await new_client.get_inbound_flow(new_inbound_id)
-        res = await new_client.add_client(inbound_id=new_inbound_id, email=new_email, total_gb=limit_gb, expire_days=days_left, limit_ip=1, enable=True, tg_id=str(telegram_id), flow=flow)
+        res = await new_client.add_client(
+            inbound_id=new_inbound_id,
+            email=new_email,
+            total_gb=limit_gb,
+            expire_days=days_left,
+            limit_ip=connection_limit,
+            enable=True,
+            tg_id=str(telegram_id),
+            flow=flow,
+        )
         new_uuid = res['uuid']
         update_vpn_key_connection(key_id=key_id, server_id=new_server_id, panel_inbound_id=new_inbound_id, panel_email=new_email, client_uuid=new_uuid)
         if traffic_limit > 0:

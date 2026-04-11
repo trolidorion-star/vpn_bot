@@ -4,6 +4,7 @@ from aiogram.types import Message, CallbackQuery, PreCheckoutQuery, LabeledPrice
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
+from bot.services.key_limits import get_key_connection_limit
 from bot.utils.text import escape_html, safe_edit_or_send
 from config import ADMIN_IDS
 
@@ -113,8 +114,18 @@ async def process_new_key_final(callback: CallbackQuery, state: FSMContext, serv
         from database.requests import get_tariff_by_id as _get_tariff_for_limit
         _tariff_data = _get_tariff_for_limit(order['tariff_id'])
         limit_gb = (_tariff_data.get('traffic_limit_gb', 0) or 0) if _tariff_data else 0
+        connection_limit = get_key_connection_limit()
         flow = await client.get_inbound_flow(inbound_id)
-        res = await client.add_client(inbound_id=inbound_id, email=panel_email, total_gb=limit_gb, expire_days=days, limit_ip=1, enable=True, tg_id=str(telegram_id), flow=flow)
+        res = await client.add_client(
+            inbound_id=inbound_id,
+            email=panel_email,
+            total_gb=limit_gb,
+            expire_days=days,
+            limit_ip=connection_limit,
+            enable=True,
+            tg_id=str(telegram_id),
+            flow=flow,
+        )
         client_uuid = res['uuid']
         update_vpn_key_config(key_id=key_id, server_id=server_id, panel_inbound_id=inbound_id, panel_email=panel_email, client_uuid=client_uuid)
         update_payment_key_id(order_id, key_id)

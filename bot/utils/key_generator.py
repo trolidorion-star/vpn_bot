@@ -8,7 +8,7 @@ import urllib.parse
 import io
 import logging
 import qrcode
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +51,66 @@ def generate_json(config: Dict[str, Any]) -> str:
     
     gen = generators.get(protocol, generate_vless_json)
     return gen(config)
+
+
+def apply_exclusions_to_json(base_json: str, exclusions: List[Dict[str, Any]]) -> str:
+    """
+    Добавляет split-tunnel исключения в клиентский JSON.
+    Исключения направляются в outboundTag=direct.
+    """
+    if not exclusions:
+        return base_json
+
+    data = json.loads(base_json)
+    routing = data.setdefault("routing", {})
+    routing.setdefault("domainStrategy", "IPIfNonMatch")
+    rules = routing.setdefault("rules", [])
+
+    domains: List[str] = []
+    processes: List[str] = []
+    packages: List[str] = []
+
+    for item in exclusions:
+        rule_type = (item.get("rule_type") or "").lower()
+        value = (item.get("rule_value") or "").strip().lower()
+        if not value:
+            continue
+        if rule_type == "domain":
+            # Универсальный вариант для Xray доменных правил.
+            domains.append(f"domain:{value}")
+        elif rule_type == "process":
+            processes.append(value)
+        elif rule_type == "package":
+            packages.append(value)
+
+    custom_rules: List[Dict[str, Any]] = []
+    if processes:
+        custom_rules.append(
+            {
+                "type": "field",
+                "processName": sorted(set(processes)),
+                "outboundTag": "direct",
+            }
+        )
+    if packages:
+        custom_rules.append(
+            {
+                "type": "field",
+                "packageName": sorted(set(packages)),
+                "outboundTag": "direct",
+            }
+        )
+    if domains:
+        custom_rules.append(
+            {
+                "type": "field",
+                "domain": sorted(set(domains)),
+                "outboundTag": "direct",
+            }
+        )
+
+    routing["rules"] = custom_rules + rules
+    return json.dumps(data, indent=2, ensure_ascii=False)
 
 
 # ============================================================================

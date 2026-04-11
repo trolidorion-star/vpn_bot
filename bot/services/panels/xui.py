@@ -354,7 +354,7 @@ class XUIClient(BaseVPNClient):
         email: str,
         total_gb: int = 0,
         expire_days: int = 30,
-        limit_ip: int = 1,
+        limit_ip: int = 2,
         enable: bool = True,
         tg_id: str = "",
         flow: str = ""
@@ -367,7 +367,7 @@ class XUIClient(BaseVPNClient):
             email: Уникальный идентификатор клиента (используем user_{id})
             total_gb: Лимит трафика в ГБ (0 = без лимита)
             expire_days: Срок действия в днях (0 = бессрочно)
-            limit_ip: Ограничение по IP (1 = 1 устройство)
+            limit_ip: Ограничение по IP (2 = до 2 устройств)
             enable: Активен ли клиент
             tg_id: Telegram ID для уведомлений панели
             flow: Параметр flow (напр. 'xtls-rprx-vision' для VLESS Reality/TLS TCP)
@@ -594,7 +594,7 @@ class XUIClient(BaseVPNClient):
                 "clients": [{
                     "id": target_client.get('id'),
                     "email": target_client.get('email'),
-                    "limitIp": target_client.get('limitIp', 1),
+                    "limitIp": target_client.get('limitIp', 2),
                     "totalGB": total_bytes,
                     "expiryTime": target_client.get('expiryTime', 0),
                     "enable": target_client.get('enable', True),
@@ -640,7 +640,7 @@ class XUIClient(BaseVPNClient):
                             "password": client.get('password', ''),
                             "flow": client.get('flow', ''),
                             "email": client.get('email', ''),
-                            "limitIp": client.get('limitIp', 1),
+                            "limitIp": client.get('limitIp', 2),
                             "totalGB": client.get('totalGB', 0),
                             "expiryTime": client.get('expiryTime', 0),
                             "enable": client.get('enable', True),
@@ -725,7 +725,7 @@ class XUIClient(BaseVPNClient):
             "password": target_client.get('password', ''),
             "flow": target_client.get('flow', ''),
             "email": target_client.get('email', email),
-            "limitIp": target_client.get('limitIp', 1),
+            "limitIp": target_client.get('limitIp', 2),
             "totalGB": total_gb_bytes,          # ← Из нашей БД!
             "expiryTime": expiry_time_ms,        # ← Из нашей БД!
             "enable": target_client.get('enable', True),
@@ -820,7 +820,7 @@ class XUIClient(BaseVPNClient):
                     "password": target_client.get('password', ''),
                     "flow": target_client.get('flow', ''),
                     "email": target_client.get('email', ''),
-                    "limitIp": target_client.get('limitIp', 1),
+                    "limitIp": target_client.get('limitIp', 2),
                     "totalGB": target_client.get('totalGB', 0),
                     "expiryTime": new_expiry,
                     "enable": target_client.get('enable', True),
@@ -1087,7 +1087,7 @@ class XUIClient(BaseVPNClient):
             "password": target_client.get('password', ''),
             "flow": target_client.get('flow', ''),
             "email": target_client.get('email', ''),
-            "limitIp": target_client.get('limitIp', 1),
+            "limitIp": target_client.get('limitIp', 2),
             "totalGB": total_gb_bytes,
             "expiryTime": target_client.get('expiryTime', 0),
             "enable": target_client.get('enable', True),
