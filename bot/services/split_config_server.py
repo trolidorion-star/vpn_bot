@@ -1,4 +1,5 @@
 import logging
+import json
 from typing import Optional
 
 from aiohttp import web
@@ -31,6 +32,32 @@ def _cache_headers() -> dict:
         "Pragma": "no-cache",
         "Expires": "0",
     }
+
+
+def _extract_proxy_reality_snapshot(config_json: str) -> dict:
+    try:
+        data = json.loads(config_json)
+        outbounds = data.get("outbounds", []) or []
+        proxy = next((o for o in outbounds if isinstance(o, dict) and o.get("tag") == "proxy"), None)
+        if not proxy:
+            return {}
+        stream = proxy.get("streamSettings", {}) or {}
+        reality = stream.get("realitySettings", {}) or {}
+        inner = reality.get("settings", {}) or {}
+        vnext = ((proxy.get("settings") or {}).get("vnext") or [{}])[0] or {}
+        user = (vnext.get("users") or [{}])[0] or {}
+        return {
+            "address": vnext.get("address"),
+            "port": vnext.get("port"),
+            "security": stream.get("security"),
+            "network": stream.get("network"),
+            "sni": inner.get("serverName") or reality.get("serverName"),
+            "pbk": inner.get("publicKey") or reality.get("publicKey"),
+            "fp": inner.get("fingerprint") or reality.get("fingerprint"),
+            "flow": user.get("flow"),
+        }
+    except Exception:
+        return {}
 
 
 async def _split_config_handler(request: web.Request) -> web.Response:
@@ -69,6 +96,29 @@ async def _split_config_handler(request: web.Request) -> web.Response:
             final_json = generate_singbox_split_json(cfg, exclusions)
         else:
             final_json = generate_xray_split_json(cfg, exclusions)
+            snapshot = _extract_proxy_reality_snapshot(final_json)
+            if snapshot:
+                logger.info(
+                    "Split-config proxy snapshot: addr=%s port=%s sec=%s net=%s sni=%s pbk=%s fp=%s flow=%s",
+                    snapshot.get("address"),
+                    snapshot.get("port"),
+                    snapshot.get("security"),
+                    snapshot.get("network"),
+                    snapshot.get("sni"),
+                    bool(snapshot.get("pbk")),
+                    snapshot.get("fp"),
+                    snapshot.get("flow"),
+                )
+                if snapshot.get("security") == "reality" and (not snapshot.get("sni") or not snapshot.get("pbk")):
+                    logger.error(
+                        "Refusing to serve invalid Reality config: missing sni or publicKey (key_id=%s).",
+                        key.get("id"),
+                    )
+                    return web.json_response(
+                        {"error": "invalid reality config: missing sni/publicKey"},
+                        status=502,
+                        headers=_cache_headers(),
+                    )
         headers = {
             **_cache_headers(),
             "X-Split-Config": "1",
@@ -129,7 +179,8 @@ async def start_split_config_server() -> None:
             enabled,
             public_base or "<empty>",
         )
-    except Exception:
+    except Exception as e:
+        logger.exception("Failed to start split-config server on %s:%s: %s", host, port, e)
         await _runner.cleanup()
         _runner = None
         _site = None
