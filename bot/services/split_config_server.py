@@ -109,11 +109,11 @@ async def start_split_config_server() -> None:
     app = web.Application()
     app.add_routes(
         [
+            web.get("/split/health", _health_handler),
             web.get("/split/{token}", _split_config_handler),
             web.get("/split/{token}.json", _split_config_handler),
             web.get("/sub/{token}", _split_config_handler),
             web.get("/sub/{token}.json", _split_config_handler),
-            web.get("/split/health", _health_handler),
         ]
     )
 

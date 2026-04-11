@@ -482,7 +482,7 @@ async def key_excl_smart_link(callback: CallbackQuery):
 async def key_excl_export(callback: CallbackQuery):
     from database.requests import get_key_details_for_user, list_key_exclusions_for_user
     from bot.services.vpn_api import get_client
-    from bot.utils.key_generator import apply_exclusions_to_json, generate_json
+    from bot.utils.key_generator import generate_xray_split_json
 
     key_id = int(callback.data.split(":")[1])
     telegram_id = callback.from_user.id
@@ -505,8 +505,7 @@ async def key_excl_export(callback: CallbackQuery):
         if not config:
             await callback.answer("❌ Не удалось получить конфиг с сервера", show_alert=True)
             return
-        base_json = generate_json(config)
-        split_json = apply_exclusions_to_json(base_json, exclusions)
+        split_json = generate_xray_split_json(config, exclusions)
         doc = BufferedInputFile(
             split_json.encode("utf-8"),
             filename=f"vpn_split_tunnel_xray_{key_id}.json",

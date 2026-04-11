@@ -133,6 +133,15 @@ def _build_xray_split_rules(domains: List[str], ips: List[str]) -> List[Dict[str
                 "outboundTag": "blocked",
             }
         )
+    # Явный default-route, чтобы весь остальной трафик шёл через proxy
+    # независимо от поведения клиента по "outbounds[0] по умолчанию".
+    rules.append(
+        {
+            "type": "field",
+            "network": "tcp,udp",
+            "outboundTag": "proxy",
+        }
+    )
     return rules
 
 
@@ -155,6 +164,10 @@ def _build_xray_split_client_json(proxy_outbound: Dict[str, Any], exclusions: Li
     proxy["tag"] = "proxy"
     final_config = {
         "log": {"loglevel": "warning"},
+        "dns": {
+            "servers": ["1.1.1.1", "8.8.8.8", "localhost"],
+            "queryStrategy": "UseIP",
+        },
         "inbounds": [
             {
                 "port": 1080,
@@ -174,6 +187,76 @@ def _build_xray_split_client_json(proxy_outbound: Dict[str, Any], exclusions: Li
         },
     }
     return json.dumps(final_config, indent=2, ensure_ascii=False)
+
+
+def _build_xray_vless_stream_settings(stream: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Собирает streamSettings для Xray строго из безопасного white-list полей.
+    Это исключает попадание невалидных/лишних полей из 3x-ui в outbound.
+    """
+    network = (stream.get("network") or "tcp").lower()
+    security = (stream.get("security") or "none").lower()
+    result: Dict[str, Any] = {
+        "network": network,
+        "security": security,
+    }
+
+    if network == "ws":
+        ws = stream.get("wsSettings", {}) or {}
+        headers = ws.get("headers", {}) or {}
+        host = _first_non_empty(ws.get("host"), headers.get("Host"), headers.get("host"))
+        result["wsSettings"] = _compact_dict(
+            {
+                "path": ws.get("path") or "/",
+                "headers": {"Host": host} if host else {},
+            }
+        )
+    elif network == "grpc":
+        grpc = stream.get("grpcSettings", {}) or {}
+        result["grpcSettings"] = _compact_dict(
+            {
+                "serviceName": grpc.get("serviceName"),
+                "authority": grpc.get("authority"),
+                "multiMode": grpc.get("multiMode") if isinstance(grpc.get("multiMode"), bool) else None,
+            }
+        )
+
+    if security == "tls":
+        tls = stream.get("tlsSettings", {}) or {}
+        inner = tls.get("settings", {}) or {}
+        alpn = tls.get("alpn")
+        if isinstance(alpn, str):
+            alpn = [x.strip() for x in alpn.split(",") if x.strip()]
+        result["tlsSettings"] = _compact_dict(
+            {
+                "serverName": tls.get("serverName"),
+                "fingerprint": _first_non_empty(inner.get("fingerprint"), tls.get("fingerprint")),
+                "alpn": alpn if isinstance(alpn, list) else None,
+                "allowInsecure": tls.get("allowInsecure") if isinstance(tls.get("allowInsecure"), bool) else None,
+            }
+        )
+    elif security == "reality":
+        reality = stream.get("realitySettings", {}) or {}
+        inner = reality.get("settings", {}) or {}
+        short_ids = reality.get("shortIds", []) or []
+        short_id = _first_non_empty(short_ids[0] if short_ids else "", reality.get("shortId"))
+        result["realitySettings"] = _compact_dict(
+            {
+                "show": False,
+                "fingerprint": _first_non_empty(inner.get("fingerprint"), reality.get("fingerprint"), "chrome"),
+                "serverName": _first_non_empty(
+                    inner.get("serverName"),
+                    reality.get("serverName"),
+                    (reality.get("serverNames") or [None])[0],
+                    (str(reality.get("dest", "")).split(":")[0] if reality.get("dest") else ""),
+                ),
+                "publicKey": _first_non_empty(inner.get("publicKey"), reality.get("publicKey")),
+                "shortId": short_id,
+                "spiderX": _first_non_empty(inner.get("spiderX"), reality.get("spiderX"), "/"),
+            }
+        )
+
+    return _compact_dict(result)
 
 
 def generate_xray_split_json(config: Dict[str, Any], exclusions: List[Dict[str, Any]]) -> str:
@@ -204,7 +287,7 @@ def generate_xray_split_json(config: Dict[str, Any], exclusions: List[Dict[str, 
                 }
             ]
         },
-        "streamSettings": _build_stream_settings(stream),
+        "streamSettings": _build_xray_vless_stream_settings(stream),
     }
     return _build_xray_split_client_json(proxy_outbound, exclusions)
 
