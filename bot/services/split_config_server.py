@@ -55,20 +55,20 @@ async def _split_config_handler(request: web.Request) -> web.Response:
             return web.json_response({"error": "config unavailable"}, status=502, headers=_cache_headers())
 
         exclusions = list_key_exclusions(int(key["id"]))
-        fmt = (request.query.get("format") or "singbox").strip().lower()
-        if fmt == "xray":
+        fmt = (request.query.get("format") or "xray").strip().lower()
+        if fmt == "singbox":
+            final_json = generate_singbox_split_json(cfg, exclusions)
+        else:
             base_json = generate_json(cfg)
             final_json = apply_exclusions_to_json(base_json, exclusions)
-        else:
-            final_json = generate_singbox_split_json(cfg, exclusions)
         return web.Response(
             text=final_json,
             status=200,
-            content_type="application/json",
+            content_type="text/plain",
             charset="utf-8",
             headers={
                 **_cache_headers(),
-                "Content-Disposition": f'inline; filename="split_{key["id"]}.json"',
+                "Content-Disposition": f'attachment; filename="split_{fmt}_{key["id"]}.json"',
                 "X-Split-Config": "1",
             },
         )

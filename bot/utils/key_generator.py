@@ -60,9 +60,6 @@ def apply_exclusions_to_json(base_json: str, exclusions: List[Dict[str, Any]]) -
     Adds split-tunnel exclusions to client JSON.
     Excluded destinations are routed via outboundTag=direct.
     """
-    if not exclusions:
-        return base_json
-
     data = json.loads(base_json)
     routing = data.setdefault("routing", {})
     routing.setdefault("domainStrategy", "IPIfNonMatch")
@@ -121,9 +118,6 @@ def apply_exclusions_to_json(base_json: str, exclusions: List[Dict[str, Any]]) -
             }
         )
 
-    if not custom_rules:
-        return base_json
-
     # Keep only valid pre-existing rules to avoid broken legacy entries.
     valid_existing_rules: List[Dict[str, Any]] = []
     for rule in rules:
@@ -145,6 +139,15 @@ def apply_exclusions_to_json(base_json: str, exclusions: List[Dict[str, Any]]) -
             )
         ):
             valid_existing_rules.append(rule)
+
+    if not valid_existing_rules:
+        valid_existing_rules = [
+            {
+                "type": "field",
+                "ip": ["geoip:private"],
+                "outboundTag": "direct",
+            }
+        ]
 
     routing["rules"] = custom_rules + valid_existing_rules
     return json.dumps(data, indent=2, ensure_ascii=False)
