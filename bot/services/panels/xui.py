@@ -14,8 +14,10 @@ import logging
 import json
 import uuid
 import time
+import urllib.parse
 from typing import Optional, Dict, Any, List
 from config import RETRY_CONFIG
+import config as app_config
 
 logger = logging.getLogger(__name__)
 
@@ -868,12 +870,28 @@ class XUIClient(BaseVPNClient):
                     # Нашли клиента, возвращаем конфигурацию
                     stream_settings = json.loads(inbound.get("streamSettings", "{}"))
                     protocol = inbound.get("protocol", "vless")
+                    if protocol == "vless" and stream_settings.get("security") == "reality":
+                        stream_settings = await self._ensure_reality_client_fields(
+                            stream_settings=stream_settings,
+                            sub_id=target_client.get("subId", ""),
+                        )
                     
                     # DEBUG: логируем stream_settings для отладки Reality-параметров
                     logger.debug(f"Stream settings for {email}: {json.dumps(stream_settings, ensure_ascii=False)}")
                     if stream_settings.get("security") == "reality":
-                        reality = stream_settings.get("realitySettings", {})
-                        logger.info(f"Reality settings for {email}: pbk={reality.get('publicKey')}, sni={reality.get('serverName')}, fp={reality.get('fingerprint')}, shortIds={reality.get('shortIds')}")
+                        reality = stream_settings.get("realitySettings", {}) or {}
+                        inner = reality.get("settings", {}) or {}
+                        pbk = inner.get("publicKey") or reality.get("publicKey")
+                        sni = inner.get("serverName") or reality.get("serverName")
+                        fp = inner.get("fingerprint") or reality.get("fingerprint")
+                        logger.info(
+                            "Reality settings for %s: pbk=%s, sni=%s, fp=%s, shortIds=%s",
+                            email,
+                            pbk,
+                            sni,
+                            fp,
+                            reality.get("shortIds"),
+                        )
                     
                     result = {
                         "uuid": target_client.get("id", ""),
@@ -903,6 +921,94 @@ class XUIClient(BaseVPNClient):
         except Exception as e:
             logger.error(f"Error getting client config for {email}: {e}")
         return None
+
+    @staticmethod
+    def _first_non_empty(*values):
+        for value in values:
+            if value not in (None, "", [], {}):
+                return value
+        return ""
+
+    @staticmethod
+    def _config_value(*names: str) -> str:
+        for name in names:
+            value = getattr(app_config, name, None)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
+
+    @staticmethod
+    def _parse_vless_query(link: str) -> Dict[str, str]:
+        if not link.startswith("vless://"):
+            return {}
+        parsed = urllib.parse.urlparse(link)
+        qs = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+        return {k: (v[0] if v else "") for k, v in qs.items()}
+
+    async def _ensure_reality_client_fields(self, stream_settings: Dict[str, Any], sub_id: str) -> Dict[str, Any]:
+        reality = (stream_settings.get("realitySettings") or {}).copy()
+        inner = (reality.get("settings") or {}).copy()
+
+        public_key = self._first_non_empty(inner.get("publicKey"), reality.get("publicKey"))
+        server_name = self._first_non_empty(inner.get("serverName"), reality.get("serverName"))
+        fingerprint = self._first_non_empty(inner.get("fingerprint"), reality.get("fingerprint"))
+        short_id = self._first_non_empty((reality.get("shortIds") or [None])[0], reality.get("shortId"))
+        spider_x = self._first_non_empty(inner.get("spiderX"), reality.get("spiderX"))
+
+        if sub_id and (not public_key or not server_name or not fingerprint):
+            try:
+                link = await self.get_subscription_link(sub_id)
+                if link:
+                    qp = self._parse_vless_query(link)
+                    public_key = self._first_non_empty(public_key, qp.get("pbk"))
+                    server_name = self._first_non_empty(server_name, qp.get("sni"))
+                    fingerprint = self._first_non_empty(fingerprint, qp.get("fp"))
+                    short_id = self._first_non_empty(short_id, qp.get("sid"))
+                    spider_x = self._first_non_empty(spider_x, qp.get("spx"))
+                    logger.info(
+                        "Reality enrichment via sub-link: pbk=%s sni=%s fp=%s sid=%s",
+                        bool(public_key),
+                        server_name or "<empty>",
+                        fingerprint or "<empty>",
+                        short_id or "<empty>",
+                    )
+            except Exception as e:
+                logger.warning("Failed to enrich Reality from sub-link: %s", e)
+
+        public_key = self._first_non_empty(public_key, self._config_value("REALITY_PUBLIC_KEY", "SPLIT_CONFIG_REALITY_PUBLIC_KEY"))
+        server_name = self._first_non_empty(server_name, self._config_value("REALITY_SERVER_NAME", "SPLIT_CONFIG_REALITY_SERVER_NAME"))
+        fingerprint = self._first_non_empty(
+            fingerprint,
+            self._config_value("REALITY_FINGERPRINT", "SPLIT_CONFIG_REALITY_FINGERPRINT"),
+            "chrome",
+        )
+        short_id = self._first_non_empty(short_id, self._config_value("REALITY_SHORT_ID", "SPLIT_CONFIG_REALITY_SHORT_ID"))
+        spider_x = self._first_non_empty(spider_x, self._config_value("REALITY_SPIDER_X", "SPLIT_CONFIG_REALITY_SPIDER_X"), "/")
+
+        if not public_key or not server_name:
+            logger.warning(
+                "Reality settings are still incomplete after enrichment: publicKey=%s serverName=%s",
+                bool(public_key),
+                bool(server_name),
+            )
+
+        inner["publicKey"] = public_key
+        inner["serverName"] = server_name
+        inner["fingerprint"] = fingerprint
+        inner["spiderX"] = spider_x
+        reality["settings"] = inner
+        reality["publicKey"] = public_key
+        reality["serverName"] = server_name
+        reality["fingerprint"] = fingerprint
+        if short_id:
+            reality["shortId"] = short_id
+            reality["shortIds"] = [short_id]
+
+        stream_settings["realitySettings"] = reality
+        return stream_settings
 
     async def get_subscription_link(self, sub_id: str) -> Optional[str]:
         """

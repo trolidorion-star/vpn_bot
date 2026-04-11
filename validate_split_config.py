@@ -121,6 +121,21 @@ def validate_xray_config(data: Dict[str, Any]) -> None:
         _fail(f"Unexpected VLESS flow: {flow}")
     _ok("Proxy vnext/users look valid")
 
+    stream = proxy.get("streamSettings") or {}
+    if stream.get("security") == "reality":
+        reality = stream.get("realitySettings") or {}
+        inner = reality.get("settings") or {}
+        pbk = inner.get("publicKey") or reality.get("publicKey")
+        sni = inner.get("serverName") or reality.get("serverName")
+        fp = inner.get("fingerprint") or reality.get("fingerprint")
+        if not pbk:
+            _fail("Reality publicKey is missing")
+        if not sni:
+            _fail("Reality serverName (sni) is missing")
+        if not fp:
+            _fail("Reality fingerprint is missing")
+        _ok("Reality fields publicKey/sni/fingerprint are present")
+
     direct = by_tag["direct"]
     blocked = by_tag["blocked"]
     if direct.get("protocol") != "freedom":

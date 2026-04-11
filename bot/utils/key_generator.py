@@ -11,6 +11,7 @@ import ipaddress
 import re
 import qrcode
 from typing import Dict, Any, List
+import config as app_config
 
 logger = logging.getLogger(__name__)
 
@@ -913,6 +914,17 @@ def _first_non_empty(*values):
     return ""
 
 
+def _config_value(*names: str) -> str:
+    for name in names:
+        value = getattr(app_config, name, None)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return ""
+
+
 def _build_stream_settings(stream: dict) -> dict:
     """РЎС‚СЂРѕРёС‚ outbound streamSettings РґР»СЏ Xray-РєР»РёРµРЅС‚Р° РёР· inbound РјРѕРґРµР»Рё 3x-ui."""
     network = (stream.get("network") or "tcp").lower()
@@ -1005,19 +1017,38 @@ def _build_stream_settings(stream: dict) -> dict:
         inner = reality.get("settings", {}) or {}
         short_ids = reality.get("shortIds", []) or []
         short_id = _first_non_empty(short_ids[0] if short_ids else "", reality.get("shortId"))
+        public_key = _first_non_empty(
+            inner.get("publicKey"),
+            reality.get("publicKey"),
+            _config_value("REALITY_PUBLIC_KEY", "SPLIT_CONFIG_REALITY_PUBLIC_KEY"),
+        )
+        server_name = _first_non_empty(
+            inner.get("serverName"),
+            reality.get("serverName"),
+            (reality.get("serverNames") or [None])[0],
+            (str(reality.get("dest", "")).split(":")[0] if reality.get("dest") else ""),
+            _config_value("REALITY_SERVER_NAME", "SPLIT_CONFIG_REALITY_SERVER_NAME"),
+        )
+        fingerprint = _first_non_empty(
+            inner.get("fingerprint"),
+            reality.get("fingerprint"),
+            _config_value("REALITY_FINGERPRINT", "SPLIT_CONFIG_REALITY_FINGERPRINT"),
+            "chrome",
+        )
+        spider_x = _first_non_empty(
+            inner.get("spiderX"),
+            reality.get("spiderX"),
+            _config_value("REALITY_SPIDER_X", "SPLIT_CONFIG_REALITY_SPIDER_X"),
+            "/",
+        )
         result["realitySettings"] = _compact_dict(
             {
                 "show": False,
-                "fingerprint": _first_non_empty(inner.get("fingerprint"), reality.get("fingerprint"), "chrome"),
-                "serverName": _first_non_empty(
-                    inner.get("serverName"),
-                    reality.get("serverName"),
-                    (reality.get("serverNames") or [None])[0],
-                    (str(reality.get("dest", "")).split(":")[0] if reality.get("dest") else ""),
-                ),
-                "publicKey": _first_non_empty(inner.get("publicKey"), reality.get("publicKey")),
+                "fingerprint": fingerprint,
+                "serverName": server_name,
+                "publicKey": public_key,
                 "shortId": short_id,
-                "spiderX": _first_non_empty(inner.get("spiderX"), reality.get("spiderX"), "/"),
+                "spiderX": spider_x,
             }
         )
 

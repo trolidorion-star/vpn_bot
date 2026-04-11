@@ -41,3 +41,11 @@ SPLIT_CONFIG_ENABLED = False
 SPLIT_CONFIG_BIND_HOST = "0.0.0.0"
 SPLIT_CONFIG_BIND_PORT = 8081
 SPLIT_CONFIG_PUBLIC_BASE_URL = ""
+
+# Optional Reality fallback for split-config generation.
+# Use only if 3x-ui API does not return these values in streamSettings.
+SPLIT_CONFIG_REALITY_PUBLIC_KEY = ""
+SPLIT_CONFIG_REALITY_SERVER_NAME = ""
+SPLIT_CONFIG_REALITY_FINGERPRINT = "chrome"
+SPLIT_CONFIG_REALITY_SHORT_ID = ""
+SPLIT_CONFIG_REALITY_SPIDER_X = "/"
