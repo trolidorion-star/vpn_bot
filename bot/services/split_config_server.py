@@ -1,5 +1,7 @@
 import logging
 import json
+import asyncio
+import threading
 from typing import Optional
 
 from aiohttp import web
@@ -10,13 +12,15 @@ from bot.services.split_config_settings import (
     get_split_config_enabled,
     get_split_config_public_base_url,
 )
-from bot.services.vpn_api import get_client
+from bot.services.panels.xui import XUIClient
+from bot.services.panels.marzban import MarzbanClient
 from bot.utils.key_generator import (
     generate_singbox_split_json,
     generate_xray_split_json,
 )
 from database.requests import (
     get_key_by_split_token,
+    get_server_by_id,
     list_key_exclusions,
 )
 
@@ -24,6 +28,10 @@ logger = logging.getLogger(__name__)
 
 _runner: Optional[web.AppRunner] = None
 _site: Optional[web.TCPSite] = None
+_thread: Optional[threading.Thread] = None
+_thread_loop: Optional[asyncio.AbstractEventLoop] = None
+_start_event = threading.Event()
+_start_error: Optional[Exception] = None
 
 
 def _cache_headers() -> dict:
@@ -60,6 +68,21 @@ def _extract_proxy_reality_snapshot(config_json: str) -> dict:
         return {}
 
 
+async def _fetch_client_config(server_id: int, panel_email: str):
+    server = get_server_by_id(server_id)
+    if not server:
+        return None
+    panel_type = (server.get("panel_type") or "xui").lower()
+    client = MarzbanClient(server) if panel_type == "marzban" else XUIClient(server)
+    try:
+        return await client.get_client_config(panel_email)
+    finally:
+        try:
+            await client.close()
+        except Exception:
+            pass
+
+
 async def _split_config_handler(request: web.Request) -> web.Response:
     token = request.match_info.get("token", "").strip()
     if token.endswith(".json"):
@@ -77,8 +100,7 @@ async def _split_config_handler(request: web.Request) -> web.Response:
         return web.json_response({"error": "key not ready"}, status=409, headers=_cache_headers())
 
     try:
-        client = await get_client(int(key["server_id"]))
-        cfg = await client.get_client_config(str(key["panel_email"]))
+        cfg = await _fetch_client_config(int(key["server_id"]), str(key["panel_email"]))
         if not cfg:
             return web.json_response({"error": "config unavailable"}, status=502, headers=_cache_headers())
 
@@ -141,20 +163,8 @@ async def _health_handler(request: web.Request) -> web.Response:
     return web.json_response({"status": "ok"}, headers=_cache_headers())
 
 
-async def start_split_config_server() -> None:
+async def _async_start_server(host: str, port: int, enabled: bool, public_base: str) -> None:
     global _runner, _site
-
-    if _runner is not None:
-        return
-
-    enabled = get_split_config_enabled()
-    public_base = get_split_config_public_base_url()
-    if not enabled and not public_base:
-        logger.info("Split-config server disabled: enabled=False and public_base_url is empty.")
-        return
-
-    host = get_split_config_bind_host() or "0.0.0.0"
-    port = get_split_config_bind_port()
 
     app = web.Application()
     app.add_routes(
@@ -170,24 +180,17 @@ async def start_split_config_server() -> None:
     _runner = web.AppRunner(app)
     await _runner.setup()
     _site = web.TCPSite(_runner, host=host, port=port)
-    try:
-        await _site.start()
-        logger.info(
-            "Split-config server started on %s:%s (enabled=%s, public_base=%s)",
-            host,
-            port,
-            enabled,
-            public_base or "<empty>",
-        )
-    except Exception as e:
-        logger.exception("Failed to start split-config server on %s:%s: %s", host, port, e)
-        await _runner.cleanup()
-        _runner = None
-        _site = None
-        raise
+    await _site.start()
+    logger.info(
+        "Split-config server started on %s:%s (enabled=%s, public_base=%s)",
+        host,
+        port,
+        enabled,
+        public_base or "<empty>",
+    )
 
 
-async def stop_split_config_server() -> None:
+async def _async_stop_server() -> None:
     global _runner, _site
     if _site:
         try:
@@ -201,3 +204,70 @@ async def stop_split_config_server() -> None:
             pass
     _site = None
     _runner = None
+
+
+def _server_thread_main(host: str, port: int, enabled: bool, public_base: str) -> None:
+    global _thread_loop, _start_error
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    _thread_loop = loop
+    try:
+        loop.run_until_complete(_async_start_server(host, port, enabled, public_base))
+        _start_event.set()
+        loop.run_forever()
+    except Exception as e:
+        _start_error = e
+        logger.exception("Failed to start split-config server on %s:%s: %s", host, port, e)
+        _start_event.set()
+    finally:
+        try:
+            loop.run_until_complete(_async_stop_server())
+        except Exception:
+            pass
+        loop.close()
+        _thread_loop = None
+
+
+async def start_split_config_server() -> None:
+    global _thread, _start_error
+
+    if _thread is not None and _thread.is_alive():
+        return
+
+    enabled = get_split_config_enabled()
+    public_base = get_split_config_public_base_url()
+    if not enabled and not public_base:
+        logger.info("Split-config server disabled: enabled=False and public_base_url is empty.")
+        return
+
+    host = get_split_config_bind_host() or "0.0.0.0"
+    port = get_split_config_bind_port()
+    _start_error = None
+    _start_event.clear()
+    _thread = threading.Thread(
+        target=_server_thread_main,
+        args=(host, port, enabled, public_base),
+        name="split-config-server",
+        daemon=True,
+    )
+    _thread.start()
+
+    started = await asyncio.to_thread(_start_event.wait, 10)
+    if not started:
+        raise RuntimeError(f"Split-config server start timeout on {host}:{port}")
+    if _start_error is not None:
+        err = _start_error
+        _start_error = None
+        raise RuntimeError(f"Split-config server failed: {err}") from err
+
+
+async def stop_split_config_server() -> None:
+    global _thread
+    if _thread_loop is not None:
+        try:
+            _thread_loop.call_soon_threadsafe(_thread_loop.stop)
+        except Exception:
+            pass
+    if _thread is not None:
+        await asyncio.to_thread(_thread.join, 10)
+    _thread = None
