@@ -241,17 +241,31 @@ def _build_xray_vless_stream_settings(stream: Dict[str, Any]) -> Dict[str, Any]:
         inner = reality.get("settings", {}) or {}
         short_ids = reality.get("shortIds", []) or []
         short_id = _first_non_empty(short_ids[0] if short_ids else "", reality.get("shortId"))
+        server_name = _first_non_empty(
+            inner.get("serverName"),
+            reality.get("serverName"),
+            (reality.get("serverNames") or [None])[0],
+            (str(reality.get("dest", "")).split(":")[0] if reality.get("dest") else ""),
+            _config_value("REALITY_SERVER_NAME", "SPLIT_CONFIG_REALITY_SERVER_NAME"),
+            "www.microsoft.com",
+        )
+        public_key = _first_non_empty(
+            inner.get("publicKey"),
+            reality.get("publicKey"),
+            _config_value("REALITY_PUBLIC_KEY", "SPLIT_CONFIG_REALITY_PUBLIC_KEY"),
+        )
+        fingerprint = _first_non_empty(
+            inner.get("fingerprint"),
+            reality.get("fingerprint"),
+            _config_value("REALITY_FINGERPRINT", "SPLIT_CONFIG_REALITY_FINGERPRINT"),
+            "chrome",
+        )
         result["realitySettings"] = _compact_dict(
             {
                 "show": False,
-                "fingerprint": _first_non_empty(inner.get("fingerprint"), reality.get("fingerprint"), "chrome"),
-                "serverName": _first_non_empty(
-                    inner.get("serverName"),
-                    reality.get("serverName"),
-                    (reality.get("serverNames") or [None])[0],
-                    (str(reality.get("dest", "")).split(":")[0] if reality.get("dest") else ""),
-                ),
-                "publicKey": _first_non_empty(inner.get("publicKey"), reality.get("publicKey")),
+                "fingerprint": fingerprint,
+                "serverName": server_name,
+                "publicKey": public_key,
                 "shortId": short_id,
                 "spiderX": _first_non_empty(inner.get("spiderX"), reality.get("spiderX"), "/"),
             }

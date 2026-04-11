@@ -953,7 +953,12 @@ class XUIClient(BaseVPNClient):
         inner = (reality.get("settings") or {}).copy()
 
         public_key = self._first_non_empty(inner.get("publicKey"), reality.get("publicKey"))
-        server_name = self._first_non_empty(inner.get("serverName"), reality.get("serverName"))
+        server_name = self._first_non_empty(
+            inner.get("serverName"),
+            reality.get("serverName"),
+            (reality.get("serverNames") or [None])[0],
+            (str(reality.get("dest", "")).split(":")[0] if reality.get("dest") else ""),
+        )
         fingerprint = self._first_non_empty(inner.get("fingerprint"), reality.get("fingerprint"))
         short_id = self._first_non_empty((reality.get("shortIds") or [None])[0], reality.get("shortId"))
         spider_x = self._first_non_empty(inner.get("spiderX"), reality.get("spiderX"))
@@ -979,7 +984,11 @@ class XUIClient(BaseVPNClient):
                 logger.warning("Failed to enrich Reality from sub-link: %s", e)
 
         public_key = self._first_non_empty(public_key, self._config_value("REALITY_PUBLIC_KEY", "SPLIT_CONFIG_REALITY_PUBLIC_KEY"))
-        server_name = self._first_non_empty(server_name, self._config_value("REALITY_SERVER_NAME", "SPLIT_CONFIG_REALITY_SERVER_NAME"))
+        server_name = self._first_non_empty(
+            server_name,
+            self._config_value("REALITY_SERVER_NAME", "SPLIT_CONFIG_REALITY_SERVER_NAME"),
+            "www.microsoft.com",
+        )
         fingerprint = self._first_non_empty(
             fingerprint,
             self._config_value("REALITY_FINGERPRINT", "SPLIT_CONFIG_REALITY_FINGERPRINT"),
