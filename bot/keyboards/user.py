@@ -511,17 +511,21 @@ def key_exclusions_kb(
     """Клавиатура управления split-tunnel исключениями с вкладками и карточками."""
     builder = InlineKeyboardBuilder()
 
-    tab_row = []
+    tab_buttons = []
     for cat_id, cat_title in categories:
         mark = "● " if cat_id == current_category else ""
-        tab_row.append(
+        tab_buttons.append(
             InlineKeyboardButton(
                 text=f"{mark}{cat_title}",
                 callback_data=f"key_excl_cat:{key_id}:{cat_id}:{page}",
             )
         )
-    if tab_row:
-        builder.row(*tab_row)
+    if tab_buttons:
+        first = tab_buttons[:3]
+        second = tab_buttons[3:6]
+        builder.row(*first)
+        if second:
+            builder.row(*second)
 
     for app in apps:
         app_id = app.get("id")

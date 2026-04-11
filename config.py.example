@@ -37,3 +37,7 @@ RETRY_CONFIG = {
 # Split-config server (умная ссылка для исключений)
 # Если используете URL-импорт в клиентах, настройте публичный адрес в БД:
 # setting split_config_public_base_url = https://your-domain.tld
+SPLIT_CONFIG_ENABLED = False
+SPLIT_CONFIG_BIND_HOST = "0.0.0.0"
+SPLIT_CONFIG_BIND_PORT = 8081
+SPLIT_CONFIG_PUBLIC_BASE_URL = ""

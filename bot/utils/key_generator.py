@@ -75,11 +75,13 @@ def apply_exclusions_to_json(base_json: str, exclusions: List[Dict[str, Any]]) -
         if not value:
             continue
         if rule_type == "domain":
-            # Поддержка domain и raw IP/CIDR.
-            if "/" in value or value.replace(".", "").isdigit():
+            # Поддержка обычных доменов и IP/CIDR.
+            if "/" in value:
+                ips.append(value)
+            elif value.replace(".", "").isdigit():
                 ips.append(value)
             else:
-                domains.append(f"domain:{value}")
+                domains.append(value)
 
     custom_rules: List[Dict[str, Any]] = []
     if domains:

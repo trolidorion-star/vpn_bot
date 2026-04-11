@@ -15,6 +15,7 @@ from bot.keyboards.user import main_menu_kb
 from bot.services.buy_key_timer import cancel_buy_key_timer
 from bot.services.exclusions_catalog import find_app, get_apps_for_category, get_categories
 from bot.services.key_limits import get_key_connection_limit
+from bot.services.split_config_settings import get_split_config_enabled, get_split_config_public_base_url
 from bot.states.user_states import KeyExclusions, RenameKey, ReplaceKey
 from bot.utils.text import escape_html, safe_edit_or_send
 
@@ -431,7 +432,7 @@ async def key_excl_clear(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("key_excl_link:"))
 async def key_excl_smart_link(callback: CallbackQuery):
-    from database.requests import ensure_split_config_token_for_user, get_setting
+    from database.requests import ensure_split_config_token_for_user
 
     key_id = int(callback.data.split(":")[1])
     token = ensure_split_config_token_for_user(key_id, callback.from_user.id)
@@ -439,8 +440,8 @@ async def key_excl_smart_link(callback: CallbackQuery):
         await callback.answer("❌ Ключ не найден", show_alert=True)
         return
 
-    base_url = (get_setting("split_config_public_base_url", "") or "").strip().rstrip("/")
-    enabled = get_setting("split_config_enabled", "0") == "1"
+    base_url = get_split_config_public_base_url()
+    enabled = get_split_config_enabled()
     if not enabled or not base_url:
         await _show_key_exclusions_menu(
             callback.message,

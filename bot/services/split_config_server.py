@@ -5,8 +5,12 @@ from aiohttp import web
 
 from database.requests import (
     get_key_by_split_token,
-    get_setting,
     list_key_exclusions,
+)
+from bot.services.split_config_settings import (
+    get_split_config_bind_host,
+    get_split_config_bind_port,
+    get_split_config_enabled,
 )
 from bot.services.vpn_api import get_client
 from bot.utils.key_generator import apply_exclusions_to_json, generate_json
@@ -54,17 +58,13 @@ async def start_split_config_server() -> None:
     if _runner is not None:
         return
 
-    enabled = get_setting("split_config_enabled", "0") == "1"
+    enabled = get_split_config_enabled()
     if not enabled:
         logger.info("Split-config server disabled by settings.")
         return
 
-    host = get_setting("split_config_bind_host", "0.0.0.0") or "0.0.0.0"
-    port_raw = get_setting("split_config_bind_port", "8081") or "8081"
-    try:
-        port = int(port_raw)
-    except ValueError:
-        port = 8081
+    host = get_split_config_bind_host() or "0.0.0.0"
+    port = get_split_config_bind_port()
 
     app = web.Application()
     app.add_routes([web.get("/split/{token}", _split_config_handler)])
