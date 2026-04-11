@@ -85,7 +85,11 @@ async def on_startup(bot: Bot):
     
     # Применяем миграции БД
     run_migrations()
-    await start_split_config_server()
+    try:
+        await start_split_config_server()
+    except Exception:
+        logger.exception("CRITICAL ERROR: split-config server failed during startup")
+        raise
     
     # Информация о боте
     bot_info = await bot.get_me()
