@@ -456,7 +456,7 @@ async def key_excl_smart_link(callback: CallbackQuery):
         await callback.answer("❌ Ключ не найден", show_alert=True)
         return
 
-    link = get_split_config_public_url(token)
+    link = f"{get_split_config_public_url(token)}?format=happ"
     enabled = get_split_config_enabled()
     base_url = get_split_config_public_base_url()
     if not is_split_config_ready():
@@ -475,7 +475,7 @@ async def key_excl_smart_link(callback: CallbackQuery):
         await callback.answer()
         return
 
-    # Keep plain URL, server default is sing-box format.
+    # Smart link is a Happ-compatible subscription payload (not raw JSON passthrough).
     await _show_key_exclusions_menu(
         callback.message,
         callback.from_user.id,
@@ -483,7 +483,7 @@ async def key_excl_smart_link(callback: CallbackQuery):
         prepend=(
             "🔗 <b>Умная ссылка с автообновлением</b>\n"
             f"<code>{escape_html(link)}</code>\n"
-            "Импортируйте её как URL-конфиг (Hiddify/HApp/sing-box)."
+            "Импортируйте её в Happ как ссылку подписки."
         ),
     )
     await callback.answer("Ссылка готова")

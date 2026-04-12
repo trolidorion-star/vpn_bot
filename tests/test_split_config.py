@@ -1,7 +1,10 @@
 import json
 import unittest
 
-from bot.utils.key_generator import generate_singbox_split_json
+from bot.utils.key_generator import (
+    generate_happ_split_subscription,
+    generate_singbox_split_json,
+)
 
 
 class SplitConfigTests(unittest.TestCase):
@@ -45,6 +48,23 @@ class SplitConfigTests(unittest.TestCase):
         self.assertEqual(["org.telegram.messenger"], tun_inbound["exclude_package"])
         self.assertTrue(tun_inbound["auto_route"])
         self.assertTrue(tun_inbound["strict_route"])
+
+    def test_happ_subscription_contains_bypass_directives(self) -> None:
+        config = {
+            "protocol": "vless",
+            "host": "example.com",
+            "port": 443,
+            "uuid": "11111111-1111-1111-1111-111111111111",
+            "stream_settings": {"network": "tcp", "security": "none"},
+        }
+        exclusions = [
+            {"rule_type": "package", "rule_value": "org.telegram.messenger"},
+            {"rule_type": "domain", "rule_value": "telegram.org"},
+        ]
+        payload = generate_happ_split_subscription(config, exclusions)
+        self.assertIn("#per-app-proxy-mode: bypass", payload)
+        self.assertIn("#per-app-proxy-list: org.telegram.messenger", payload)
+        self.assertIn("vless://", payload)
 
 
 if __name__ == "__main__":

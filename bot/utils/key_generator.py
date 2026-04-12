@@ -465,6 +465,27 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
     return json.dumps(_compact_recursive(sanitized), indent=2, ensure_ascii=False)
 
 
+def generate_happ_split_subscription(config: Dict[str, Any], exclusions: List[Dict[str, Any]]) -> str:
+    """
+    Build a Happ-compatible subscription payload.
+    Happ applies these control directives itself and then runs Xray core with the link.
+    """
+    _, _, packages = _split_exclusions(exclusions)
+    link = generate_link(config)
+
+    lines: List[str] = [
+        "#proxy-enable: 1",
+        "#tun-enable: 1",
+    ]
+    if packages:
+        lines.append("#per-app-proxy-mode: bypass")
+        lines.append(f"#per-app-proxy-list: {','.join(packages)}")
+    else:
+        lines.append("#per-app-proxy-mode: off")
+    lines.append(link)
+    return "\n".join(lines) + "\n"
+
+
 # ============================================================================
 # ОБЩИЕ УТИЛИТЫ
 # ============================================================================

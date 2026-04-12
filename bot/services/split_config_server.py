@@ -12,7 +12,9 @@ from bot.services.split_config_settings import (
 from bot.services.vpn_api import get_client
 from bot.utils.key_generator import (
     apply_exclusions_to_json,
+    generate_happ_split_subscription,
     generate_json,
+    generate_link,
     generate_singbox_split_json,
 )
 from database.requests import (
@@ -57,8 +59,8 @@ async def _split_config_handler(request: web.Request) -> web.Response:
             return web.json_response({"error": "config unavailable"}, status=502, headers=_cache_headers())
 
         exclusions = list_key_exclusions(int(key["id"]))
-        # Default to sing-box JSON because package-based bypass only works there.
-        fmt = (request.query.get("format") or "singbox").strip().lower()
+        # Default to Happ subscription payload to avoid JSON passthrough issues in Happ/Xray mode.
+        fmt = (request.query.get("format") or "happ").strip().lower()
         download = (request.query.get("download") or "").strip().lower() in {"1", "true", "yes"}
         logger.info(
             "Split-config request: key_id=%s format=%s download=%s exclusions=%s",
@@ -67,6 +69,36 @@ async def _split_config_handler(request: web.Request) -> web.Response:
             download,
             len(exclusions or []),
         )
+        if fmt == "happ":
+            final_text = generate_happ_split_subscription(cfg, exclusions)
+            headers = {
+                **_cache_headers(),
+                "X-Split-Config": "1",
+            }
+            if download:
+                headers["Content-Disposition"] = f'attachment; filename="split_{fmt}_{key["id"]}.txt"'
+            return web.Response(
+                text=final_text,
+                status=200,
+                content_type="text/plain",
+                charset="utf-8",
+                headers=headers,
+            )
+        if fmt == "link":
+            final_text = generate_link(cfg) + "\n"
+            headers = {
+                **_cache_headers(),
+                "X-Split-Config": "1",
+            }
+            if download:
+                headers["Content-Disposition"] = f'attachment; filename="split_{fmt}_{key["id"]}.txt"'
+            return web.Response(
+                text=final_text,
+                status=200,
+                content_type="text/plain",
+                charset="utf-8",
+                headers=headers,
+            )
         if fmt == "singbox":
             final_json = generate_singbox_split_json(cfg, exclusions)
         else:
