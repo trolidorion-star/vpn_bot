@@ -400,15 +400,6 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
 
     result = {
         "log": {"level": "warn"},
-        "dns": {
-            "servers": [
-                {"tag": "dns-remote", "address": "https://1.1.1.1/dns-query"},
-                {"tag": "dns-local", "address": "local"},
-            ],
-            "rules": dns_rules,
-            "final": "dns-remote",
-            "strategy": "prefer_ipv4",
-        },
         "outbounds": [
             proxy,
             {"type": "direct", "tag": "direct"},
@@ -420,6 +411,15 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
             "final": "proxy",
         },
     }
+    if dns_rules:
+        result["dns"] = {
+            "servers": [
+                {"tag": "dns-remote", "address": "1.1.1.1"},
+                {"tag": "dns-local", "address": "local"},
+            ],
+            "rules": dns_rules,
+            "final": "dns-remote",
+        }
     sanitized = _sanitize_singbox_config(result)
     return json.dumps(_compact_recursive(sanitized), indent=2, ensure_ascii=False)
 
