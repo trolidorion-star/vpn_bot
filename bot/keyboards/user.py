@@ -530,10 +530,10 @@ def key_exclusions_kb(
     for app in apps:
         app_id = app.get("id")
         name = app.get("name", "App")
-        domains = app.get("domains", [])
+        rules_total = len(app.get("domains", []) or []) + len(app.get("packages", []) or [])
         builder.row(
             InlineKeyboardButton(
-                text=f"➕ {name} ({len(domains)})",
+                text=f"➕ {name} ({rules_total})",
                 callback_data=f"key_excl_app:{key_id}:{app_id}:{current_category}:{page}",
             )
         )

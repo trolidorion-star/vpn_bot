@@ -696,9 +696,9 @@ def add_key_exclusion_for_user(
 ) -> bool:
     """
     Добавляет исключение для ключа (только для владельца ключа).
-    rule_type: domain
+    rule_type: domain | package
     """
-    if rule_type not in {"domain"}:
+    if rule_type not in {"domain", "package"}:
         return False
     value = (rule_value or "").strip().lower()
     if not value:

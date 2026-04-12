@@ -6,6 +6,8 @@
 config.py
 logs/
 tests/
+!tests/
+!tests/test_split_config.py
 docs/
 results.md
 AGENTS.md

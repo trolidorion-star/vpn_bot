@@ -28,7 +28,7 @@ def _add_column(conn: sqlite3.Connection, table: str, column_def: str) -> None:
 
 
 # Текущая версия схемы БД
-LATEST_VERSION = 25
+LATEST_VERSION = 26
 
 
 def get_current_version() -> int:
@@ -1684,11 +1684,24 @@ def migration_25(conn: sqlite3.Connection) -> None:
         )
 
     # Удаляем legacy-правила неподдерживаемых типов, чтобы не ломать клиентов.
-    conn.execute(
-        "DELETE FROM key_exclusions WHERE rule_type NOT IN ('domain')"
-    )
+    conn.execute("DELETE FROM key_exclusions WHERE rule_type NOT IN ('domain')")
 
     logger.info("Migration v25 applied")
+
+
+def migration_26(conn: sqlite3.Connection) -> None:
+    """
+    Migration v26:
+    - Enables package-based split rules for Android sing-box clients.
+    - Preserves existing domain rules.
+    """
+    logger.info("Applying migration v26 (package split rules)...")
+
+    conn.execute(
+        "DELETE FROM key_exclusions WHERE rule_type NOT IN ('domain', 'package')"
+    )
+
+    logger.info("Migration v26 applied")
 
 
 MIGRATIONS = {
@@ -1717,6 +1730,7 @@ MIGRATIONS = {
     23: migration_23,
     24: migration_24,
     25: migration_25,
+    26: migration_26,
 }
 
 

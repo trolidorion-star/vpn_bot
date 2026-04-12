@@ -13,7 +13,12 @@ from config import ADMIN_IDS
 from database.requests import get_or_create_user, is_user_banned, get_all_servers, get_setting, is_referral_enabled, get_user_by_referral_code, set_user_referrer
 from bot.keyboards.user import main_menu_kb
 from bot.services.buy_key_timer import cancel_buy_key_timer
-from bot.services.exclusions_catalog import find_app, get_apps_for_category, get_categories
+from bot.services.exclusions_catalog import (
+    find_app,
+    get_apps_for_category,
+    get_categories,
+    iter_app_rules,
+)
 from bot.services.key_limits import get_key_connection_limit
 from bot.services.split_config_settings import (
     get_split_config_enabled,
@@ -42,26 +47,30 @@ def _normalize_domain(value: str) -> str:
 
 def _build_exclusions_text(key_name: str, exclusions: list[dict]) -> str:
     domains = [e["rule_value"] for e in exclusions if e.get("rule_type") == "domain"]
+    packages = [e["rule_value"] for e in exclusions if e.get("rule_type") == "package"]
 
     lines = [
-        f"🚫 <b>Исключения для ключа</b> <b>{escape_html(key_name)}</b>\n",
-        "Здесь можно настроить split-tunnel:",
-        "выбранные сайты/приложения будут ходить <b>без VPN</b> (напрямую).\n",
+        f"<b>Split exclusions for key</b> <b>{escape_html(key_name)}</b>\n",
+        "Configure split-tunnel rules here:",
+        "selected sites and apps will go <b>without VPN</b>.\n",
+        f"Domains: <b>{len(domains)}</b>",
+        f"Android package: <b>{len(packages)}</b>",
     ]
-    lines.append(f"🌐 Домены: <b>{len(domains)}</b>")
 
     preview = exclusions[:8]
     if preview:
-        lines.append("\n<b>Текущий список:</b>")
+        lines.append("\n<b>Current rules:</b>")
         for item in preview:
-            lines.append(f"• 🌐 {escape_html(item['rule_value'])}")
+            icon = "package" if item.get("rule_type") == "package" else "domain"
+            lines.append(f"- {icon}: {escape_html(item['rule_value'])}")
         if len(exclusions) > len(preview):
-            lines.append(f"… и ещё {len(exclusions) - len(preview)}")
+            lines.append(f"... and {len(exclusions) - len(preview)} more")
     else:
-        lines.append("\nПока пусто. Добавьте домен или приложение ниже.")
+        lines.append("\nNo rules yet. Add a domain or app below.")
 
     lines.append(
-        "\n<i>Важно: эти правила работают в JSON-конфиге, который вы скачиваете кнопкой «Скачать config».</i>"
+        "\n<i>Important: real app bypass works in sing-box/Hiddify/HApp JSON configs. "
+        "Xray clients can use only domain rules.</i>"
     )
     return "\n".join(lines)
 
@@ -400,11 +409,13 @@ async def key_excl_add_popular_app(callback: CallbackQuery):
         return
 
     added = 0
-    for domain in app.get("domains", []):
-        value = _normalize_domain(str(domain))
+    for rule_type, raw_value in iter_app_rules(app):
+        value = str(raw_value).strip().lower()
+        if rule_type == "domain":
+            value = _normalize_domain(value)
         if not value:
             continue
-        if add_key_exclusion_for_user(key_id, telegram_id, "domain", value):
+        if add_key_exclusion_for_user(key_id, telegram_id, rule_type, value):
             added += 1
 
     await _show_key_exclusions_menu(
@@ -464,7 +475,7 @@ async def key_excl_smart_link(callback: CallbackQuery):
         await callback.answer()
         return
 
-    # Keep plain URL, server default is xray format.
+    # Keep plain URL, server default is sing-box format.
     await _show_key_exclusions_menu(
         callback.message,
         callback.from_user.id,
@@ -472,7 +483,7 @@ async def key_excl_smart_link(callback: CallbackQuery):
         prepend=(
             "🔗 <b>Умная ссылка с автообновлением</b>\n"
             f"<code>{escape_html(link)}</code>\n"
-            "Импортируйте её как URL-конфиг (Xray JSON)."
+            "Импортируйте её как URL-конфиг (Hiddify/HApp/sing-box)."
         ),
     )
     await callback.answer("Ссылка готова")
@@ -482,7 +493,7 @@ async def key_excl_smart_link(callback: CallbackQuery):
 async def key_excl_export(callback: CallbackQuery):
     from database.requests import get_key_details_for_user, list_key_exclusions_for_user
     from bot.services.vpn_api import get_client
-    from bot.utils.key_generator import apply_exclusions_to_json, generate_json
+    from bot.utils.key_generator import generate_singbox_split_json
 
     key_id = int(callback.data.split(":")[1])
     telegram_id = callback.from_user.id
@@ -505,17 +516,16 @@ async def key_excl_export(callback: CallbackQuery):
         if not config:
             await callback.answer("❌ Не удалось получить конфиг с сервера", show_alert=True)
             return
-        base_json = generate_json(config)
-        split_json = apply_exclusions_to_json(base_json, exclusions)
+        split_json = generate_singbox_split_json(config, exclusions)
         doc = BufferedInputFile(
             split_json.encode("utf-8"),
-            filename=f"vpn_split_tunnel_xray_{key_id}.json",
+            filename=f"vpn_split_tunnel_singbox_{key_id}.json",
         )
         await callback.message.answer_document(
             document=doc,
             caption=(
-                "📦 <b>Готово: Xray config с исключениями</b>\n\n"
-                "Импортируйте этот JSON в Xray/Happ/NekoBox.\n"
+                "📦 <b>Готово: sing-box config с исключениями</b>\n\n"
+                "Импортируйте этот JSON в Hiddify/HApp/sing-box.\n"
                 "Указанные сайты/приложения пойдут напрямую, без VPN."
             ),
             parse_mode="HTML",

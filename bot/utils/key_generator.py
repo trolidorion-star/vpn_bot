@@ -141,11 +141,18 @@ def apply_exclusions_to_json(base_json: str, exclusions: List[Dict[str, Any]]) -
     return json.dumps(data, indent=2, ensure_ascii=False)
 
 
-def _split_exclusions(exclusions: List[Dict[str, Any]]) -> tuple[List[str], List[str]]:
+def _split_exclusions(exclusions: List[Dict[str, Any]]) -> tuple[List[str], List[str], List[str]]:
     domains: List[str] = []
     ips: List[str] = []
+    packages: List[str] = []
     for item in exclusions or []:
-        if (item.get("rule_type") or "").lower() != "domain":
+        rule_type = (item.get("rule_type") or "").lower()
+        if rule_type == "package":
+            value = (item.get("rule_value") or "").strip().lower()
+            if value and re.fullmatch(r"[a-z0-9._]+", value):
+                packages.append(value)
+            continue
+        if rule_type != "domain":
             continue
         value = (item.get("rule_value") or "").strip().lower()
         if not value:
@@ -172,7 +179,7 @@ def _split_exclusions(exclusions: List[Dict[str, Any]]) -> tuple[List[str], List
         if ".." in value:
             continue
         domains.append(value)
-    return sorted(set(domains)), sorted(set(ips))
+    return sorted(set(domains)), sorted(set(ips)), sorted(set(packages))
 
 
 def _to_clean_str(value: Any) -> str:
@@ -273,7 +280,7 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
         port = int(config.get("port", 443) or 443)
     except (TypeError, ValueError):
         port = 443
-    domains, ips = _split_exclusions(exclusions)
+    domains, ips, packages = _split_exclusions(exclusions)
 
     proxy: Dict[str, Any]
     if protocol == "vmess":
@@ -391,6 +398,8 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
 
     route_rules: List[Dict[str, Any]] = []
     dns_rules: List[Dict[str, Any]] = []
+    if packages:
+        route_rules.append({"package_name": packages, "outbound": "direct"})
     if domains:
         route_rules.append({"domain_suffix": domains, "outbound": "direct"})
         dns_rules.append({"domain_suffix": domains, "server": "dns-local"})
