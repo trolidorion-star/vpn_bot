@@ -64,6 +64,8 @@ class SplitConfigTests(unittest.TestCase):
         payload = generate_happ_split_subscription(config, exclusions)
         self.assertIn("#per-app-proxy-mode: bypass", payload)
         self.assertIn("#per-app-proxy-list: org.telegram.messenger", payload)
+        self.assertIn("#tun-type: singbox", payload)
+        self.assertIn("#sniffing-enable: 1", payload)
         self.assertIn("vless://", payload)
 
 

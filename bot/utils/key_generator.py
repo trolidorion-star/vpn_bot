@@ -476,6 +476,8 @@ def generate_happ_split_subscription(config: Dict[str, Any], exclusions: List[Di
     lines: List[str] = [
         "#proxy-enable: 1",
         "#tun-enable: 1",
+        "#tun-type: singbox",
+        "#sniffing-enable: 1",
     ]
     if packages:
         lines.append("#per-app-proxy-mode: bypass")
@@ -484,6 +486,12 @@ def generate_happ_split_subscription(config: Dict[str, Any], exclusions: List[Di
         lines.append("#per-app-proxy-mode: off")
     lines.append(link)
     return "\n".join(lines) + "\n"
+
+
+def get_split_packages(exclusions: List[Dict[str, Any]]) -> List[str]:
+    """Public helper for services that need app package split directives."""
+    _, _, packages = _split_exclusions(exclusions)
+    return packages
 
 
 # ============================================================================

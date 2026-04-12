@@ -15,6 +15,7 @@ from bot.utils.key_generator import (
     generate_happ_split_subscription,
     generate_json,
     generate_link,
+    get_split_packages,
     generate_singbox_split_json,
 )
 from database.requests import (
@@ -71,9 +72,16 @@ async def _split_config_handler(request: web.Request) -> web.Response:
         )
         if fmt == "happ":
             final_text = generate_happ_split_subscription(cfg, exclusions)
+            packages = get_split_packages(exclusions)
             headers = {
                 **_cache_headers(),
                 "X-Split-Config": "1",
+                "proxy-enable": "1",
+                "tun-enable": "1",
+                "tun-type": "singbox",
+                "sniffing-enable": "1",
+                "per-app-proxy-mode": "bypass" if packages else "off",
+                "per-app-proxy-list": ",".join(packages) if packages else "",
             }
             if download:
                 headers["Content-Disposition"] = f'attachment; filename="split_{fmt}_{key["id"]}.txt"'
