@@ -197,20 +197,20 @@ def _compact_recursive(value: Any) -> Any:
     if isinstance(value, dict):
         result: Dict[str, Any] = {}
         for key, item in value.items():
-            if item is None:
+            if item in (None, "", [], {}):
                 continue
             cleaned = _compact_recursive(item)
-            if cleaned is None:
+            if cleaned in (None, "", [], {}):
                 continue
             result[key] = cleaned
         return result
     if isinstance(value, list):
         result_list: List[Any] = []
         for item in value:
-            if item is None:
+            if item in (None, "", [], {}):
                 continue
             cleaned = _compact_recursive(item)
-            if cleaned is None:
+            if cleaned in (None, "", [], {}):
                 continue
             result_list.append(cleaned)
         return result_list
@@ -245,15 +245,15 @@ def _sanitize_singbox_config(result: Dict[str, Any]) -> Dict[str, Any]:
         if isinstance(outbound, dict) and outbound.get("tag")
     }
 
-    # Remove invalid detour references (dns.servers[].detour and outbounds[].detour).
+    # Remove detour to avoid parser issues across mixed client core versions.
     dns = result.get("dns", {}) or {}
     servers = dns.get("servers", []) or []
     if isinstance(servers, list):
         for server in servers:
-            if isinstance(server, dict) and server.get("detour") and server["detour"] not in valid_tags:
+            if isinstance(server, dict):
                 server.pop("detour", None)
     for outbound in outbounds:
-        if isinstance(outbound, dict) and outbound.get("detour") and outbound["detour"] not in valid_tags:
+        if isinstance(outbound, dict):
             outbound.pop("detour", None)
 
     route = result.get("route", {}) or {}
@@ -401,7 +401,7 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
     if transport:
         proxy["transport"] = transport
 
-    route_rules: List[Dict[str, Any]] = [{"protocol": "dns", "outbound": "dns-out"}]
+    route_rules: List[Dict[str, Any]] = []
     dns_rules: List[Dict[str, Any]] = []
     if domains:
         route_rules.append({"domain_suffix": domains, "outbound": "direct"})
@@ -414,7 +414,7 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
         "log": {"level": "warn"},
         "dns": {
             "servers": [
-                {"tag": "dns-remote", "address": "https://1.1.1.1/dns-query", "detour": "proxy"},
+                {"tag": "dns-remote", "address": "https://1.1.1.1/dns-query"},
                 {"tag": "dns-local", "address": "local"},
             ],
             "rules": dns_rules,
@@ -425,7 +425,6 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
             proxy,
             {"type": "direct", "tag": "direct"},
             {"type": "block", "tag": "block"},
-            {"type": "dns", "tag": "dns-out"},
         ],
         "route": {
             "auto_detect_interface": True,
