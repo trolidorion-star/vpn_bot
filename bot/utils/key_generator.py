@@ -269,7 +269,8 @@ def _sanitize_singbox_config(result: Dict[str, Any]) -> Dict[str, Any]:
 
 def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[str, Any]]) -> str:
     """
-    Generates sing-box client JSON with split rules (direct for exclusions).
+    Generates a full sing-box Android client JSON with split rules.
+    Android app bypass is implemented through tun.exclude_package.
     """
     protocol = (config.get("protocol") or "vless").lower()
     stream = config.get("stream_settings", {}) or {}
@@ -400,26 +401,57 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
     dns_rules: List[Dict[str, Any]] = []
     if packages:
         route_rules.append({"package_name": packages, "outbound": "direct"})
+        dns_rules.append({"package_name": packages, "server": "dns-local"})
     if domains:
         route_rules.append({"domain_suffix": domains, "outbound": "direct"})
         dns_rules.append({"domain_suffix": domains, "server": "dns-local"})
     if ips:
         route_rules.append({"ip_cidr": ips, "outbound": "direct"})
+    route_rules.append({"protocol": "dns", "outbound": "dns-out"})
     route_rules.append({"ip_is_private": True, "outbound": "direct"})
 
     result = {
         "log": {"level": "warn"},
+        "inbounds": [
+            {
+                "type": "tun",
+                "tag": "tun-in",
+                "address": [
+                    "172.19.0.1/30",
+                    "fdfe:dcba:9876::1/126",
+                ],
+                "mtu": 9000,
+                "auto_route": True,
+                "strict_route": True,
+                "endpoint_independent_nat": True,
+                "stack": "mixed",
+                "sniff": True,
+                "sniff_override_destination": True,
+            },
+            {
+                "type": "mixed",
+                "tag": "mixed-in",
+                "listen": "127.0.0.1",
+                "listen_port": 2080,
+                "sniff": True,
+                "sniff_override_destination": True,
+            },
+        ],
         "outbounds": [
             proxy,
+            {"type": "dns", "tag": "dns-out"},
             {"type": "direct", "tag": "direct"},
             {"type": "block", "tag": "block"},
         ],
         "route": {
             "auto_detect_interface": True,
+            "override_android_vpn": True,
             "rules": route_rules,
             "final": "proxy",
         },
     }
+    if packages:
+        result["inbounds"][0]["exclude_package"] = packages
     if dns_rules:
         result["dns"] = {
             "servers": [

@@ -31,6 +31,7 @@ class SplitConfigTests(unittest.TestCase):
 
         parsed = json.loads(generate_singbox_split_json(config, exclusions))
         rules = parsed["route"]["rules"]
+        tun_inbound = parsed["inbounds"][0]
 
         self.assertIn(
             {"package_name": ["org.telegram.messenger"], "outbound": "direct"},
@@ -41,6 +42,9 @@ class SplitConfigTests(unittest.TestCase):
             rules,
         )
         self.assertEqual("proxy", parsed["route"]["final"])
+        self.assertEqual(["org.telegram.messenger"], tun_inbound["exclude_package"])
+        self.assertTrue(tun_inbound["auto_route"])
+        self.assertTrue(tun_inbound["strict_route"])
 
 
 if __name__ == "__main__":
