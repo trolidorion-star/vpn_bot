@@ -118,30 +118,10 @@ def apply_exclusions_to_json(base_json: str, exclusions: List[Dict[str, Any]]) -
             }
         )
 
-    # Keep only valid pre-existing rules to avoid broken legacy entries.
-    valid_existing_rules: List[Dict[str, Any]] = []
-    for rule in rules:
-        if not isinstance(rule, dict):
-            continue
-        if any(
-            rule.get(field)
-            for field in (
-                "domain",
-                "ip",
-                "port",
-                "sourcePort",
-                "network",
-                "protocol",
-                "attrs",
-                "source",
-                "user",
-                "inboundTag",
-            )
-        ):
-            valid_existing_rules.append(rule)
-
-    if not valid_existing_rules:
-        valid_existing_rules = [
+    # Preserve original routing as-is; only prepend user exclusions.
+    existing_rules: List[Dict[str, Any]] = [rule for rule in rules if isinstance(rule, dict)]
+    if not existing_rules:
+        existing_rules = [
             {
                 "type": "field",
                 "ip": ["geoip:private"],
@@ -149,7 +129,15 @@ def apply_exclusions_to_json(base_json: str, exclusions: List[Dict[str, Any]]) -
             }
         ]
 
-    routing["rules"] = custom_rules + valid_existing_rules
+    # Ensure direct outbound exists if we route exclusions to it.
+    outbounds = data.get("outbounds", [])
+    if isinstance(outbounds, list):
+        has_direct = any(isinstance(ob, dict) and ob.get("tag") == "direct" for ob in outbounds)
+        if not has_direct:
+            outbounds.append({"protocol": "freedom", "tag": "direct"})
+            data["outbounds"] = outbounds
+
+    routing["rules"] = custom_rules + existing_rules
     return json.dumps(data, indent=2, ensure_ascii=False)
 
 
