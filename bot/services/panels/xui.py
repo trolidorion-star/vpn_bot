@@ -21,6 +21,61 @@ logger = logging.getLogger(__name__)
 
 
 from .base import BaseVPNClient, VPNAPIError
+
+
+def _first_non_empty(*values):
+    for value in values:
+        if value not in (None, "", [], {}):
+            return value
+    return ""
+
+
+def _normalize_reality_settings(stream_settings: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(stream_settings, dict):
+        return {}
+    if (stream_settings.get("security") or "").lower() != "reality":
+        return {}
+
+    reality = stream_settings.get("realitySettings", {}) or {}
+    if not isinstance(reality, dict):
+        reality = {}
+    inner = reality.get("settings", {}) or {}
+    if not isinstance(inner, dict):
+        inner = {}
+
+    server_names = reality.get("serverNames", []) or []
+    if not isinstance(server_names, list):
+        server_names = [server_names]
+
+    short_ids = reality.get("shortIds", []) or []
+    if not isinstance(short_ids, list):
+        short_ids = [short_ids]
+
+    dest_host = ""
+    if reality.get("dest"):
+        dest_host = str(reality.get("dest")).split(":")[0].strip()
+
+    normalized = {
+        "publicKey": _first_non_empty(inner.get("publicKey"), reality.get("publicKey")),
+        "serverName": _first_non_empty(
+            inner.get("serverName"),
+            reality.get("serverName"),
+            server_names[0] if server_names else "",
+            dest_host,
+        ),
+        "fingerprint": _first_non_empty(inner.get("fingerprint"), reality.get("fingerprint"), "chrome"),
+        "shortIds": short_ids,
+        "shortId": _first_non_empty(short_ids[0] if short_ids else "", reality.get("shortId")),
+        "spiderX": _first_non_empty(inner.get("spiderX"), reality.get("spiderX"), "/"),
+    }
+
+    merged = dict(reality)
+    for key, value in normalized.items():
+        if value not in (None, "", [], {}):
+            merged[key] = value
+    stream_settings["realitySettings"] = merged
+
+    return normalized
 class XUIClient(BaseVPNClient):
     """
     Клиент для работы с API 3X-UI панели.
@@ -868,12 +923,17 @@ class XUIClient(BaseVPNClient):
                     # Нашли клиента, возвращаем конфигурацию
                     stream_settings = json.loads(inbound.get("streamSettings", "{}"))
                     protocol = inbound.get("protocol", "vless")
+                    reality_normalized = _normalize_reality_settings(stream_settings)
                     
                     # DEBUG: логируем stream_settings для отладки Reality-параметров
                     logger.debug(f"Stream settings for {email}: {json.dumps(stream_settings, ensure_ascii=False)}")
                     if stream_settings.get("security") == "reality":
                         reality = stream_settings.get("realitySettings", {})
-                        logger.info(f"Reality settings for {email}: pbk={reality.get('publicKey')}, sni={reality.get('serverName')}, fp={reality.get('fingerprint')}, shortIds={reality.get('shortIds')}")
+                        logger.info(
+                            f"Reality settings for {email}: pbk={reality.get('publicKey')}, "
+                            f"sni={reality.get('serverName')}, fp={reality.get('fingerprint')}, "
+                            f"shortIds={reality.get('shortIds')}"
+                        )
                     
                     result = {
                         "uuid": target_client.get("id", ""),
@@ -884,7 +944,8 @@ class XUIClient(BaseVPNClient):
                         "stream_settings": stream_settings,
                         "inbound_name": inbound.get("remark", "VPN"),
                         "sub_id": target_client.get("subId", ""),
-                        "flow": target_client.get("flow", "")
+                        "flow": target_client.get("flow", ""),
+                        "reality": reality_normalized,
                     }
                     
                     # Протокол-специфичные поля

@@ -217,6 +217,61 @@ def _compact_recursive(value: Any) -> Any:
     return value
 
 
+def _get_first_tagged_outbound(outbounds: List[Dict[str, Any]], tag: str) -> Dict[str, Any]:
+    for outbound in outbounds:
+        if isinstance(outbound, dict) and outbound.get("tag") == tag:
+            return outbound
+    return {}
+
+
+def _sanitize_singbox_config(result: Dict[str, Any]) -> Dict[str, Any]:
+    outbounds = result.get("outbounds", []) or []
+    if not isinstance(outbounds, list):
+        outbounds = []
+
+    # Ensure mandatory proxy tag exists for route.final/rules references.
+    proxy = _get_first_tagged_outbound(outbounds, "proxy")
+    if not proxy and outbounds:
+        first = outbounds[0]
+        if isinstance(first, dict):
+            first["tag"] = "proxy"
+    elif not proxy:
+        outbounds.append({"type": "direct", "tag": "proxy"})
+    result["outbounds"] = outbounds
+
+    valid_tags = {
+        outbound.get("tag")
+        for outbound in outbounds
+        if isinstance(outbound, dict) and outbound.get("tag")
+    }
+
+    # Remove invalid detour references (dns.servers[].detour and outbounds[].detour).
+    dns = result.get("dns", {}) or {}
+    servers = dns.get("servers", []) or []
+    if isinstance(servers, list):
+        for server in servers:
+            if isinstance(server, dict) and server.get("detour") and server["detour"] not in valid_tags:
+                server.pop("detour", None)
+    for outbound in outbounds:
+        if isinstance(outbound, dict) and outbound.get("detour") and outbound["detour"] not in valid_tags:
+            outbound.pop("detour", None)
+
+    route = result.get("route", {}) or {}
+    rules = route.get("rules", []) or []
+    if isinstance(rules, list):
+        for rule in rules:
+            if isinstance(rule, dict):
+                outbound_tag = rule.get("outbound")
+                if outbound_tag and outbound_tag not in valid_tags:
+                    # Keep config valid even for stale/generated tag mismatches.
+                    rule["outbound"] = "direct" if "direct" in valid_tags else "proxy"
+    if route.get("final") not in valid_tags:
+        route["final"] = "proxy" if "proxy" in valid_tags else "direct"
+    result["route"] = route
+
+    return result
+
+
 def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[str, Any]]) -> str:
     """
     Generates sing-box client JSON with split rules (direct for exclusions).
@@ -285,17 +340,34 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
             )
         else:
             reality = stream.get("realitySettings", {}) or {}
+            reality_fallback = config.get("reality", {}) or {}
             inner = reality.get("settings", {}) or {}
             sni = (
                 _to_clean_str(inner.get("serverName"))
                 or _to_clean_str(reality.get("serverName"))
                 or _to_clean_str((reality.get("serverNames", [None])[0] if reality.get("serverNames") else ""))
                 or (_to_clean_str(reality.get("dest")).split(":")[0] if reality.get("dest") else "")
+                or _to_clean_str(reality_fallback.get("serverName"))
             )
-            fp = _to_clean_str(inner.get("fingerprint")) or _to_clean_str(reality.get("fingerprint")) or "chrome"
-            pbk = _to_clean_str(inner.get("publicKey")) or _to_clean_str(reality.get("publicKey"))
+            fp = (
+                _to_clean_str(inner.get("fingerprint"))
+                or _to_clean_str(reality.get("fingerprint"))
+                or _to_clean_str(reality_fallback.get("fingerprint"))
+                or "chrome"
+            )
+            pbk = (
+                _to_clean_str(inner.get("publicKey"))
+                or _to_clean_str(reality.get("publicKey"))
+                or _to_clean_str(reality_fallback.get("publicKey"))
+            )
             short_ids = reality.get("shortIds", []) or []
-            sid = _to_clean_str(short_ids[0] if short_ids else "") or _to_clean_str(reality.get("shortId"))
+            fallback_short_ids = reality_fallback.get("shortIds", []) or []
+            sid = (
+                _to_clean_str(short_ids[0] if short_ids else "")
+                or _to_clean_str(reality.get("shortId"))
+                or _to_clean_str(fallback_short_ids[0] if fallback_short_ids else "")
+                or _to_clean_str(reality_fallback.get("shortId"))
+            )
             reality_obj: Dict[str, Any] = {"enabled": True}
             if pbk:
                 reality_obj["public_key"] = pbk
@@ -361,7 +433,8 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
             "final": "proxy",
         },
     }
-    return json.dumps(_compact_recursive(result), indent=2, ensure_ascii=False)
+    sanitized = _sanitize_singbox_config(result)
+    return json.dumps(_compact_recursive(sanitized), indent=2, ensure_ascii=False)
 
 
 # ============================================================================
