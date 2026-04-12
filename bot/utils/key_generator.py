@@ -187,6 +187,36 @@ def _split_exclusions(exclusions: List[Dict[str, Any]]) -> tuple[List[str], List
     return sorted(set(domains)), sorted(set(ips))
 
 
+def _to_clean_str(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _compact_recursive(value: Any) -> Any:
+    if isinstance(value, dict):
+        result: Dict[str, Any] = {}
+        for key, item in value.items():
+            if item is None:
+                continue
+            cleaned = _compact_recursive(item)
+            if cleaned is None:
+                continue
+            result[key] = cleaned
+        return result
+    if isinstance(value, list):
+        result_list: List[Any] = []
+        for item in value:
+            if item is None:
+                continue
+            cleaned = _compact_recursive(item)
+            if cleaned is None:
+                continue
+            result_list.append(cleaned)
+        return result_list
+    return value
+
+
 def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[str, Any]]) -> str:
     """
     Generates sing-box client JSON with split rules (direct for exclusions).
@@ -195,8 +225,11 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
     stream = config.get("stream_settings", {}) or {}
     network = stream.get("network", "tcp")
     security = (stream.get("security") or "none").lower()
-    host = config.get("host")
-    port = int(config.get("port", 443))
+    host = _to_clean_str(config.get("host"))
+    try:
+        port = int(config.get("port", 443) or 443)
+    except (TypeError, ValueError):
+        port = 443
     domains, ips = _split_exclusions(exclusions)
 
     proxy: Dict[str, Any]
@@ -206,8 +239,8 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
             "tag": "proxy",
             "server": host,
             "server_port": port,
-            "uuid": config.get("uuid", ""),
-            "security": config.get("security_method", "auto"),
+            "uuid": _to_clean_str(config.get("uuid")),
+            "security": _to_clean_str(config.get("security_method")) or "auto",
         }
     elif protocol == "trojan":
         proxy = {
@@ -215,7 +248,7 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
             "tag": "proxy",
             "server": host,
             "server_port": port,
-            "password": config.get("password") or config.get("uuid", ""),
+            "password": _to_clean_str(config.get("password")) or _to_clean_str(config.get("uuid")),
         }
     elif protocol == "shadowsocks":
         proxy = {
@@ -223,8 +256,8 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
             "tag": "proxy",
             "server": host,
             "server_port": port,
-            "method": config.get("method", "aes-256-gcm"),
-            "password": config.get("password", ""),
+            "method": _to_clean_str(config.get("method")) or "aes-256-gcm",
+            "password": _to_clean_str(config.get("password")),
         }
     else:
         proxy = {
@@ -232,9 +265,9 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
             "tag": "proxy",
             "server": host,
             "server_port": port,
-            "uuid": config.get("uuid", ""),
+            "uuid": _to_clean_str(config.get("uuid")),
         }
-        flow = config.get("flow", "")
+        flow = _to_clean_str(config.get("flow"))
         if flow:
             proxy["flow"] = flow
 
@@ -245,25 +278,24 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
         fp = ""
         if security == "tls":
             tls_settings = stream.get("tlsSettings", {}) or {}
-            sni = tls_settings.get("serverName") or ""
+            sni = _to_clean_str(tls_settings.get("serverName"))
             fp = (
-                (tls_settings.get("settings", {}) or {}).get("fingerprint")
-                or tls_settings.get("fingerprint")
-                or ""
+                _to_clean_str((tls_settings.get("settings", {}) or {}).get("fingerprint"))
+                or _to_clean_str(tls_settings.get("fingerprint"))
             )
         else:
             reality = stream.get("realitySettings", {}) or {}
             inner = reality.get("settings", {}) or {}
             sni = (
-                inner.get("serverName")
-                or reality.get("serverName")
-                or (reality.get("serverNames", [None])[0] or "")
-                or (str(reality.get("dest", "")).split(":")[0] if reality.get("dest") else "")
+                _to_clean_str(inner.get("serverName"))
+                or _to_clean_str(reality.get("serverName"))
+                or _to_clean_str((reality.get("serverNames", [None])[0] if reality.get("serverNames") else ""))
+                or (_to_clean_str(reality.get("dest")).split(":")[0] if reality.get("dest") else "")
             )
-            fp = inner.get("fingerprint") or reality.get("fingerprint") or "chrome"
-            pbk = inner.get("publicKey") or reality.get("publicKey") or ""
+            fp = _to_clean_str(inner.get("fingerprint")) or _to_clean_str(reality.get("fingerprint")) or "chrome"
+            pbk = _to_clean_str(inner.get("publicKey")) or _to_clean_str(reality.get("publicKey"))
             short_ids = reality.get("shortIds", []) or []
-            sid = (short_ids[0] if short_ids else "") or reality.get("shortId") or ""
+            sid = _to_clean_str(short_ids[0] if short_ids else "") or _to_clean_str(reality.get("shortId"))
             reality_obj: Dict[str, Any] = {"enabled": True}
             if pbk:
                 reality_obj["public_key"] = pbk
@@ -281,15 +313,18 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
     if network == "ws":
         ws = stream.get("wsSettings", {}) or {}
         headers = ws.get("headers", {}) or {}
-        host_header = headers.get("Host") or headers.get("host") or ws.get("host") or ""
-        transport = {"type": "ws", "path": ws.get("path", "/")}
+        host_header = _to_clean_str(headers.get("Host")) or _to_clean_str(headers.get("host")) or _to_clean_str(ws.get("host"))
+        transport = {"type": "ws", "path": _to_clean_str(ws.get("path")) or "/"}
         if host_header:
             transport["headers"] = {"Host": host_header}
     elif network == "grpc":
         grpc = stream.get("grpcSettings", {}) or {}
-        transport = {"type": "grpc", "service_name": grpc.get("serviceName", "")}
-        if grpc.get("authority"):
-            transport["authority"] = grpc.get("authority")
+        service_name = _to_clean_str(grpc.get("serviceName"))
+        if service_name:
+            transport = {"type": "grpc", "service_name": service_name}
+            authority = _to_clean_str(grpc.get("authority"))
+            if authority:
+                transport["authority"] = authority
     # Unsupported/rare transport modes are skipped to keep config valid.
     if transport:
         proxy["transport"] = transport
@@ -301,13 +336,14 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
         dns_rules.append({"domain_suffix": domains, "server": "dns-local"})
     if ips:
         route_rules.append({"ip_cidr": ips, "outbound": "direct"})
+    route_rules.append({"ip_is_private": True, "outbound": "direct"})
 
     result = {
         "log": {"level": "warn"},
         "dns": {
             "servers": [
                 {"tag": "dns-remote", "address": "https://1.1.1.1/dns-query", "detour": "proxy"},
-                {"tag": "dns-local", "address": "local", "detour": "direct"},
+                {"tag": "dns-local", "address": "local"},
             ],
             "rules": dns_rules,
             "final": "dns-remote",
@@ -316,6 +352,7 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
         "outbounds": [
             proxy,
             {"type": "direct", "tag": "direct"},
+            {"type": "block", "tag": "block"},
             {"type": "dns", "tag": "dns-out"},
         ],
         "route": {
@@ -324,7 +361,7 @@ def generate_singbox_split_json(config: Dict[str, Any], exclusions: List[Dict[st
             "final": "proxy",
         },
     }
-    return json.dumps(result, indent=2, ensure_ascii=False)
+    return json.dumps(_compact_recursive(result), indent=2, ensure_ascii=False)
 
 
 # ============================================================================

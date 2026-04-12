@@ -446,6 +446,7 @@ async def key_excl_smart_link(callback: CallbackQuery):
         return
 
     link = get_split_config_public_url(token)
+    smart_link = f"{link}?format=singbox"
     enabled = get_split_config_enabled()
     base_url = get_split_config_public_base_url()
     if not is_split_config_ready():
@@ -464,15 +465,15 @@ async def key_excl_smart_link(callback: CallbackQuery):
         await callback.answer()
         return
 
-    # Keep plain URL without format query for better client import compatibility.
+    # Explicit singbox format avoids client-side parser ambiguity.
     await _show_key_exclusions_menu(
         callback.message,
         callback.from_user.id,
         key_id,
         prepend=(
             "🔗 <b>Умная ссылка с автообновлением</b>\n"
-            f"<code>{escape_html(link)}</code>\n"
-            "Импортируйте её в Xray-клиент как URL-конфиг (JSON по ссылке)."
+            f"<code>{escape_html(smart_link)}</code>\n"
+            "Импортируйте её в Sing-box/Hiddify/NekoBox как URL-конфиг (JSON по ссылке)."
         ),
     )
     await callback.answer("Ссылка готова")
