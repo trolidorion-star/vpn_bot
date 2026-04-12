@@ -446,7 +446,6 @@ async def key_excl_smart_link(callback: CallbackQuery):
         return
 
     link = get_split_config_public_url(token)
-    smart_link = f"{link}?format=singbox"
     enabled = get_split_config_enabled()
     base_url = get_split_config_public_base_url()
     if not is_split_config_ready():
@@ -465,15 +464,15 @@ async def key_excl_smart_link(callback: CallbackQuery):
         await callback.answer()
         return
 
-    # Explicit singbox format for modern split-routing clients.
+    # Keep plain URL, server default is xray format.
     await _show_key_exclusions_menu(
         callback.message,
         callback.from_user.id,
         key_id,
         prepend=(
             "🔗 <b>Умная ссылка с автообновлением</b>\n"
-            f"<code>{escape_html(smart_link)}</code>\n"
-            "Импортируйте её в Hiddify/Happ/NekoBox как URL-конфиг (Sing-box JSON)."
+            f"<code>{escape_html(link)}</code>\n"
+            "Импортируйте её как URL-конфиг (Xray JSON)."
         ),
     )
     await callback.answer("Ссылка готова")
@@ -483,7 +482,7 @@ async def key_excl_smart_link(callback: CallbackQuery):
 async def key_excl_export(callback: CallbackQuery):
     from database.requests import get_key_details_for_user, list_key_exclusions_for_user
     from bot.services.vpn_api import get_client
-    from bot.utils.key_generator import generate_singbox_split_json
+    from bot.utils.key_generator import apply_exclusions_to_json, generate_json
 
     key_id = int(callback.data.split(":")[1])
     telegram_id = callback.from_user.id
@@ -506,16 +505,17 @@ async def key_excl_export(callback: CallbackQuery):
         if not config:
             await callback.answer("❌ Не удалось получить конфиг с сервера", show_alert=True)
             return
-        split_json = generate_singbox_split_json(config, exclusions)
+        base_json = generate_json(config)
+        split_json = apply_exclusions_to_json(base_json, exclusions)
         doc = BufferedInputFile(
             split_json.encode("utf-8"),
-            filename=f"vpn_split_tunnel_singbox_{key_id}.json",
+            filename=f"vpn_split_tunnel_xray_{key_id}.json",
         )
         await callback.message.answer_document(
             document=doc,
             caption=(
-                "📦 <b>Готово: Sing-box config с исключениями</b>\n\n"
-                "Импортируйте этот JSON в Hiddify/Happ/NekoBox.\n"
+                "📦 <b>Готово: Xray config с исключениями</b>\n\n"
+                "Импортируйте этот JSON в Xray/Happ/NekoBox.\n"
                 "Указанные сайты/приложения пойдут напрямую, без VPN."
             ),
             parse_mode="HTML",

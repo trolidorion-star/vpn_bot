@@ -57,8 +57,8 @@ async def _split_config_handler(request: web.Request) -> web.Response:
             return web.json_response({"error": "config unavailable"}, status=502, headers=_cache_headers())
 
         exclusions = list_key_exclusions(int(key["id"]))
-        # Smart-link default is sing-box format for modern clients with split routing.
-        fmt = (request.query.get("format") or "singbox").strip().lower()
+        # Default to xray JSON for maximum compatibility with Xray-core clients.
+        fmt = (request.query.get("format") or "xray").strip().lower()
         download = (request.query.get("download") or "").strip().lower() in {"1", "true", "yes"}
         logger.info(
             "Split-config request: key_id=%s format=%s download=%s exclusions=%s",
