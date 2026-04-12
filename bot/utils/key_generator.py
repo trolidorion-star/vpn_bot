@@ -62,8 +62,15 @@ def apply_exclusions_to_json(base_json: str, exclusions: List[Dict[str, Any]]) -
     """
     data = json.loads(base_json)
     routing = data.setdefault("routing", {})
-    routing.setdefault("domainStrategy", "IPIfNonMatch")
+    # AsIs is usually more stable for mobile clients with Reality outbounds.
+    routing["domainStrategy"] = "AsIs"
     rules = routing.setdefault("rules", [])
+
+    # Ensure explicit DNS servers for mobile client compatibility.
+    dns = data.setdefault("dns", {})
+    dns_servers = dns.get("servers")
+    if not isinstance(dns_servers, list) or not dns_servers:
+        dns["servers"] = ["1.1.1.1", "8.8.8.8", "localhost"]
 
     domains: List[str] = []
     ips: List[str] = []
@@ -100,7 +107,13 @@ def apply_exclusions_to_json(base_json: str, exclusions: List[Dict[str, Any]]) -
             continue
         domains.append(f"domain:{value}")
 
-    custom_rules: List[Dict[str, Any]] = []
+    custom_rules: List[Dict[str, Any]] = [
+        {
+            "type": "field",
+            "protocol": ["dns"],
+            "outboundTag": "proxy",
+        }
+    ]
     if domains:
         custom_rules.append(
             {
