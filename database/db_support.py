@@ -55,6 +55,7 @@ def add_ticket_message(
     sender_role: str,
     sender_telegram_id: int,
     text: str,
+    photo_file_id: Optional[str] = None,
 ) -> int:
     """Add message to ticket and return message id."""
     if sender_role not in ("user", "admin"):
@@ -63,10 +64,10 @@ def add_ticket_message(
     with get_db() as conn:
         cursor = conn.execute(
             """
-            INSERT INTO support_ticket_messages (ticket_id, sender_role, sender_telegram_id, text)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO support_ticket_messages (ticket_id, sender_role, sender_telegram_id, text, photo_file_id)
+            VALUES (?, ?, ?, ?, ?)
             """,
-            (ticket_id, sender_role, sender_telegram_id, text),
+            (ticket_id, sender_role, sender_telegram_id, text, photo_file_id),
         )
         conn.execute(
             """

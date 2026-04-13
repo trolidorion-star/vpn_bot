@@ -114,7 +114,7 @@ async def start_ticket_message(callback: CallbackQuery, state: FSMContext):
         callback.message,
         "📝 <b>Новый тикет</b>\n\n"
         "Отправьте одним сообщением, с чем помочь.\n"
-        "Текст попадет в поддержку.",
+        "Можно отправить <b>текст</b> или <b>фото с подписью</b>.",
         reply_markup=support_wait_kb(),
     )
     await callback.answer()
@@ -123,10 +123,16 @@ async def start_ticket_message(callback: CallbackQuery, state: FSMContext):
 @router.message(UserStates.waiting_support_ticket_message)
 async def save_ticket_message(message: Message, state: FSMContext):
     text = get_message_text_for_storage(message, "plain").strip()
-    if not text:
+    photo_file_id = None
+    if message.photo:
+        photo_file_id = message.photo[-1].file_id
+        if not text:
+            text = "(без текста)"
+
+    if not text and not photo_file_id:
         await safe_edit_or_send(
             message,
-            "❌ Нужно отправить текстовое сообщение.",
+            "❌ Нужно отправить текст или фото с подписью.",
             reply_markup=support_wait_kb(),
             force_new=True,
         )
@@ -149,6 +155,7 @@ async def save_ticket_message(message: Message, state: FSMContext):
         sender_role="user",
         sender_telegram_id=message.from_user.id,
         text=text,
+        photo_file_id=photo_file_id,
     )
 
     admin_text = (
@@ -160,12 +167,21 @@ async def save_ticket_message(message: Message, state: FSMContext):
 
     for admin_id in ADMIN_IDS:
         try:
-            await message.bot.send_message(
-                admin_id,
-                admin_text,
-                reply_markup=_admin_ticket_actions_kb(ticket_id),
-                parse_mode="HTML",
-            )
+            if photo_file_id:
+                await message.bot.send_photo(
+                    admin_id,
+                    photo=photo_file_id,
+                    caption=admin_text,
+                    reply_markup=_admin_ticket_actions_kb(ticket_id),
+                    parse_mode="HTML",
+                )
+            else:
+                await message.bot.send_message(
+                    admin_id,
+                    admin_text,
+                    reply_markup=_admin_ticket_actions_kb(ticket_id),
+                    parse_mode="HTML",
+                )
         except Exception as e:
             logger.warning(f"Failed to notify admin {admin_id} about ticket #{ticket_id}: {e}")
 

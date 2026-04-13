@@ -114,7 +114,8 @@ async def admin_ticket_view(callback: CallbackQuery):
     else:
         for item in messages:
             role = "👤 Пользователь" if item["sender_role"] == "user" else "🛡️ Админ"
-            lines.append(f"{role}: {escape_html(item['text'])}")
+            media = " 📷" if item.get("photo_file_id") else ""
+            lines.append(f"{role}{media}: {escape_html(item['text'])}")
 
     await safe_edit_or_send(
         callback.message,
@@ -144,7 +145,8 @@ async def admin_ticket_reply_start(callback: CallbackQuery, state: FSMContext):
     await safe_edit_or_send(
         callback.message,
         f"💬 <b>Ответ на тикет #{ticket_id}</b>\n\n"
-        "Отправьте текст сообщения для пользователя.",
+        "Отправьте текст сообщения для пользователя.\n"
+        "Можно отправить фото с подписью.",
         reply_markup=admin_ticket_actions_kb(ticket_id, ticket["status"]),
     )
     await callback.answer()
@@ -168,8 +170,13 @@ async def admin_ticket_reply_save(message: Message, state: FSMContext):
         return
 
     text = get_message_text_for_storage(message, "plain").strip()
-    if not text:
-        await safe_edit_or_send(message, "❌ Нужен текст ответа.", force_new=True)
+    photo_file_id = None
+    if message.photo:
+        photo_file_id = message.photo[-1].file_id
+        if not text:
+            text = "(без текста)"
+    if not text and not photo_file_id:
+        await safe_edit_or_send(message, "❌ Нужен текст или фото с подписью.", force_new=True)
         return
 
     add_ticket_message(
@@ -177,14 +184,23 @@ async def admin_ticket_reply_save(message: Message, state: FSMContext):
         sender_role="admin",
         sender_telegram_id=message.from_user.id,
         text=text,
+        photo_file_id=photo_file_id,
     )
 
     try:
-        await message.bot.send_message(
-            ticket["user_telegram_id"],
-            f"💬 <b>Ответ поддержки по тикету #{ticket_id}</b>\n\n{escape_html(text)}",
-            parse_mode="HTML",
-        )
+        if photo_file_id:
+            await message.bot.send_photo(
+                ticket["user_telegram_id"],
+                photo=photo_file_id,
+                caption=f"💬 <b>Ответ поддержки по тикету #{ticket_id}</b>\n\n{escape_html(text)}",
+                parse_mode="HTML",
+            )
+        else:
+            await message.bot.send_message(
+                ticket["user_telegram_id"],
+                f"💬 <b>Ответ поддержки по тикету #{ticket_id}</b>\n\n{escape_html(text)}",
+                parse_mode="HTML",
+            )
     except Exception as e:
         logger.warning(f"Failed to send reply to user {ticket['user_telegram_id']}: {e}")
 

@@ -28,7 +28,7 @@ def _add_column(conn: sqlite3.Connection, table: str, column_def: str) -> None:
 
 
 # Текущая версия схемы БД
-LATEST_VERSION = 26
+LATEST_VERSION = 27
 
 
 def get_current_version() -> int:
@@ -1704,6 +1704,18 @@ def migration_26(conn: sqlite3.Connection) -> None:
     logger.info("Migration v26 applied")
 
 
+def migration_27(conn: sqlite3.Connection) -> None:
+    """
+    Migration v27:
+    - Adds photo_file_id to support ticket messages (attachments in tickets).
+    """
+    logger.info("Applying migration v27 (support ticket photo attachments)...")
+
+    _add_column(conn, "support_ticket_messages", "photo_file_id TEXT")
+
+    logger.info("Migration v27 applied")
+
+
 MIGRATIONS = {
     1: migration_1,
     2: migration_2,
@@ -1731,6 +1743,7 @@ MIGRATIONS = {
     24: migration_24,
     25: migration_25,
     26: migration_26,
+    27: migration_27,
 }
 
 

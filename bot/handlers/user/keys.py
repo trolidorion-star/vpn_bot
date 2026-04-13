@@ -72,6 +72,21 @@ def _build_exclusions_text(key_name: str, exclusions: list[dict]) -> str:
         "\n<i>Important: real app bypass works in sing-box/Hiddify/HApp JSON configs. "
         "Xray clients can use only domain rules.</i>"
     )
+    lines.extend(
+        [
+            "",
+            "⚠️ <b>Раздел исключений сейчас в разработке</b> — возможны ограничения у некоторых клиентов.",
+            "",
+            "<b>Как настроить split-tunnel вручную (HApp/sing-box и т.п.):</b>",
+            "1) Импортируйте ключ как ссылку или JSON-профиль.",
+            "2) Откройте настройки профиля в вашем VPN-клиенте.",
+            "3) Найдите раздел <i>Split Tunneling / App Bypass / Routing</i>.",
+            "4) Выберите режим: <b>обход VPN для выбранных приложений/доменов</b>.",
+            "5) Добавьте нужные приложения или домены вручную и сохраните профиль.",
+            "",
+            "<i>Подсказка: для HApp обычно это настройки профиля → App Bypass / Правила маршрутизации.</i>",
+        ]
+    )
     return "\n".join(lines)
 
 
