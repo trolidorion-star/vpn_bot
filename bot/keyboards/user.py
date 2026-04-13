@@ -5,7 +5,10 @@ Inline-клавиатуры для обычных пользователей.
 """
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from bot.services.mini_app_settings import get_mini_app_public_url
+from bot.services.mini_app_settings import (
+    get_mini_app_public_url,
+    is_mini_app_public_url_https,
+)
 
 
 def main_menu_kb(is_admin: bool = False, show_trial: bool = False, show_referral: bool = False) -> InlineKeyboardMarkup:
@@ -25,7 +28,7 @@ def main_menu_kb(is_admin: bool = False, show_trial: bool = False, show_referral
     )
 
     mini_app_url = get_mini_app_public_url()
-    if mini_app_url:
+    if mini_app_url and is_mini_app_public_url_https():
         builder.row(
             InlineKeyboardButton(
                 text="📱 Открыть Mini App",

@@ -117,6 +117,11 @@ def get_mini_app_public_url() -> str:
     return str(db_value or "").strip().rstrip("/")
 
 
+def is_mini_app_public_url_https() -> bool:
+    url = get_mini_app_public_url()
+    return bool(url) and url.lower().startswith("https://")
+
+
 def get_mini_app_session_ttl_seconds() -> int:
     raw = _first_non_empty_from_config(
         (
