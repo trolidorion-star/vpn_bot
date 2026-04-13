@@ -164,3 +164,28 @@ pytest tests/ -v
 Очень нужна ваша поддержка, даже 100р уже вперед. как говорится с мира по нитке ;)
 💳 **Карты РФ:** https://yoomoney.ru/fundraise/1GJ73GGRJBC.260318
 💰 **USDT (TON/BSC/ARBITRUM):** https://t.me/Ya_SellerBot?start=item-40
+
+---
+
+## 📱 Telegram Mini App
+
+В проект добавлен встроенный Mini App с API и современным веб-интерфейсом.
+
+### Что нужно настроить
+
+1. В `config.py` задайте:
+   - `MINI_APP_ENABLED = True`
+   - `MINI_APP_PUBLIC_URL = "https://your-domain/miniapp"`
+   - при необходимости `MINI_APP_BIND_HOST` и `MINI_APP_BIND_PORT`
+2. Убедитесь, что по `MINI_APP_PUBLIC_URL` доступен этот бот (HTTPS обязателен для Telegram WebApp).
+3. Перезапустите бота.
+
+После этого в главном меню появится кнопка `📱 Открыть Mini App`.
+
+### Возможности Mini App
+
+- Просмотр ключей и их статуса.
+- Получение ссылки, QR и JSON-конфига по ключу.
+- Настройка нового (чернового) ключа: сервер + протокол (inbound).
+- Покупка и продление за баланс (если включена оплата с баланса).
+- Активация trial (если trial включен в настройках).

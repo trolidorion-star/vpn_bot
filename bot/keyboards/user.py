@@ -3,8 +3,9 @@
 
 Inline-клавиатуры для обычных пользователей.
 """
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from bot.services.mini_app_settings import get_mini_app_public_url
 
 
 def main_menu_kb(is_admin: bool = False, show_trial: bool = False, show_referral: bool = False) -> InlineKeyboardMarkup:
@@ -22,6 +23,15 @@ def main_menu_kb(is_admin: bool = False, show_trial: bool = False, show_referral
         InlineKeyboardButton(text="🔑 Мои ключи", callback_data="my_keys"),
         InlineKeyboardButton(text="💳 Купить ключ", callback_data="buy_key")
     )
+
+    mini_app_url = get_mini_app_public_url()
+    if mini_app_url:
+        builder.row(
+            InlineKeyboardButton(
+                text="📱 Открыть Mini App",
+                web_app=WebAppInfo(url=mini_app_url),
+            )
+        )
     
     if show_trial:
         builder.row(

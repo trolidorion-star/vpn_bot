@@ -41,3 +41,12 @@ SPLIT_CONFIG_ENABLED = False
 SPLIT_CONFIG_BIND_HOST = "0.0.0.0"
 SPLIT_CONFIG_BIND_PORT = 8081
 SPLIT_CONFIG_PUBLIC_BASE_URL = ""
+
+# Telegram Mini App (веб-интерфейс для пользователей)
+# Для кнопки в боте укажите публичный HTTPS URL страницы mini app.
+# Пример: https://your-domain.tld/miniapp
+MINI_APP_ENABLED = False
+MINI_APP_BIND_HOST = "0.0.0.0"
+MINI_APP_BIND_PORT = 8082
+MINI_APP_PUBLIC_URL = ""
+MINI_APP_SESSION_TTL_SECONDS = 43200

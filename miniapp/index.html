@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>VPN Mini App</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Space+Grotesk:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="stylesheet" href="/miniapp/static/styles.css" />
+  </head>
+  <body>
+    <div class="bg-glow"></div>
+    <main class="app-shell">
+      <header class="hero">
+        <div class="hero-title-wrap">
+          <p class="eyebrow">VPN Dashboard</p>
+          <h1 id="appTitle">VPN Control Center</h1>
+        </div>
+        <div class="hero-badge" id="balanceBadge">0,00 ₽</div>
+      </header>
+
+      <section class="quick-grid">
+        <article class="quick-card">
+          <span class="quick-label">Ключей</span>
+          <strong id="statKeys">0</strong>
+        </article>
+        <article class="quick-card">
+          <span class="quick-label">Активных</span>
+          <strong id="statActive">0</strong>
+        </article>
+        <article class="quick-card">
+          <span class="quick-label">Trial</span>
+          <strong id="statTrial">-</strong>
+        </article>
+      </section>
+
+      <nav class="tabs">
+        <button class="tab-btn is-active" data-tab="keys">Ключи</button>
+        <button class="tab-btn" data-tab="tariffs">Тарифы</button>
+        <button class="tab-btn" data-tab="profile">Профиль</button>
+      </nav>
+
+      <section class="tab-content is-active" data-content="keys">
+        <div class="section-head">
+          <h2>Мои ключи</h2>
+        </div>
+        <div id="keysList" class="stack"></div>
+      </section>
+
+      <section class="tab-content" data-content="tariffs">
+        <div class="section-head">
+          <h2>Покупка и продление</h2>
+        </div>
+        <div id="tariffsList" class="stack"></div>
+      </section>
+
+      <section class="tab-content" data-content="profile">
+        <div class="section-head">
+          <h2>Профиль</h2>
+        </div>
+        <div class="stack">
+          <article class="profile-card">
+            <p id="profileInfo">Загрузка...</p>
+            <button id="activateTrialBtn" class="btn btn-primary hidden">Активировать trial</button>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="detailsDialog" class="modal">
+      <div class="modal-card">
+        <header class="modal-header">
+          <h3 id="detailsTitle">Ключ</h3>
+          <button class="icon-btn" id="closeDialogBtn">×</button>
+        </header>
+        <div id="detailsContent" class="modal-content"></div>
+      </div>
+    </dialog>
+
+    <script src="/miniapp/static/app.js"></script>
+  </body>
+</html>
