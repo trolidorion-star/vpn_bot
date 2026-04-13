@@ -1,15 +1,18 @@
 [Unit]
 Description=Yadreno VPN Bot
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
-# Путь по умолчанию, если вы устанавливали по инструкции
-WorkingDirectory=/root/YadrenoVPN
-ExecStart=/usr/bin/python3 main.py
+# Путь по умолчанию для текущего репозитория
+WorkingDirectory=/root/my-private
+ExecStart=/usr/bin/python3 /root/my-private/main.py
+Environment=PYTHONUNBUFFERED=1
 Restart=always
 RestartSec=5
+TimeoutStopSec=30
 
 [Install]
 WantedBy=multi-user.target

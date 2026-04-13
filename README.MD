@@ -119,6 +119,14 @@ python3 main.py
    systemctl start yadreno-vpn
    ```
 
+#### Быстрая автонастройка systemd (без ручного редактирования)
+Из корня проекта выполните:
+```bash
+chmod +x scripts/install_systemd_service.sh
+sudo bash scripts/install_systemd_service.sh
+```
+Скрипт сам определит путь до проекта, создаст unit-файл и перезапустит сервис.
+
 ## 🧪 Запуск тестов
 
 ```bash
