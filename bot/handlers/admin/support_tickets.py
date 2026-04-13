@@ -21,6 +21,23 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+def _user_ticket_reply_kb(ticket_id: int):
+    builder = InlineKeyboardBuilder()
+    builder.row(
+        InlineKeyboardButton(
+            text=f"💬 Ответить в тикет #{ticket_id}",
+            callback_data=f"support_ticket_chat:{ticket_id}",
+        )
+    )
+    builder.row(
+        InlineKeyboardButton(
+            text="📜 История",
+            callback_data=f"support_ticket_view:{ticket_id}",
+        )
+    )
+    return builder.as_markup()
+
+
 def admin_tickets_menu_kb(tickets):
     builder = InlineKeyboardBuilder()
     for ticket in tickets:
@@ -193,12 +210,14 @@ async def admin_ticket_reply_save(message: Message, state: FSMContext):
                 ticket["user_telegram_id"],
                 photo=photo_file_id,
                 caption=f"💬 <b>Ответ поддержки по тикету #{ticket_id}</b>\n\n{escape_html(text)}",
+                reply_markup=_user_ticket_reply_kb(ticket_id),
                 parse_mode="HTML",
             )
         else:
             await message.bot.send_message(
                 ticket["user_telegram_id"],
                 f"💬 <b>Ответ поддержки по тикету #{ticket_id}</b>\n\n{escape_html(text)}",
+                reply_markup=_user_ticket_reply_kb(ticket_id),
                 parse_mode="HTML",
             )
     except Exception as e:

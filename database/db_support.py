@@ -7,6 +7,8 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "get_open_ticket_for_user",
+    "list_tickets_for_user",
+    "get_ticket_by_id_for_user",
     "create_support_ticket",
     "add_ticket_message",
     "list_open_tickets",
@@ -30,6 +32,38 @@ def get_open_ticket_for_user(user_id: int) -> Optional[Dict[str, Any]]:
             LIMIT 1
             """,
             (user_id,),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def list_tickets_for_user(user_id: int, limit: int = 20) -> List[Dict[str, Any]]:
+    """Return user's tickets sorted by recent activity."""
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            SELECT *
+            FROM support_tickets
+            WHERE user_id = ?
+            ORDER BY updated_at DESC, id DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_ticket_by_id_for_user(ticket_id: int, user_id: int) -> Optional[Dict[str, Any]]:
+    """Get ticket by id with ownership check."""
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            SELECT *
+            FROM support_tickets
+            WHERE id = ? AND user_id = ?
+            LIMIT 1
+            """,
+            (ticket_id, user_id),
         )
         row = cursor.fetchone()
         return dict(row) if row else None
