@@ -76,6 +76,7 @@ async def create_payment_link(
         "externalId": order_id,
         "payload": order_id,
         "paymentMethod": int(payment_method or _payment_method()),
+        "paymentDetails": {"currency": "RUB"},
         "returnUrl": success_url,
         "failedUrl": fail_url,
     }

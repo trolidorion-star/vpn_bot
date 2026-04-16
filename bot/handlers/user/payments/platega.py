@@ -409,7 +409,7 @@ async def pay_platega_test(callback: CallbackQuery):
     user, _ = get_or_create_user(callback.from_user.id, callback.from_user.username)
     user_id = user["id"]
     order_id = f"TEST-{secrets.token_hex(4).upper()}"
-    amount_rub = 1
+    amount_rub = 10
 
     create_or_update_transaction(
         order_id=order_id,
