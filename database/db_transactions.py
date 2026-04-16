@@ -7,12 +7,41 @@ from .connection import get_db
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "ensure_transactions_table",
     "create_or_update_transaction",
     "find_transaction_by_order_id",
     "find_transaction_by_payment_id",
     "update_transaction_status",
     "is_transaction_success",
 ]
+
+
+def ensure_transactions_table() -> None:
+    """
+    Self-healing guard for deployments where schema_version is ahead but table was not created.
+    """
+    with get_db() as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                order_id TEXT NOT NULL UNIQUE,
+                payment_id TEXT UNIQUE,
+                user_id INTEGER NOT NULL,
+                amount INTEGER NOT NULL DEFAULT 0,
+                currency TEXT NOT NULL DEFAULT 'RUB',
+                status TEXT NOT NULL DEFAULT 'PENDING',
+                payload TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+            """
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_transactions_order_id ON transactions(order_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_transactions_payment_id ON transactions(payment_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_transactions_user_id ON transactions(user_id)")
 
 
 def create_or_update_transaction(
@@ -25,6 +54,7 @@ def create_or_update_transaction(
     status: str = "PENDING",
     payload: Optional[Dict[str, Any]] = None,
 ) -> bool:
+    ensure_transactions_table()
     payload_json = json.dumps(payload, ensure_ascii=False) if payload is not None else None
     with get_db() as conn:
         conn.execute(
@@ -46,6 +76,7 @@ def create_or_update_transaction(
 
 
 def find_transaction_by_order_id(order_id: str) -> Optional[Dict[str, Any]]:
+    ensure_transactions_table()
     with get_db() as conn:
         row = conn.execute(
             "SELECT * FROM transactions WHERE order_id = ? LIMIT 1",
@@ -55,6 +86,7 @@ def find_transaction_by_order_id(order_id: str) -> Optional[Dict[str, Any]]:
 
 
 def find_transaction_by_payment_id(payment_id: str) -> Optional[Dict[str, Any]]:
+    ensure_transactions_table()
     with get_db() as conn:
         row = conn.execute(
             "SELECT * FROM transactions WHERE payment_id = ? LIMIT 1",
@@ -70,6 +102,7 @@ def update_transaction_status(
     payment_id: Optional[str] = None,
     payload: Optional[Dict[str, Any]] = None,
 ) -> bool:
+    ensure_transactions_table()
     payload_json = json.dumps(payload, ensure_ascii=False) if payload is not None else None
     with get_db() as conn:
         cursor = conn.execute(
@@ -87,6 +120,7 @@ def update_transaction_status(
 
 
 def is_transaction_success(order_id: str) -> bool:
+    ensure_transactions_table()
     with get_db() as conn:
         row = conn.execute(
             "SELECT status FROM transactions WHERE order_id = ? LIMIT 1",

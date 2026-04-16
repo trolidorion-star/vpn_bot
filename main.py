@@ -15,6 +15,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from config import BOT_TOKEN
 import config as app_config
 from database.migrations import run_migrations
+from database.db_transactions import ensure_transactions_table
 
 from bot.services.vpn_api import close_all_clients
 from bot.services.split_config_server import start_split_config_server, stop_split_config_server
@@ -89,6 +90,7 @@ async def on_startup(bot: Bot):
     
     # Применяем миграции БД
     run_migrations()
+    ensure_transactions_table()
     await start_split_config_server()
     await start_platega_webhook_server(bot)
     
@@ -178,3 +180,4 @@ if __name__ == "__main__":
         asyncio.run(main())
     except (KeyboardInterrupt, SystemExit):
         logger.info("Получен сигнал остановки")
+

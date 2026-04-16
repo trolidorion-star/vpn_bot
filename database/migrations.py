@@ -28,7 +28,7 @@ def _add_column(conn: sqlite3.Connection, table: str, column_def: str) -> None:
 
 
 # Текущая версия схемы БД
-LATEST_VERSION = 27
+LATEST_VERSION = 28
 
 
 def get_current_version() -> int:
@@ -1745,6 +1745,56 @@ def migration_27(conn: sqlite3.Connection) -> None:
     logger.info("Migration v27 applied")
 
 
+def migration_28(conn: sqlite3.Connection) -> None:
+    """
+    Migration v28:
+    - Adds promo codes table.
+    - Adds per-order applied promo mapping table.
+    """
+    logger.info("Applying migration v28 (promo codes)...")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS promo_codes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL UNIQUE,
+            discount_type TEXT NOT NULL DEFAULT 'PERCENT',
+            discount_value INTEGER NOT NULL DEFAULT 0,
+            min_amount INTEGER NOT NULL DEFAULT 0,
+            max_usages INTEGER,
+            used_count INTEGER NOT NULL DEFAULT 0,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            valid_from DATETIME,
+            valid_to DATETIME,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_promo_codes_code ON promo_codes(code)")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS payment_promocodes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id TEXT NOT NULL UNIQUE,
+            user_id INTEGER NOT NULL,
+            promo_code TEXT NOT NULL,
+            original_amount INTEGER NOT NULL,
+            discount_amount INTEGER NOT NULL,
+            final_amount INTEGER NOT NULL,
+            consumed_at DATETIME,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_payment_promocodes_order_id ON payment_promocodes(order_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_payment_promocodes_user_id ON payment_promocodes(user_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_payment_promocodes_promo_code ON payment_promocodes(promo_code)")
+
+    logger.info("Migration v28 applied")
+
+
 MIGRATIONS = {
     1: migration_1,
     2: migration_2,
@@ -1773,6 +1823,7 @@ MIGRATIONS = {
     25: migration_25,
     26: migration_26,
     27: migration_27,
+    28: migration_28,
 }
 
 

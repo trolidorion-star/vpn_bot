@@ -112,6 +112,7 @@ async def buy_key_handler(callback: CallbackQuery):
         cards_enabled=cards_enabled,
         yookassa_qr_enabled=yookassa_qr,
         platega_enabled=platega_enabled,
+        is_admin=telegram_id in ADMIN_IDS,
         order_id=existing_order_id,
         show_balance_button=show_balance_button,
     )

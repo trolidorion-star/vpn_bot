@@ -156,8 +156,10 @@ async def renew_invoice_cancel_handler(callback: CallbackQuery):
             cards_enabled=cards_enabled,
             yookassa_qr_enabled=yookassa_qr_enabled,
             platega_enabled=platega_enabled,
+            is_admin=telegram_id in ADMIN_IDS,
             show_balance_button=show_balance_button
         ),
         force_new=True
     )
     await callback.answer()
+

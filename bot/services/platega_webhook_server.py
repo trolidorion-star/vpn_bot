@@ -1,4 +1,5 @@
 import hmac
+import json
 import logging
 import os
 from typing import Optional
@@ -14,6 +15,7 @@ from database.requests import (
     find_transaction_by_payment_id,
     get_user_by_id,
     is_order_already_paid,
+    consume_order_promocode,
     update_transaction_status,
 )
 
@@ -122,6 +124,20 @@ async def _resolve_transaction(order_tx: Optional[dict], transaction_id: str) ->
     return find_transaction_by_order_id(order_id)
 
 
+def _parse_tx_payload(tx: Optional[dict]) -> dict:
+    if not tx:
+        return {}
+    raw = tx.get("payload")
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            return json.loads(raw)
+        except Exception:
+            return {}
+    return {}
+
+
 async def _platega_webhook_handler(request: web.Request) -> web.Response:
     if not _verify_headers(request):
         return web.Response(status=403, text="Forbidden")
@@ -143,9 +159,24 @@ async def _platega_webhook_handler(request: web.Request) -> web.Response:
 
     order_id = tx["order_id"]
     order = find_order_by_order_id(order_id)
+    tx_payload = _parse_tx_payload(tx)
+
     if not order:
+        # Admin test payments are intentionally not linked to subscription orders.
+        if tx_payload.get("kind") == "admin_test_platega":
+            if status == "CONFIRMED":
+                update_transaction_status(order_id=order_id, status="SUCCESS", payment_id=transaction_id, payload=payload)
+                await _notify_user({"user_id": tx["user_id"]}, "✅ Тестовый платеж Platega подтвержден.")
+                return web.Response(status=200, text="OK")
+            if status in {"CANCELED", "CHARGEBACK", "CHARGEBACKED"}:
+                update_transaction_status(order_id=order_id, status="FAILED", payment_id=transaction_id, payload=payload)
+                return web.Response(status=200, text="OK")
+            update_transaction_status(order_id=order_id, status="PENDING", payment_id=transaction_id, payload=payload)
+            return web.Response(status=200, text="OK")
+
         logger.warning("Platega webhook order not found: order_id=%s transaction_id=%s", order_id, transaction_id)
         return web.Response(status=404, text="Order not found")
+
 
     if status == "CONFIRMED":
         if tx.get("status") == "SUCCESS" or is_order_already_paid(order_id):
@@ -158,6 +189,8 @@ async def _platega_webhook_handler(request: web.Request) -> web.Response:
             return web.Response(status=500, text="Order processing failed")
 
         update_transaction_status(order_id=order_id, status="SUCCESS", payment_id=transaction_id, payload=payload)
+        if not consume_order_promocode(order_id):
+            logger.warning("Promo consume failed for order_id=%s", order_id)
         final_order = updated_order or order
         days = final_order.get("period_days") or final_order.get("duration_days") or 30
         amount_kopecks = int((payload.get("amount") or tx.get("amount") or 0) * 100)

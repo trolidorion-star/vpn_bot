@@ -629,7 +629,7 @@ async def key_renew_select_payment(callback: CallbackQuery):
             balance_cents = get_user_balance(user_id)
             if balance_cents > 0:
                 show_balance_button = True
-    await safe_edit_or_send(callback.message, f"💳 <b>Продление ключа</b>\n\n🔑 Ключ: <b>{escape_html(key['display_name'])}</b>\n\nВыберите способ оплаты:", reply_markup=renew_payment_method_kb(key_id=key_id, crypto_url=crypto_url, crypto_mode=crypto_mode, crypto_configured=crypto_configured, stars_enabled=stars_enabled, cards_enabled=cards_enabled, yookassa_qr_enabled=yookassa_qr, platega_enabled=platega_enabled, show_balance_button=show_balance_button))
+    await safe_edit_or_send(callback.message, f"💳 <b>Продление ключа</b>\n\n🔑 Ключ: <b>{escape_html(key['display_name'])}</b>\n\nВыберите способ оплаты:", reply_markup=renew_payment_method_kb(key_id=key_id, crypto_url=crypto_url, crypto_mode=crypto_mode, crypto_configured=crypto_configured, stars_enabled=stars_enabled, cards_enabled=cards_enabled, yookassa_qr_enabled=yookassa_qr, platega_enabled=platega_enabled, is_admin=telegram_id in ADMIN_IDS, show_balance_button=show_balance_button))
     await callback.answer()
 
 @router.callback_query(F.data.startswith('key_replace:'))
@@ -834,3 +834,4 @@ async def key_rename_submit_handler(message: Message, state: FSMContext):
         prepend = '❌ Не удалось переименовать ключ.'
     await state.clear()
     await show_key_details(message.from_user.id, key_id, message, is_callback=False, prepend_text=prepend)
+
