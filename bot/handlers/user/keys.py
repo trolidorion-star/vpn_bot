@@ -20,7 +20,7 @@ from bot.services.exclusions_catalog import (
     iter_app_rules,
 )
 from bot.services.key_limits import get_key_connection_limit
-from bot.services.platega_client import is_platega_ready
+from bot.services.platega_client import is_platega_ready, is_platega_test_mode
 from bot.services.split_config_settings import (
     get_split_config_enabled,
     get_split_config_public_base_url,
@@ -606,6 +606,7 @@ async def key_renew_select_payment(callback: CallbackQuery):
     from database.requests import is_yookassa_qr_configured
     yookassa_qr = is_yookassa_qr_configured()
     platega_enabled = is_platega_ready()
+    platega_test_mode = is_platega_test_mode()
     if not crypto_configured and (not stars_enabled) and (not cards_enabled) and (not yookassa_qr) and (not platega_enabled):
         await safe_edit_or_send(callback.message, '💳 <b>Продление ключа</b>\n\n😔 Способы оплаты временно недоступны.\nПопробуйте позже.', reply_markup=back_and_home_kb(back_callback=f'key:{key_id}'))
         await callback.answer()
@@ -629,7 +630,7 @@ async def key_renew_select_payment(callback: CallbackQuery):
             balance_cents = get_user_balance(user_id)
             if balance_cents > 0:
                 show_balance_button = True
-    await safe_edit_or_send(callback.message, f"💳 <b>Продление ключа</b>\n\n🔑 Ключ: <b>{escape_html(key['display_name'])}</b>\n\nВыберите способ оплаты:", reply_markup=renew_payment_method_kb(key_id=key_id, crypto_url=crypto_url, crypto_mode=crypto_mode, crypto_configured=crypto_configured, stars_enabled=stars_enabled, cards_enabled=cards_enabled, yookassa_qr_enabled=yookassa_qr, platega_enabled=platega_enabled, is_admin=telegram_id in ADMIN_IDS, show_balance_button=show_balance_button))
+    await safe_edit_or_send(callback.message, f"💳 <b>Продление ключа</b>\n\n🔑 Ключ: <b>{escape_html(key['display_name'])}</b>\n\nВыберите способ оплаты:", reply_markup=renew_payment_method_kb(key_id=key_id, crypto_url=crypto_url, crypto_mode=crypto_mode, crypto_configured=crypto_configured, stars_enabled=stars_enabled, cards_enabled=cards_enabled, yookassa_qr_enabled=yookassa_qr, platega_enabled=platega_enabled, platega_test_mode=platega_test_mode, is_admin=telegram_id in ADMIN_IDS, show_balance_button=show_balance_button))
     await callback.answer()
 
 @router.callback_query(F.data.startswith('key_replace:'))

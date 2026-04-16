@@ -33,6 +33,26 @@ _site: Optional[web.TCPSite] = None
 _bot = None
 
 
+def _normalize_amount(value) -> int:
+    """
+    Tries to normalize provider amount into integer rubles.
+    """
+    if value is None:
+        return 0
+    if isinstance(value, (int, float)):
+        return int(float(value))
+    if isinstance(value, str):
+        cleaned = value.strip().replace(",", ".")
+        for suffix in ("RUB", "rub", "₽"):
+            cleaned = cleaned.replace(suffix, "")
+        cleaned = cleaned.strip()
+        try:
+            return int(float(cleaned))
+        except Exception:
+            return 0
+    return 0
+
+
 def _enabled() -> bool:
     raw = os.getenv("PLATEGA_WEBHOOK_ENABLED", "1").strip().lower()
     return raw in {"1", "true", "yes", "on", "y"}
@@ -110,12 +130,12 @@ async def _resolve_transaction(order_tx: Optional[dict], transaction_id: str) ->
         return None
 
     payment_details = status_payload.get("paymentDetails") or {}
-    amount = payment_details.get("amount") or status_payload.get("amount") or 0
+    amount = _normalize_amount(payment_details.get("amount") or status_payload.get("amount") or 0)
     currency = payment_details.get("currency") or status_payload.get("currency") or "RUB"
     create_or_update_transaction(
         order_id=order_id,
         user_id=order["user_id"],
-        amount=int(amount or 0),
+        amount=amount,
         currency=str(currency or "RUB"),
         payment_id=transaction_id,
         status="PENDING",
@@ -178,7 +198,7 @@ async def _platega_webhook_handler(request: web.Request) -> web.Response:
         return web.Response(status=404, text="Order not found")
 
 
-    if status == "CONFIRMED":
+    if status in {"CONFIRMED", "SUCCESS", "PAID"}:
         if tx.get("status") == "SUCCESS" or is_order_already_paid(order_id):
             update_transaction_status(order_id=order_id, status="SUCCESS", payment_id=transaction_id, payload=payload)
             return web.Response(status=200, text="OK")
@@ -193,7 +213,7 @@ async def _platega_webhook_handler(request: web.Request) -> web.Response:
             logger.warning("Promo consume failed for order_id=%s", order_id)
         final_order = updated_order or order
         days = final_order.get("period_days") or final_order.get("duration_days") or 30
-        amount_kopecks = int((payload.get("amount") or tx.get("amount") or 0) * 100)
+        amount_kopecks = int(tx.get("amount") or 0) * 100
         await process_referral_reward(final_order["user_id"], days, amount_kopecks, "cards")
         await _notify_user(final_order, "✅ Оплата прошла успешно. Подписка обновлена.")
         return web.Response(status=200, text="OK")

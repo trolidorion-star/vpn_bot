@@ -22,7 +22,7 @@ from bot.services.buy_key_timer import (
     cancel_buy_key_timer,
     start_buy_key_timer,
 )
-from bot.services.platega_client import is_platega_ready
+from bot.services.platega_client import is_platega_ready, is_platega_test_mode
 from bot.states.user_states import RenameKey, ReplaceKey
 from bot.utils.text import escape_html, safe_edit_or_send
 
@@ -87,6 +87,7 @@ async def buy_key_handler(callback: CallbackQuery):
             show_balance_button = True
 
     platega_enabled = is_platega_ready()
+    platega_test_mode = is_platega_test_mode()
 
     if not crypto_configured and (not stars_enabled) and (not cards_enabled) and (not yookassa_qr) and (not platega_enabled):
         await safe_edit_or_send(
@@ -112,6 +113,7 @@ async def buy_key_handler(callback: CallbackQuery):
         cards_enabled=cards_enabled,
         yookassa_qr_enabled=yookassa_qr,
         platega_enabled=platega_enabled,
+        platega_test_mode=platega_test_mode,
         is_admin=telegram_id in ADMIN_IDS,
         order_id=existing_order_id,
         show_balance_button=show_balance_button,

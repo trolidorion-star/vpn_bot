@@ -8,7 +8,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import ADMIN_IDS
-from bot.services.platega_client import create_payment_link
+from bot.services.platega_client import create_payment_link, is_platega_ready, is_platega_test_mode
 from bot.states.user_states import PromoCodeFlow
 from bot.utils.text import escape_html, safe_edit_or_send
 from database.requests import (
@@ -184,6 +184,10 @@ async def _render_checkout(
 
 @router.callback_query(F.data == "pay_platega")
 async def pay_platega_select_tariff(callback: CallbackQuery):
+    if not is_platega_ready():
+        await callback.answer("Platega disabled", show_alert=True)
+        return
+
     from bot.keyboards.user import tariff_select_kb
     from database.requests import get_all_tariffs
 
@@ -202,6 +206,10 @@ async def pay_platega_select_tariff(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("platega_pay:"))
 async def pay_platega_create_link(callback: CallbackQuery, state: FSMContext):
+    if not is_platega_ready():
+        await callback.answer("Platega disabled", show_alert=True)
+        return
+
     parts = callback.data.split(":")
     tariff_id = int(parts[1])
     order_id = parts[2] if len(parts) > 2 else None
@@ -250,6 +258,10 @@ async def pay_platega_create_link(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("renew_platega_tariff:"))
 async def renew_platega_select_tariff(callback: CallbackQuery):
+    if not is_platega_ready():
+        await callback.answer("Platega disabled", show_alert=True)
+        return
+
     from bot.keyboards.user import renew_tariff_select_kb
     from bot.utils.groups import get_tariffs_for_renewal
 
@@ -274,6 +286,10 @@ async def renew_platega_select_tariff(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("renew_pay_platega:"))
 async def renew_platega_create_link(callback: CallbackQuery, state: FSMContext):
+    if not is_platega_ready():
+        await callback.answer("Platega disabled", show_alert=True)
+        return
+
     parts = callback.data.split(":")
     key_id = int(parts[1])
     tariff_id = int(parts[2])
@@ -405,11 +421,17 @@ async def pay_platega_test(callback: CallbackQuery):
     if callback.from_user.id not in ADMIN_IDS:
         await callback.answer("Только для админов", show_alert=True)
         return
+    if not is_platega_ready():
+        await callback.answer("Platega disabled", show_alert=True)
+        return
+    if not is_platega_test_mode():
+        await callback.answer("Platega test mode is disabled", show_alert=True)
+        return
 
     user, _ = get_or_create_user(callback.from_user.id, callback.from_user.username)
     user_id = user["id"]
     order_id = f"TEST-{secrets.token_hex(4).upper()}"
-    amount_rub = 10
+    amount_rub = 1
 
     create_or_update_transaction(
         order_id=order_id,

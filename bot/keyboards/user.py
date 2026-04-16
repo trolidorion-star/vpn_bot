@@ -123,6 +123,7 @@ def buy_key_kb(
     cards_enabled: bool = False,
     yookassa_qr_enabled: bool = False,
     platega_enabled: bool = False,
+    platega_test_mode: bool = False,
     is_admin: bool = False,
     order_id: str = None,
     show_balance_button: bool = False,
@@ -176,7 +177,7 @@ def buy_key_kb(
         builder.row(
             InlineKeyboardButton(text="💳 Оплатить через Platega", callback_data="pay_platega")
         )
-        if is_admin:
+        if is_admin and platega_test_mode:
             builder.row(
                 InlineKeyboardButton(text="Тестовый Platega (1 RUB)", callback_data="pay_platega_test")
             )
@@ -682,6 +683,7 @@ def renew_payment_method_kb(
     cards_enabled: bool = False,
     yookassa_qr_enabled: bool = False,
     platega_enabled: bool = False,
+    platega_test_mode: bool = False,
     is_admin: bool = False,
     show_balance_button: bool = False
 ) -> InlineKeyboardMarkup:
@@ -745,7 +747,7 @@ def renew_payment_method_kb(
                 callback_data=f"renew_platega_tariff:{key_id}",
             )
         )
-        if is_admin:
+        if is_admin and platega_test_mode:
             builder.row(
                 InlineKeyboardButton(
                     text="Тестовый Platega (1 RUB)",

@@ -15,9 +15,33 @@ except Exception:
 logger = logging.getLogger(__name__)
 
 
+def _db_get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
+    try:
+        from database.requests import get_setting
+
+        return get_setting(key, default)
+    except Exception:
+        return default
+
+
+def _to_bool(raw: Optional[str], default: bool = False) -> bool:
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on", "y"}
+
+
 def _enabled() -> bool:
-    raw = os.getenv("PLATEGA_ENABLED", "1").strip().lower()
-    return raw in {"1", "true", "yes", "on", "y"}
+    db_raw = _db_get_setting("platega_enabled", None)
+    if db_raw is not None:
+        return _to_bool(db_raw, default=True)
+    return _to_bool(os.getenv("PLATEGA_ENABLED", "1"), default=True)
+
+
+def is_platega_test_mode() -> bool:
+    db_raw = _db_get_setting("platega_test_mode", None)
+    if db_raw is not None:
+        return _to_bool(db_raw, default=False)
+    return _to_bool(os.getenv("PLATEGA_TEST_MODE", "0"), default=False)
 
 
 def _base_url() -> str:
@@ -33,7 +57,11 @@ def _api_key() -> str:
 
 
 def _payment_method() -> int:
-    raw = os.getenv("PLATEGA_PAYMENT_METHOD", "2").strip()
+    db_raw = _db_get_setting("platega_payment_method", None)
+    if db_raw is not None and str(db_raw).strip():
+        raw = str(db_raw).strip()
+    else:
+        raw = os.getenv("PLATEGA_PAYMENT_METHOD", "2").strip()
     try:
         return int(raw)
     except Exception:
@@ -67,17 +95,19 @@ async def create_payment_link(
 ) -> Dict[str, Any]:
     if amount_rub <= 0:
         raise ValueError("amount_rub must be positive")
+    amount_kopecks = int(amount_rub * 100)
 
     url = f"{_base_url()}/transaction/process"
     payload = {
-        "amount": amount_rub,
-        "currency": "RUB",
         "description": description,
         "externalId": order_id,
         "payload": order_id,
         "paymentMethod": int(payment_method or _payment_method()),
-        "paymentDetails": {"currency": "RUB"},
-        "returnUrl": success_url,
+        "paymentDetails": {
+            "amount": amount_kopecks,
+            "currency": "RUB",
+        },
+        "return": success_url,
         "failedUrl": fail_url,
     }
     request_id = secrets.token_hex(8)
@@ -103,9 +133,10 @@ async def create_payment_link(
                 logger.error("Platega create-payment invalid JSON: status=%s body=%s", response.status, text)
                 raise RuntimeError("Platega create payment returned invalid JSON")
 
-    transaction_id = str(data.get("id") or "").strip()
+    transaction_id = str(data.get("id") or data.get("transactionId") or "").strip()
     redirect_url = (
-        data.get("payformUrl")
+        data.get("redirect")
+        or data.get("payformUrl")
         or data.get("payform")
         or data.get("paymentUrl")
         or data.get("url")
