@@ -28,7 +28,7 @@ def _add_column(conn: sqlite3.Connection, table: str, column_def: str) -> None:
 
 
 # Текущая версия схемы БД
-LATEST_VERSION = 26
+LATEST_VERSION = 27
 
 
 def get_current_version() -> int:
@@ -1704,6 +1704,47 @@ def migration_26(conn: sqlite3.Connection) -> None:
     logger.info("Migration v26 applied")
 
 
+def migration_27(conn: sqlite3.Connection) -> None:
+    """
+    Migration v27:
+    - Adds transactions table for external payment providers.
+    - Tracks provider payment id and normalized status lifecycle.
+    """
+    logger.info("Applying migration v27 (transactions table for external providers)...")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS transactions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_id TEXT NOT NULL UNIQUE,
+            payment_id TEXT UNIQUE,
+            user_id INTEGER NOT NULL,
+            amount INTEGER NOT NULL DEFAULT 0,
+            currency TEXT NOT NULL DEFAULT 'RUB',
+            status TEXT NOT NULL DEFAULT 'PENDING',
+            payload TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_transactions_order_id ON transactions(order_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_transactions_payment_id ON transactions(payment_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_transactions_user_id ON transactions(user_id)"
+    )
+
+    logger.info("Migration v27 applied")
+
+
 MIGRATIONS = {
     1: migration_1,
     2: migration_2,
@@ -1731,6 +1772,7 @@ MIGRATIONS = {
     24: migration_24,
     25: migration_25,
     26: migration_26,
+    27: migration_27,
 }
 
 

@@ -6,6 +6,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from bot.utils.text import escape_html, safe_edit_or_send
 from config import ADMIN_IDS
+from bot.services.platega_client import is_platega_ready
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -116,7 +117,9 @@ async def renew_invoice_cancel_handler(callback: CallbackQuery):
     cards_enabled = is_cards_enabled()
     yookassa_qr_enabled = is_yookassa_qr_configured()
     
-    if not crypto_configured and (not stars_enabled) and (not cards_enabled) and (not yookassa_qr_enabled):
+    platega_enabled = is_platega_ready()
+
+    if not crypto_configured and (not stars_enabled) and (not cards_enabled) and (not yookassa_qr_enabled) and (not platega_enabled):
         await safe_edit_or_send(callback.message, '😔 Способы оплаты временно недоступны.', force_new=True)
         return
 
@@ -152,6 +155,7 @@ async def renew_invoice_cancel_handler(callback: CallbackQuery):
             stars_enabled=stars_enabled,
             cards_enabled=cards_enabled,
             yookassa_qr_enabled=yookassa_qr_enabled,
+            platega_enabled=platega_enabled,
             show_balance_button=show_balance_button
         ),
         force_new=True

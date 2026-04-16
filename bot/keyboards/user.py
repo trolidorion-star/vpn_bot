@@ -122,6 +122,7 @@ def buy_key_kb(
     stars_enabled: bool = False,
     cards_enabled: bool = False,
     yookassa_qr_enabled: bool = False,
+    platega_enabled: bool = False,
     order_id: str = None,
     show_balance_button: bool = False,
     show_gift_button: bool = True
@@ -168,6 +169,11 @@ def buy_key_kb(
     if yookassa_qr_enabled:
         builder.row(
             InlineKeyboardButton(text="📱 QR-оплата (Карта/СБП)", callback_data="pay_qr")
+        )
+
+    if platega_enabled:
+        builder.row(
+            InlineKeyboardButton(text="💳 Оплатить через Platega", callback_data="pay_platega")
         )
 
     # Кнопка «Использовать баланс» — только при выполнении всех трёх условий
@@ -274,7 +280,7 @@ def balance_payment_kb(
     return builder.as_markup()
 
 
-def tariff_select_kb(tariffs: list, back_callback: str = "buy_key", order_id: str = None, is_cards: bool = False, is_crypto: bool = False, is_balance: bool = False, is_qr: bool = False, groups_data: list = None, is_gift: bool = False) -> InlineKeyboardMarkup:
+def tariff_select_kb(tariffs: list, back_callback: str = "buy_key", order_id: str = None, is_cards: bool = False, is_crypto: bool = False, is_balance: bool = False, is_qr: bool = False, is_platega: bool = False, groups_data: list = None, is_gift: bool = False) -> InlineKeyboardMarkup:
     """
     Клавиатура выбора тарифа для оплаты Stars, Картами, Криптой или Балансом.
     
@@ -314,6 +320,13 @@ def tariff_select_kb(tariffs: list, back_callback: str = "buy_key", order_id: st
                 price_display = f"{price_rub} ₽"
                 prefix = "gift_qr_pay" if is_gift else "qr_pay"
                 emoji = '📱'
+            elif is_platega:
+                price_rub = tariff.get('price_rub')
+                if price_rub is None or price_rub <= 0:
+                    continue
+                price_display = f"{price_rub} ₽"
+                prefix = "platega_pay"
+                emoji = '💳'
             elif is_balance:
                 price_rub = tariff.get('price_rub')
                 if price_rub is None or price_rub <= 1:
@@ -578,7 +591,7 @@ def key_show_kb(key_id: int = None) -> InlineKeyboardMarkup:
     return key_issued_kb()
 
 
-def renew_tariff_select_kb(tariffs: list, key_id: int, order_id: str = None, is_cards: bool = False, is_crypto: bool = False, is_balance: bool = False, is_qr: bool = False) -> InlineKeyboardMarkup:
+def renew_tariff_select_kb(tariffs: list, key_id: int, order_id: str = None, is_cards: bool = False, is_crypto: bool = False, is_balance: bool = False, is_qr: bool = False, is_platega: bool = False) -> InlineKeyboardMarkup:
     """
     Клавиатура выбора тарифа для продления ключа (для Stars, Карт или Баланса).
     
@@ -614,6 +627,13 @@ def renew_tariff_select_kb(tariffs: list, key_id: int, order_id: str = None, is_
             price_display = f"{price_rub} ₽"
             prefix = "renew_pay_qr"
             emoji = '📱'
+        elif is_platega:
+            price_rub = tariff.get('price_rub')
+            if price_rub is None or price_rub <= 0:
+                continue
+            price_display = f"{price_rub} ₽"
+            prefix = "renew_pay_platega"
+            emoji = '💳'
         elif is_balance:
             price_rub = tariff.get('price_rub')
             if price_rub is None or price_rub <= 1:
@@ -656,6 +676,7 @@ def renew_payment_method_kb(
     stars_enabled: bool = False,
     cards_enabled: bool = False,
     yookassa_qr_enabled: bool = False,
+    platega_enabled: bool = False,
     show_balance_button: bool = False
 ) -> InlineKeyboardMarkup:
     """
@@ -708,6 +729,14 @@ def renew_payment_method_kb(
             InlineKeyboardButton(
                 text="📱 QR-оплата (Карта/СБП)",
                 callback_data=f"renew_qr_tariff:{key_id}"
+            )
+        )
+
+    if platega_enabled:
+        builder.row(
+            InlineKeyboardButton(
+                text="💳 Оплатить через Platega",
+                callback_data=f"renew_platega_tariff:{key_id}",
             )
         )
 

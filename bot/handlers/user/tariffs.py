@@ -22,6 +22,7 @@ from bot.services.buy_key_timer import (
     cancel_buy_key_timer,
     start_buy_key_timer,
 )
+from bot.services.platega_client import is_platega_ready
 from bot.states.user_states import RenameKey, ReplaceKey
 from bot.utils.text import escape_html, safe_edit_or_send
 
@@ -85,7 +86,9 @@ async def buy_key_handler(callback: CallbackQuery):
         if balance_cents > 0:
             show_balance_button = True
 
-    if not crypto_configured and (not stars_enabled) and (not cards_enabled) and (not yookassa_qr):
+    platega_enabled = is_platega_ready()
+
+    if not crypto_configured and (not stars_enabled) and (not cards_enabled) and (not yookassa_qr) and (not platega_enabled):
         await safe_edit_or_send(
             callback.message,
             "💳 <b>Купить ключ</b>\n\n😔 К сожалению, сейчас оплата недоступна.\n\n"
@@ -108,6 +111,7 @@ async def buy_key_handler(callback: CallbackQuery):
         stars_enabled=stars_enabled,
         cards_enabled=cards_enabled,
         yookassa_qr_enabled=yookassa_qr,
+        platega_enabled=platega_enabled,
         order_id=existing_order_id,
         show_balance_button=show_balance_button,
     )
