@@ -95,7 +95,7 @@ async def create_payment_link(
 ) -> Dict[str, Any]:
     if amount_rub <= 0:
         raise ValueError("amount_rub must be positive")
-    amount_kopecks = int(amount_rub * 100)
+    amount_kopecks = int(amount_rub)
 
     url = f"{_base_url()}/transaction/process"
     payload = {

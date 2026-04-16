@@ -1,0 +1,3 @@
+diff --git a/scripts/install_systemd_service.sh b/scripts/install_systemd_service.sh
+old mode 100644
+new mode 100755
