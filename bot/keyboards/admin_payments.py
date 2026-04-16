@@ -1,4 +1,4 @@
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+﻿from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from .admin_misc import back_button, home_button
@@ -12,6 +12,10 @@ def payments_menu_kb(
     monthly_reset_enabled: bool = False,
     platega_enabled: bool = True,
     platega_test_mode: bool = False,
+    legacy_enabled: bool = False,
+    platega_sbp_enabled: bool = True,
+    platega_card_enabled: bool = True,
+    platega_crypto_enabled: bool = True,
 ) -> InlineKeyboardMarkup:
     """Главное меню раздела оплат."""
     builder = InlineKeyboardBuilder()
@@ -20,19 +24,31 @@ def payments_menu_kb(
     builder.row(InlineKeyboardButton(text=f"⭐ Telegram Stars: {stars_status}", callback_data="admin_payments_toggle_stars"))
 
     crypto_status = "✅" if crypto_enabled else "❌"
-    builder.row(InlineKeyboardButton(text=f"💰 Крипто-платежи: {crypto_status}", callback_data="admin_payments_toggle_crypto"))
+    builder.row(InlineKeyboardButton(text=f"💰 Крипто-платежи (legacy): {crypto_status}", callback_data="admin_payments_toggle_crypto"))
 
     cards_status = "✅" if cards_enabled else "❌"
-    builder.row(InlineKeyboardButton(text=f"💳 Оплата картами (ЮКасса): {cards_status}", callback_data="admin_payments_cards"))
+    builder.row(InlineKeyboardButton(text=f"💳 Оплата картами (legacy): {cards_status}", callback_data="admin_payments_cards"))
 
     qr_status = "✅" if qr_enabled else "❌"
-    builder.row(InlineKeyboardButton(text=f"📱 QR-оплата (ЮКасса/СБП): {qr_status}", callback_data="admin_payments_qr"))
+    builder.row(InlineKeyboardButton(text=f"📱 QR-оплата (legacy): {qr_status}", callback_data="admin_payments_qr"))
 
     platega_status = "✅" if platega_enabled else "❌"
     builder.row(InlineKeyboardButton(text=f"💠 Platega: {platega_status}", callback_data="admin_payments_toggle_platega"))
 
     platega_test_status = "✅" if platega_test_mode else "❌"
     builder.row(InlineKeyboardButton(text=f"🧪 Тестовый режим Platega: {platega_test_status}", callback_data="admin_payments_toggle_platega_test"))
+
+    sbp_status = "✅" if platega_sbp_enabled else "❌"
+    builder.row(InlineKeyboardButton(text=f"🏦 Platega СБП/QR: {sbp_status}", callback_data="admin_payments_toggle_platega_sbp"))
+
+    card_ru_status = "✅" if platega_card_enabled else "❌"
+    builder.row(InlineKeyboardButton(text=f"💳 Platega Карты РФ: {card_ru_status}", callback_data="admin_payments_toggle_platega_card"))
+
+    platega_crypto_status = "✅" if platega_crypto_enabled else "❌"
+    builder.row(InlineKeyboardButton(text=f"🪙 Platega Крипта/Intl: {platega_crypto_status}", callback_data="admin_payments_toggle_platega_crypto"))
+
+    legacy_status = "✅" if legacy_enabled else "❌"
+    builder.row(InlineKeyboardButton(text=f"🛟 Резервные оплаты (legacy): {legacy_status}", callback_data="admin_payments_toggle_legacy"))
 
     reset_status = "✅" if monthly_reset_enabled else "❌"
     builder.row(InlineKeyboardButton(text=f"🔄 Автосброс трафика 1-го числа: {reset_status}", callback_data="admin_toggle_monthly_reset"))

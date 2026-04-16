@@ -20,7 +20,7 @@ from bot.services.exclusions_catalog import (
     iter_app_rules,
 )
 from bot.services.key_limits import get_key_connection_limit
-from bot.services.platega_client import is_platega_ready, is_platega_test_mode
+from bot.services.platega_client import get_enabled_platega_methods, is_platega_ready, is_platega_test_mode
 from bot.services.split_config_settings import (
     get_split_config_enabled,
     get_split_config_public_base_url,
@@ -493,6 +493,7 @@ async def key_excl_smart_link(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("key_excl_export:"))
 async def key_excl_export(callback: CallbackQuery):
     from database.requests import get_key_details_for_user, list_key_exclusions_for_user
+    from bot.services.ru_bypass import merge_with_default_ru_exclusions
     from bot.services.vpn_api import get_client
     from bot.utils.key_generator import generate_happ_split_subscription
 
@@ -506,7 +507,7 @@ async def key_excl_export(callback: CallbackQuery):
         await callback.answer("❌ Ключ ещё не настроен", show_alert=True)
         return
 
-    exclusions = list_key_exclusions_for_user(key_id, telegram_id)
+    exclusions = merge_with_default_ru_exclusions(list_key_exclusions_for_user(key_id, telegram_id))
     if not exclusions:
         await callback.answer("Добавьте хотя бы одно исключение", show_alert=True)
         return
@@ -591,7 +592,7 @@ async def key_excl_submit(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith('key_renew:'))
 async def key_renew_select_payment(callback: CallbackQuery):
     """Выбор способа оплаты для продления (сразу, без тарифа)."""
-    from database.requests import get_all_tariffs, get_key_details_for_user, get_user_internal_id, is_crypto_configured, is_stars_enabled, is_cards_enabled, get_setting, create_pending_order, get_crypto_integration_mode, is_referral_enabled, get_referral_reward_type, get_user_balance
+    from database.requests import get_all_tariffs, get_key_details_for_user, get_user_internal_id, is_crypto_configured, is_stars_enabled, is_cards_enabled, get_setting, create_pending_order, get_crypto_integration_mode, is_referral_enabled, get_referral_reward_type, get_user_balance, is_legacy_payments_enabled
     from bot.services.billing import build_crypto_payment_url, extract_item_id_from_url
     from bot.keyboards.user import renew_payment_method_kb, back_and_home_kb
     key_id = int(callback.data.split(':')[1])
@@ -605,16 +606,18 @@ async def key_renew_select_payment(callback: CallbackQuery):
     cards_enabled = is_cards_enabled()
     from database.requests import is_yookassa_qr_configured
     yookassa_qr = is_yookassa_qr_configured()
-    platega_enabled = is_platega_ready()
+    legacy_enabled = is_legacy_payments_enabled()
+    platega_enabled = is_platega_ready() and bool(get_enabled_platega_methods())
     platega_test_mode = is_platega_test_mode()
-    if not crypto_configured and (not stars_enabled) and (not cards_enabled) and (not yookassa_qr) and (not platega_enabled):
+    has_legacy = legacy_enabled and (crypto_configured or cards_enabled or yookassa_qr)
+    if (not stars_enabled) and (not platega_enabled) and (not has_legacy):
         await safe_edit_or_send(callback.message, '💳 <b>Продление ключа</b>\n\n😔 Способы оплаты временно недоступны.\nПопробуйте позже.', reply_markup=back_and_home_kb(back_callback=f'key:{key_id}'))
         await callback.answer()
         return
     crypto_url = None
     crypto_mode = get_crypto_integration_mode()
     user_id = get_user_internal_id(telegram_id)
-    if crypto_configured and user_id:
+    if legacy_enabled and crypto_configured and user_id:
         tariffs = get_all_tariffs(include_hidden=False)
         if tariffs:
             placeholder_tariff = tariffs[0]

@@ -19,6 +19,11 @@ logger = logging.getLogger(__name__)
 
 router = Router()
 
+
+def _legacy_enabled() -> bool:
+    from database.requests import is_legacy_payments_enabled
+    return is_legacy_payments_enabled()
+
 @router.callback_query(F.data.startswith('pay_cards'))
 async def pay_cards_select_tariff(callback: CallbackQuery):
     """Выбор тарифа для оплаты Картой (Новый ключ)."""
@@ -368,3 +373,27 @@ async def renew_qr_create(callback: CallbackQuery):
         logger.error(f'Ошибка QR ЮКасса (продление): {e}')
         await safe_edit_or_send(callback.message, f'❌ <b>Ошибка создания QR</b>\n\n<i>{escape_html(str(e))}</i>', reply_markup=home_only_kb())
     await callback.answer()
+    if not _legacy_enabled():
+        await callback.answer("Способ оплаты отключен", show_alert=True)
+        return
+    if not _legacy_enabled():
+        await callback.answer("Способ оплаты отключен", show_alert=True)
+        return
+    if not _legacy_enabled():
+        await callback.answer("Способ оплаты отключен", show_alert=True)
+        return
+    if not _legacy_enabled():
+        await callback.answer("Способ оплаты отключен", show_alert=True)
+        return
+    if not _legacy_enabled():
+        await callback.answer("Способ оплаты отключен", show_alert=True)
+        return
+    if not _legacy_enabled():
+        await callback.answer("Способ оплаты отключен", show_alert=True)
+        return
+    if not _legacy_enabled():
+        await callback.answer("Способ оплаты отключен", show_alert=True)
+        return
+    if not _legacy_enabled():
+        await callback.answer("Способ оплаты отключен", show_alert=True)
+        return

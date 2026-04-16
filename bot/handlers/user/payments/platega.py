@@ -8,7 +8,14 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from config import ADMIN_IDS
-from bot.services.platega_client import create_payment_link, is_platega_ready, is_platega_test_mode
+from bot.services.platega_client import (
+    create_payment_link,
+    get_enabled_platega_methods,
+    get_platega_payment_method_id,
+    is_platega_method_enabled,
+    is_platega_ready,
+    is_platega_test_mode,
+)
 from bot.states.user_states import PromoCodeFlow
 from bot.utils.text import escape_html, safe_edit_or_send
 from database.requests import (
@@ -36,6 +43,24 @@ def _back_callback(mode: str, key_id: int | None) -> str:
     return "buy_key"
 
 
+def _platega_method_label(method_code: str | None) -> str:
+    labels = {
+        "sbp": "СБП / QR",
+        "card": "Карта (МИР)",
+        "crypto": "Крипта / International",
+    }
+    return labels.get((method_code or "").strip().lower(), "Platega")
+
+
+def _build_platega_method_kb(prefix: str, back_callback: str):
+    kb = InlineKeyboardBuilder()
+    for code, label, _method_id in get_enabled_platega_methods():
+        kb.row(InlineKeyboardButton(text=label, callback_data=f"{prefix}:{code}"))
+    kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback))
+    kb.row(InlineKeyboardButton(text="🏠 На главную", callback_data="start"))
+    return kb.as_markup()
+
+
 async def _rerender_checkout_from_state(target_message, telegram_id: int, state: FSMContext, force_new: bool = False) -> bool:
     data = await state.get_data()
     ctx = data.get("platega_context") or {}
@@ -43,6 +68,8 @@ async def _rerender_checkout_from_state(target_message, telegram_id: int, state:
     tariff_id = ctx.get("tariff_id")
     mode = ctx.get("mode")
     key_id = ctx.get("key_id")
+    method_code = (ctx.get("platega_method_code") or "sbp").strip().lower()
+    payment_method = get_platega_payment_method_id(method_code)
 
     if not order_id or not tariff_id:
         return False
@@ -70,6 +97,8 @@ async def _rerender_checkout_from_state(target_message, telegram_id: int, state:
         tariff_name=tariff["name"],
         base_amount_rub=amount_rub,
         back_callback=_back_callback(mode, key_id),
+        payment_method=payment_method,
+        payment_method_label=_platega_method_label(method_code),
         force_new=force_new,
     )
     return True
@@ -100,6 +129,8 @@ async def _render_checkout(
     tariff_name: str,
     base_amount_rub: int,
     back_callback: str,
+    payment_method: int | None,
+    payment_method_label: str,
     force_new: bool = False,
 ):
     final_amount, discount_amount, promo_code = _promo_meta(order_id, base_amount_rub)
@@ -127,6 +158,7 @@ async def _render_checkout(
             description=description,
             success_url=BOT_RETURN_URL,
             fail_url=BOT_RETURN_URL,
+            payment_method=payment_method,
         )
     except Exception as e:
         logger.error("Platega create-link error: order_id=%s err=%s", order_id, e)
@@ -158,6 +190,7 @@ async def _render_checkout(
         f"💳 <b>{escape_html(title)}</b>",
         "",
         f"Тариф: <b>{escape_html(tariff_name)}</b>",
+        f"Метод: <b>{escape_html(payment_method_label)}</b>",
     ]
     if discount_amount > 0 and promo_code:
         lines.append(f"Сумма: <s>{base_amount_rub} ₽</s> → <b>{final_amount} ₽</b>")
@@ -187,19 +220,37 @@ async def pay_platega_select_tariff(callback: CallbackQuery):
     if not is_platega_ready():
         await callback.answer("Platega disabled", show_alert=True)
         return
+    if not get_enabled_platega_methods():
+        await callback.answer("Нет доступных методов Platega", show_alert=True)
+        return
+    await safe_edit_or_send(
+        callback.message,
+        "💳 <b>Platega</b>\n\nВыберите способ оплаты:",
+        reply_markup=_build_platega_method_kb("platega_method_buy", "buy_key"),
+    )
+    await callback.answer()
 
+
+@router.callback_query(F.data.startswith("platega_method_buy:"))
+async def pay_platega_choose_method(callback: CallbackQuery, state: FSMContext):
     from bot.keyboards.user import tariff_select_kb
     from database.requests import get_all_tariffs
+
+    method_code = callback.data.split(":")[1].strip().lower()
+    if not is_platega_method_enabled(method_code):
+        await callback.answer("Метод недоступен", show_alert=True)
+        return
 
     tariffs = get_all_tariffs(include_hidden=False)
     if not tariffs:
         await callback.answer("Нет доступных тарифов", show_alert=True)
         return
 
+    await state.update_data(platega_method_code=method_code)
     await safe_edit_or_send(
         callback.message,
-        "💳 <b>Оплата через Platega</b>\n\nВыберите тариф:",
-        reply_markup=tariff_select_kb(tariffs, is_platega=True),
+        f"💳 <b>Platega · {_platega_method_label(method_code)}</b>\n\nВыберите тариф:",
+        reply_markup=tariff_select_kb(tariffs, is_platega=True, back_callback="pay_platega"),
     )
     await callback.answer()
 
@@ -235,8 +286,22 @@ async def pay_platega_create_link(callback: CallbackQuery, state: FSMContext):
         )
 
     clear_promocode_from_order(order_id)
+    data = await state.get_data()
+    method_code = str(data.get("platega_method_code") or "sbp").strip().lower()
+    if not is_platega_method_enabled(method_code):
+        await callback.answer("Метод оплаты Platega отключен", show_alert=True)
+        return
+    payment_method = get_platega_payment_method_id(method_code)
     await state.set_state(None)
-    await state.update_data(platega_context={"mode": "buy", "order_id": order_id, "tariff_id": tariff_id, "key_id": None})
+    await state.update_data(
+        platega_context={
+            "mode": "buy",
+            "order_id": order_id,
+            "tariff_id": tariff_id,
+            "key_id": None,
+            "platega_method_code": method_code,
+        }
+    )
 
     amount_rub = int(float(tariff.get("price_rub") or 0))
     if amount_rub <= 0:
@@ -252,6 +317,8 @@ async def pay_platega_create_link(callback: CallbackQuery, state: FSMContext):
         tariff_name=tariff["name"],
         base_amount_rub=amount_rub,
         back_callback="buy_key",
+        payment_method=payment_method,
+        payment_method_label=_platega_method_label(method_code),
     )
     await callback.answer()
 
@@ -262,10 +329,35 @@ async def renew_platega_select_tariff(callback: CallbackQuery):
         await callback.answer("Platega disabled", show_alert=True)
         return
 
+    key_id = int(callback.data.split(":")[1])
+    key = get_key_details_for_user(key_id, callback.from_user.id)
+    if not key:
+        await callback.answer("Ключ не найден", show_alert=True)
+        return
+    if not get_enabled_platega_methods():
+        await callback.answer("Нет доступных методов Platega", show_alert=True)
+        return
+    await safe_edit_or_send(
+        callback.message,
+        f"💳 <b>Platega</b>\n\n🔑 Ключ: <b>{escape_html(key['display_name'])}</b>\n\nВыберите способ оплаты:",
+        reply_markup=_build_platega_method_kb(f"platega_method_renew:{key_id}", f"key_renew:{key_id}"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("platega_method_renew:"))
+async def renew_platega_choose_method(callback: CallbackQuery, state: FSMContext):
     from bot.keyboards.user import renew_tariff_select_kb
     from bot.utils.groups import get_tariffs_for_renewal
 
-    key_id = int(callback.data.split(":")[1])
+    parts = callback.data.split(":")
+    key_id = int(parts[1])
+    method_code = parts[2].strip().lower()
+
+    if not is_platega_method_enabled(method_code):
+        await callback.answer("Метод недоступен", show_alert=True)
+        return
+
     key = get_key_details_for_user(key_id, callback.from_user.id)
     if not key:
         await callback.answer("Ключ не найден", show_alert=True)
@@ -276,9 +368,14 @@ async def renew_platega_select_tariff(callback: CallbackQuery):
         await callback.answer("Нет доступных тарифов", show_alert=True)
         return
 
+    await state.update_data(platega_method_code=method_code)
     await safe_edit_or_send(
         callback.message,
-        f"💳 <b>Оплата через Platega</b>\n\n🔑 Ключ: <b>{escape_html(key['display_name'])}</b>\n\nВыберите тариф:",
+        (
+            f"💳 <b>Platega · {_platega_method_label(method_code)}</b>\n\n"
+            f"🔑 Ключ: <b>{escape_html(key['display_name'])}</b>\n\n"
+            "Выберите тариф:"
+        ),
         reply_markup=renew_tariff_select_kb(tariffs, key_id, is_platega=True),
     )
     await callback.answer()
@@ -317,8 +414,22 @@ async def renew_platega_create_link(callback: CallbackQuery, state: FSMContext):
         )
 
     clear_promocode_from_order(order_id)
+    data = await state.get_data()
+    method_code = str(data.get("platega_method_code") or "sbp").strip().lower()
+    if not is_platega_method_enabled(method_code):
+        await callback.answer("Метод оплаты Platega отключен", show_alert=True)
+        return
+    payment_method = get_platega_payment_method_id(method_code)
     await state.set_state(None)
-    await state.update_data(platega_context={"mode": "renew", "order_id": order_id, "tariff_id": tariff_id, "key_id": key_id})
+    await state.update_data(
+        platega_context={
+            "mode": "renew",
+            "order_id": order_id,
+            "tariff_id": tariff_id,
+            "key_id": key_id,
+            "platega_method_code": method_code,
+        }
+    )
 
     amount_rub = int(float(tariff.get("price_rub") or 0))
     if amount_rub <= 0:
@@ -334,6 +445,8 @@ async def renew_platega_create_link(callback: CallbackQuery, state: FSMContext):
         tariff_name=tariff["name"],
         base_amount_rub=amount_rub,
         back_callback=f"key_renew:{key_id}",
+        payment_method=payment_method,
+        payment_method_label=_platega_method_label(method_code),
     )
     await callback.answer()
 

@@ -12,6 +12,11 @@ logger = logging.getLogger(__name__)
 
 router = Router()
 
+
+def _legacy_enabled() -> bool:
+    from database.requests import is_legacy_payments_enabled
+    return is_legacy_payments_enabled()
+
 @router.callback_query(F.data.startswith('renew_crypto_tariff:'))
 async def renew_crypto_select_tariff(callback: CallbackQuery):
     """Выбор тарифа для продления (Crypto)."""
@@ -121,3 +126,15 @@ async def pay_crypto_invoice(callback: CallbackQuery):
     price_str = f'${price_usd:g}'.replace('.', ',')
     await safe_edit_or_send(callback.message, f"💰 <b>Оплата криптовалютой</b>\n\nТариф: <b>{escape_html(tariff['name'])}</b>\nСумма к оплате: <b>{price_str}</b>\n\nНажмите кнопку ниже, чтобы перейти к генерации счета в @Ya_SellerBot.", reply_markup=builder.as_markup())
     await callback.answer()
+    if not _legacy_enabled():
+        await callback.answer("Способ оплаты отключен", show_alert=True)
+        return
+    if not _legacy_enabled():
+        await callback.answer("Способ оплаты отключен", show_alert=True)
+        return
+    if not _legacy_enabled():
+        await callback.answer("Способ оплаты отключен", show_alert=True)
+        return
+    if not _legacy_enabled():
+        await callback.answer("Способ оплаты отключен", show_alert=True)
+        return

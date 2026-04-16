@@ -14,6 +14,16 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
+PLATEGA_METHOD_SBP = 2
+PLATEGA_METHOD_CARD_RU = 10
+PLATEGA_METHOD_INTL = 12
+
+PLATEGA_METHODS = {
+    "sbp": PLATEGA_METHOD_SBP,
+    "card": PLATEGA_METHOD_CARD_RU,
+    "crypto": PLATEGA_METHOD_INTL,
+}
+
 
 def _db_get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
     try:
@@ -68,6 +78,30 @@ def _payment_method() -> int:
         return 2
 
 
+def get_platega_payment_method_id(code: str) -> Optional[int]:
+    return PLATEGA_METHODS.get((code or "").strip().lower())
+
+
+def get_enabled_platega_methods() -> list[tuple[str, str, int]]:
+    methods = [
+        ("sbp", "СБП / QR", PLATEGA_METHOD_SBP, "platega_method_sbp_enabled"),
+        ("card", "Карта (МИР)", PLATEGA_METHOD_CARD_RU, "platega_method_card_enabled"),
+        ("crypto", "Крипта / International", PLATEGA_METHOD_INTL, "platega_method_crypto_enabled"),
+    ]
+    enabled: list[tuple[str, str, int]] = []
+    for code, label, method_id, setting_key in methods:
+        if _db_get_setting(setting_key, "1") == "1":
+            enabled.append((code, label, method_id))
+    return enabled
+
+
+def is_platega_method_enabled(code: str) -> bool:
+    for method_code, _label, _method_id in get_enabled_platega_methods():
+        if method_code == code:
+            return True
+    return False
+
+
 def is_platega_ready() -> bool:
     return _enabled() and bool(_merchant_id() and _api_key())
 
@@ -95,14 +129,14 @@ async def create_payment_link(
 ) -> Dict[str, Any]:
     if amount_rub <= 0:
         raise ValueError("amount_rub must be positive")
-    amount_kopecks = int(amount_rub * 100)
+    amount_kopecks = int(amount_rub)
 
     url = f"{_base_url()}/transaction/process"
+    resolved_method = payment_method if payment_method is not None else _payment_method()
     payload = {
         "description": description,
         "externalId": order_id,
         "payload": order_id,
-        "paymentMethod": int(payment_method or _payment_method()),
         "paymentDetails": {
             "amount": amount_kopecks,
             "currency": "RUB",
@@ -110,6 +144,8 @@ async def create_payment_link(
         "return": success_url,
         "failedUrl": fail_url,
     }
+    if resolved_method is not None:
+        payload["paymentMethod"] = int(resolved_method)
     request_id = secrets.token_hex(8)
     headers = _headers()
     headers["X-Request-Id"] = request_id

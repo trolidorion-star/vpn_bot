@@ -22,7 +22,7 @@ from bot.services.buy_key_timer import (
     cancel_buy_key_timer,
     start_buy_key_timer,
 )
-from bot.services.platega_client import is_platega_ready, is_platega_test_mode
+from bot.services.platega_client import get_enabled_platega_methods, is_platega_ready, is_platega_test_mode
 from bot.states.user_states import RenameKey, ReplaceKey
 from bot.utils.text import escape_html, safe_edit_or_send
 
@@ -42,6 +42,7 @@ async def buy_key_handler(callback: CallbackQuery):
         get_all_tariffs,
         create_pending_order,
         is_yookassa_qr_configured,
+        is_legacy_payments_enabled,
         get_crypto_integration_mode,
         is_referral_enabled,
         get_referral_reward_type,
@@ -56,11 +57,12 @@ async def buy_key_handler(callback: CallbackQuery):
     telegram_id = callback.from_user.id
     crypto_configured = is_crypto_configured()
     crypto_mode = get_crypto_integration_mode()
+    legacy_enabled = is_legacy_payments_enabled()
     crypto_url = None
     existing_order_id = None
 
     user_id = get_user_internal_id(telegram_id)
-    if crypto_configured and user_id:
+    if legacy_enabled and crypto_configured and user_id:
         (_, order_id) = create_pending_order(
             user_id=user_id, tariff_id=None, payment_type=None, vpn_key_id=None
         )
@@ -86,10 +88,11 @@ async def buy_key_handler(callback: CallbackQuery):
         if balance_cents > 0:
             show_balance_button = True
 
-    platega_enabled = is_platega_ready()
+    platega_enabled = is_platega_ready() and bool(get_enabled_platega_methods())
     platega_test_mode = is_platega_test_mode()
 
-    if not crypto_configured and (not stars_enabled) and (not cards_enabled) and (not yookassa_qr) and (not platega_enabled):
+    has_legacy = legacy_enabled and (crypto_configured or cards_enabled or yookassa_qr)
+    if (not stars_enabled) and (not platega_enabled) and (not has_legacy):
         await safe_edit_or_send(
             callback.message,
             "💳 <b>Купить ключ</b>\n\n😔 К сожалению, сейчас оплата недоступна.\n\n"
@@ -114,6 +117,7 @@ async def buy_key_handler(callback: CallbackQuery):
         yookassa_qr_enabled=yookassa_qr,
         platega_enabled=platega_enabled,
         platega_test_mode=platega_test_mode,
+        legacy_enabled=legacy_enabled,
         is_admin=telegram_id in ADMIN_IDS,
         order_id=existing_order_id,
         show_balance_button=show_balance_button,

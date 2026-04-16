@@ -9,6 +9,7 @@ from bot.services.split_config_settings import (
     get_split_config_enabled,
     get_split_config_public_base_url,
 )
+from bot.services.ru_bypass import merge_with_default_ru_exclusions
 from bot.services.vpn_api import get_client
 from bot.utils.key_generator import (
     apply_exclusions_to_json,
@@ -59,7 +60,7 @@ async def _split_config_handler(request: web.Request) -> web.Response:
         if not cfg:
             return web.json_response({"error": "config unavailable"}, status=502, headers=_cache_headers())
 
-        exclusions = list_key_exclusions(int(key["id"]))
+        exclusions = merge_with_default_ru_exclusions(list_key_exclusions(int(key["id"])))
         # Default to Happ subscription payload to avoid JSON passthrough issues in Happ/Xray mode.
         fmt = (request.query.get("format") or "happ").strip().lower()
         download = (request.query.get("download") or "").strip().lower() in {"1", "true", "yes"}
