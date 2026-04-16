@@ -42,7 +42,13 @@ def _gift_methods_kb(
 ):
     builder = InlineKeyboardBuilder()
     if platega_enabled:
-        builder.row(InlineKeyboardButton(text="💠 Platega (СБП/Карта/Крипта)", callback_data="gift_pay_platega"))
+        methods = {code for code, _label, _method_id in get_enabled_platega_methods()}
+        if "sbp" in methods:
+            builder.row(InlineKeyboardButton(text="🏦 СБП", callback_data="gift_platega_method:sbp"))
+        if "card" in methods:
+            builder.row(InlineKeyboardButton(text="💳 Карта РФ", callback_data="gift_platega_method:card"))
+        if "crypto" in methods:
+            builder.row(InlineKeyboardButton(text="🪙 Криптовалюта", callback_data="gift_platega_method:crypto"))
     if legacy_enabled and crypto_enabled:
         builder.row(InlineKeyboardButton(text="💰 USDT", callback_data="gift_pay_crypto"))
     if stars_enabled:
@@ -252,31 +258,6 @@ async def gift_qr_select_tariff(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-@router.callback_query(F.data == "gift_pay_platega")
-async def gift_platega_select_method(callback: CallbackQuery, state: FSMContext):
-    if not is_platega_ready():
-        await callback.answer("Platega отключена", show_alert=True)
-        return
-    methods = get_enabled_platega_methods()
-    if not methods:
-        await callback.answer("Нет доступных методов Platega", show_alert=True)
-        return
-    data = await state.get_data()
-    recipient_name = _gift_recipient_name(data)
-
-    kb = InlineKeyboardBuilder()
-    for code, label, _method_id in methods:
-        kb.row(InlineKeyboardButton(text=label, callback_data=f"gift_platega_method:{code}"))
-    kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="buy_key_gift"))
-
-    await safe_edit_or_send(
-        callback.message,
-        f"🎁 <b>Подарок через Platega</b>\n\nПолучатель: <b>{escape_html(recipient_name)}</b>\n\nВыберите способ оплаты:",
-        reply_markup=kb.as_markup(),
-    )
-    await callback.answer()
-
-
 @router.callback_query(F.data.startswith("gift_platega_method:"))
 async def gift_platega_select_tariff(callback: CallbackQuery, state: FSMContext):
     from database.requests import get_all_tariffs
@@ -306,7 +287,7 @@ async def gift_platega_select_tariff(callback: CallbackQuery, state: FSMContext)
         ),
         reply_markup=tariff_select_kb(
             rub_tariffs,
-            back_callback="gift_pay_platega",
+            back_callback="buy_key_gift",
             is_platega=True,
             is_gift=True,
         ),

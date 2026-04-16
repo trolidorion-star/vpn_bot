@@ -167,7 +167,7 @@ async def _platega_webhook_handler(request: web.Request) -> web.Response:
     except Exception:
         return web.Response(status=400, text="Invalid JSON")
 
-    transaction_id = str(payload.get("id") or "").strip()
+    transaction_id = str(payload.get("id") or payload.get("transactionId") or "").strip()
     status = str(payload.get("status") or "").strip().upper()
     if not transaction_id:
         return web.Response(status=400, text="Missing id")

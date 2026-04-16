@@ -45,17 +45,18 @@ def _back_callback(mode: str, key_id: int | None) -> str:
 
 def _platega_method_label(method_code: str | None) -> str:
     labels = {
-        "sbp": "СБП / QR",
-        "card": "Карта (МИР)",
-        "crypto": "Крипта / International",
+        "sbp": "СБП",
+        "card": "Карта РФ",
+        "crypto": "Криптовалюта",
     }
     return labels.get((method_code or "").strip().lower(), "Platega")
 
 
-def _build_platega_method_kb(prefix: str, back_callback: str):
+def _build_platega_method_kb(prefix: str, back_callback: str, key_id: int | None = None):
     kb = InlineKeyboardBuilder()
     for code, label, _method_id in get_enabled_platega_methods():
-        kb.row(InlineKeyboardButton(text=label, callback_data=f"{prefix}:{code}"))
+        callback = f"{prefix}:{code}" if key_id is None else f"{prefix}:{key_id}:{code}"
+        kb.row(InlineKeyboardButton(text=label, callback_data=callback))
     kb.row(InlineKeyboardButton(text="⬅️ Назад", callback_data=back_callback))
     kb.row(InlineKeyboardButton(text="🏠 На главную", callback_data="start"))
     return kb.as_markup()
@@ -225,13 +226,13 @@ async def pay_platega_select_tariff(callback: CallbackQuery):
         return
     await safe_edit_or_send(
         callback.message,
-        "💳 <b>Platega</b>\n\nВыберите способ оплаты:",
-        reply_markup=_build_platega_method_kb("platega_method_buy", "buy_key"),
+        "💳 <b>Выберите способ оплаты</b>",
+        reply_markup=_build_platega_method_kb("pay_platega_method", "buy_key"),
     )
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("platega_method_buy:"))
+@router.callback_query(F.data.startswith("pay_platega_method:"))
 async def pay_platega_choose_method(callback: CallbackQuery, state: FSMContext):
     from bot.keyboards.user import tariff_select_kb
     from database.requests import get_all_tariffs
@@ -249,8 +250,8 @@ async def pay_platega_choose_method(callback: CallbackQuery, state: FSMContext):
     await state.update_data(platega_method_code=method_code)
     await safe_edit_or_send(
         callback.message,
-        f"💳 <b>Platega · {_platega_method_label(method_code)}</b>\n\nВыберите тариф:",
-        reply_markup=tariff_select_kb(tariffs, is_platega=True, back_callback="pay_platega"),
+        f"💳 <b>{_platega_method_label(method_code)}</b>\n\nВыберите тариф:",
+        reply_markup=tariff_select_kb(tariffs, is_platega=True, back_callback="buy_key"),
     )
     await callback.answer()
 
@@ -339,20 +340,25 @@ async def renew_platega_select_tariff(callback: CallbackQuery):
         return
     await safe_edit_or_send(
         callback.message,
-        f"💳 <b>Platega</b>\n\n🔑 Ключ: <b>{escape_html(key['display_name'])}</b>\n\nВыберите способ оплаты:",
-        reply_markup=_build_platega_method_kb(f"platega_method_renew:{key_id}", f"key_renew:{key_id}"),
+        f"💳 <b>Выберите способ оплаты</b>\n\n🔑 Ключ: <b>{escape_html(key['display_name'])}</b>",
+        reply_markup=_build_platega_method_kb("renew_platega_method", f"key_renew:{key_id}", key_id=key_id),
     )
     await callback.answer()
 
 
+@router.callback_query(F.data.startswith("renew_platega_method:"))
 @router.callback_query(F.data.startswith("platega_method_renew:"))
 async def renew_platega_choose_method(callback: CallbackQuery, state: FSMContext):
     from bot.keyboards.user import renew_tariff_select_kb
     from bot.utils.groups import get_tariffs_for_renewal
 
     parts = callback.data.split(":")
-    key_id = int(parts[1])
-    method_code = parts[2].strip().lower()
+    if callback.data.startswith("renew_platega_method:"):
+        key_id = int(parts[1])
+        method_code = parts[2].strip().lower()
+    else:
+        key_id = int(parts[1])
+        method_code = parts[2].strip().lower()
 
     if not is_platega_method_enabled(method_code):
         await callback.answer("Метод недоступен", show_alert=True)
@@ -372,7 +378,7 @@ async def renew_platega_choose_method(callback: CallbackQuery, state: FSMContext
     await safe_edit_or_send(
         callback.message,
         (
-            f"💳 <b>Platega · {_platega_method_label(method_code)}</b>\n\n"
+            f"💳 <b>{_platega_method_label(method_code)}</b>\n\n"
             f"🔑 Ключ: <b>{escape_html(key['display_name'])}</b>\n\n"
             "Выберите тариф:"
         ),

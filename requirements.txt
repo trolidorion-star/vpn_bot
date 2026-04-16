@@ -3,3 +3,5 @@ aiohttp
 qrcode
 pillow
 python-dotenv
+fastapi
+uvicorn

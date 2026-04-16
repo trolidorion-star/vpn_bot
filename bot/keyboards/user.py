@@ -178,9 +178,9 @@ def buy_key_kb(
         )
 
     if platega_enabled:
-        builder.row(
-            InlineKeyboardButton(text="💳 Оплатить через Platega", callback_data="pay_platega")
-        )
+        builder.row(InlineKeyboardButton(text="🏦 СБП", callback_data="pay_platega_method:sbp"))
+        builder.row(InlineKeyboardButton(text="💳 Карта РФ", callback_data="pay_platega_method:card"))
+        builder.row(InlineKeyboardButton(text="🪙 Криптовалюта", callback_data="pay_platega_method:crypto"))
         if is_admin and platega_test_mode:
             builder.row(
                 InlineKeyboardButton(text="Тестовый Platega (1 RUB)", callback_data="pay_platega_test")
@@ -749,12 +749,9 @@ def renew_payment_method_kb(
         )
 
     if platega_enabled:
-        builder.row(
-            InlineKeyboardButton(
-                text="💳 Оплатить через Platega",
-                callback_data=f"renew_platega_tariff:{key_id}",
-            )
-        )
+        builder.row(InlineKeyboardButton(text="🏦 СБП", callback_data=f"renew_platega_method:{key_id}:sbp"))
+        builder.row(InlineKeyboardButton(text="💳 Карта РФ", callback_data=f"renew_platega_method:{key_id}:card"))
+        builder.row(InlineKeyboardButton(text="🪙 Криптовалюта", callback_data=f"renew_platega_method:{key_id}:crypto"))
         if is_admin and platega_test_mode:
             builder.row(
                 InlineKeyboardButton(

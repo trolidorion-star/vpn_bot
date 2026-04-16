@@ -1,7 +1,7 @@
 import logging
 import os
 import secrets
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 
 import aiohttp
 
@@ -18,10 +18,10 @@ PLATEGA_METHOD_SBP = 2
 PLATEGA_METHOD_CARD_RU = 10
 PLATEGA_METHOD_INTL = 12
 
-PLATEGA_METHODS = {
-    "sbp": PLATEGA_METHOD_SBP,
-    "card": PLATEGA_METHOD_CARD_RU,
-    "crypto": PLATEGA_METHOD_INTL,
+PLATEGA_METHODS: Dict[str, Dict[str, Any]] = {
+    "sbp": {"id": PLATEGA_METHOD_SBP, "label": "СБП / QR", "api": [PLATEGA_METHOD_SBP, "SBPQR"]},
+    "card": {"id": PLATEGA_METHOD_CARD_RU, "label": "Карта РФ", "api": [PLATEGA_METHOD_CARD_RU, "CardRu"]},
+    "crypto": {"id": PLATEGA_METHOD_INTL, "label": "Криптовалюта", "api": [PLATEGA_METHOD_INTL, "International"]},
 }
 
 
@@ -78,15 +78,25 @@ def _payment_method() -> int:
         return 2
 
 
+def _intl_balance() -> str:
+    db_raw = _db_get_setting("platega_intl_balance", None)
+    if db_raw is not None and str(db_raw).strip():
+        return str(db_raw).strip()
+    return os.getenv("PLATEGA_INTL_BALANCE", "EUR").strip() or "EUR"
+
+
 def get_platega_payment_method_id(code: str) -> Optional[int]:
-    return PLATEGA_METHODS.get((code or "").strip().lower())
+    method = PLATEGA_METHODS.get((code or "").strip().lower())
+    if not method:
+        return None
+    return int(method["id"])
 
 
 def get_enabled_platega_methods() -> list[tuple[str, str, int]]:
     methods = [
-        ("sbp", "СБП / QR", PLATEGA_METHOD_SBP, "platega_method_sbp_enabled"),
-        ("card", "Карта (МИР)", PLATEGA_METHOD_CARD_RU, "platega_method_card_enabled"),
-        ("crypto", "Крипта / International", PLATEGA_METHOD_INTL, "platega_method_crypto_enabled"),
+        ("sbp", "СБП", PLATEGA_METHOD_SBP, "platega_method_sbp_enabled"),
+        ("card", "Карта РФ", PLATEGA_METHOD_CARD_RU, "platega_method_card_enabled"),
+        ("crypto", "Криптовалюта", PLATEGA_METHOD_INTL, "platega_method_crypto_enabled"),
     ]
     enabled: list[tuple[str, str, int]] = []
     for code, label, method_id, setting_key in methods:
@@ -118,6 +128,79 @@ def _headers() -> Dict[str, str]:
     }
 
 
+def _method_key_from_value(value: Optional[Union[int, str]]) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        for key, meta in PLATEGA_METHODS.items():
+            if int(meta["id"]) == value:
+                return key
+        return None
+
+    raw = str(value).strip()
+    if not raw:
+        return None
+    lowered = raw.lower()
+    if lowered in PLATEGA_METHODS:
+        return lowered
+
+    aliases = {
+        "sbpqr": "sbp",
+        "cardru": "card",
+        "international": "crypto",
+    }
+    if lowered in aliases:
+        return aliases[lowered]
+
+    try:
+        numeric = int(raw)
+    except Exception:
+        numeric = None
+    if numeric is not None:
+        for key, meta in PLATEGA_METHODS.items():
+            if int(meta["id"]) == numeric:
+                return key
+    return None
+
+
+def _payment_method_candidates(value: Optional[Union[int, str]]) -> list[Union[int, str, None]]:
+    method_key = _method_key_from_value(value)
+    if method_key:
+        return list(PLATEGA_METHODS[method_key]["api"])
+    if value is None:
+        return [None]
+    return [value]
+
+
+def _build_payload(
+    *,
+    amount_rub: int,
+    order_id: str,
+    description: str,
+    success_url: str,
+    fail_url: str,
+    payment_method: Optional[Union[int, str]],
+) -> Dict[str, Any]:
+    payload = {
+        "description": description,
+        "externalId": order_id,
+        "payload": order_id,
+        "paymentDetails": {
+            "amount": int(amount_rub),
+            "currency": "RUB",
+        },
+        "return": success_url,
+        "failedUrl": fail_url,
+    }
+    if payment_method is not None:
+        payload["paymentMethod"] = payment_method
+
+    method_key = _method_key_from_value(payment_method)
+    if method_key == "crypto":
+        payload["balance"] = _intl_balance()
+    return payload
+
+
 async def create_payment_link(
     *,
     amount_rub: int,
@@ -125,49 +208,59 @@ async def create_payment_link(
     description: str,
     success_url: str,
     fail_url: str,
-    payment_method: Optional[int] = None,
+    payment_method: Optional[Union[int, str]] = None,
 ) -> Dict[str, Any]:
     if amount_rub <= 0:
         raise ValueError("amount_rub must be positive")
-    amount_kopecks = int(amount_rub)
+    amount_rub = int(amount_rub)
 
     url = f"{_base_url()}/transaction/process"
-    resolved_method = payment_method if payment_method is not None else _payment_method()
-    payload = {
-        "description": description,
-        "externalId": order_id,
-        "payload": order_id,
-        "paymentDetails": {
-            "amount": amount_kopecks,
-            "currency": "RUB",
-        },
-        "return": success_url,
-        "failedUrl": fail_url,
-    }
-    if resolved_method is not None:
-        payload["paymentMethod"] = int(resolved_method)
+    resolved_method: Optional[Union[int, str]] = payment_method if payment_method is not None else _payment_method()
+    method_candidates = _payment_method_candidates(resolved_method)
+
     request_id = secrets.token_hex(8)
     headers = _headers()
     headers["X-Request-Id"] = request_id
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(url, json=payload, headers=headers) as response:
-            text = await response.text()
-            if response.status >= 400:
-                logger.error(
-                    "Platega create-payment error: status=%s request_id=%s payload=%s response=%s",
-                    response.status,
-                    request_id,
-                    payload,
-                    text,
-                )
-                raise RuntimeError(f"Platega create payment failed with HTTP {response.status}")
+    data: Optional[Dict[str, Any]] = None
+    final_payload: Optional[Dict[str, Any]] = None
+    final_error: Optional[str] = None
 
-            try:
-                data = await response.json()
-            except Exception:
-                logger.error("Platega create-payment invalid JSON: status=%s body=%s", response.status, text)
-                raise RuntimeError("Platega create payment returned invalid JSON")
+    async with aiohttp.ClientSession() as session:
+        for method_candidate in method_candidates:
+            payload = _build_payload(
+                amount_rub=amount_rub,
+                order_id=order_id,
+                description=description,
+                success_url=success_url,
+                fail_url=fail_url,
+                payment_method=method_candidate,
+            )
+            final_payload = payload
+            async with session.post(url, json=payload, headers=headers) as response:
+                text = await response.text()
+                if response.status >= 400:
+                    logger.error(
+                        "Platega create-payment error: status=%s request_id=%s payload=%s response=%s",
+                        response.status,
+                        request_id,
+                        payload,
+                        text,
+                    )
+                    final_error = f"HTTP {response.status}"
+                    continue
+
+                try:
+                    data = await response.json()
+                except Exception:
+                    logger.error("Platega create-payment invalid JSON: status=%s body=%s", response.status, text)
+                    final_error = "invalid JSON response"
+                    continue
+                break
+
+    if data is None:
+        details = f" (last payload={final_payload})" if final_payload else ""
+        raise RuntimeError(f"Platega create payment failed: {final_error or 'unknown error'}{details}")
 
     transaction_id = str(data.get("id") or data.get("transactionId") or "").strip()
     redirect_url = (
