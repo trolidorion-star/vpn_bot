@@ -624,15 +624,15 @@
 
     function ToggleRow({ title, hint, enabled, onToggle, disabled = false }) {
       return (
-        <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-surfaceSoft/45 px-3 py-2.5">
-          <div className="pr-3">
+        <div className="flex items-center justify-between gap-2 overflow-hidden rounded-2xl border border-white/10 bg-surfaceSoft/45 px-3 py-2.5">
+          <div className="min-w-0 flex-1 pr-2">
             <div className="text-sm font-semibold readable">{title}</div>
             <div className="text-[11px] text-muted readable">{hint}</div>
           </div>
           <button
             onClick={() => onToggle?.(!enabled)}
             disabled={disabled}
-            className={`h-8 w-14 rounded-full transition ${enabled ? 'bg-accent' : 'bg-surface'} ${disabled ? 'opacity-60' : ''}`}
+            className={`h-8 w-14 flex-none rounded-full transition ${enabled ? 'bg-accent' : 'bg-surface'} ${disabled ? 'opacity-60' : ''}`}
           >
             <span className={`block h-6 w-6 rounded-full bg-white transition ${enabled ? 'translate-x-7' : 'translate-x-1'}`}></span>
           </button>
@@ -683,6 +683,7 @@
       const [ticketSeenMap, setTicketSeenMap] = useState(getSavedJson(SUPPORT_TICKET_SEEN_KEY, {}));
       const [tabContentLoading, setTabContentLoading] = useState(false);
       const [diagReport, setDiagReport] = useState(null);
+      const [showSectionsMenu, setShowSectionsMenu] = useState(false);
       const bootRef = useRef(0);
       const supportScrollRef = useRef(null);
 
@@ -695,15 +696,22 @@
       const isActive = user?.status === 'active' && msLeft > 0;
       const referralLink = normalizeReferralLink(refData?.referral_link || user?.referral_link || '');
       const usagePoints = useMemo(() => {
-        const items = (stats || []).slice(0, 8);
-        if (!items.length) return [];
-        return items.map((item, idx) => {
+        const fromStats = (stats || []).slice(0, 8).map((item, idx) => {
+          const used = Number(item?.traffic_used_bytes || item?.used_bytes || 0);
+          const limit = Number(item?.traffic_limit_bytes || item?.limit_bytes || 0);
+          const ratio = limit > 0 ? Math.max(0, Math.min(1, used / limit)) : 0;
+          return { x: idx, y: ratio };
+        }).filter((x) => Number.isFinite(x.y));
+        if (fromStats.length >= 2 && fromStats.some((p) => p.y > 0)) return fromStats;
+        const fromKeys = (keys || []).slice(0, 8).map((item, idx) => {
           const used = Number(item?.traffic_used_bytes || 0);
           const limit = Number(item?.traffic_limit_bytes || 0);
           const ratio = limit > 0 ? Math.max(0, Math.min(1, used / limit)) : 0;
           return { x: idx, y: ratio };
-        });
-      }, [stats]);
+        }).filter((x) => Number.isFinite(x.y));
+        if (fromKeys.length >= 1) return fromKeys;
+        return [];
+      }, [stats, keys]);
 
       const keysFiltered = useMemo(() => {
         const source = keys || [];
@@ -748,6 +756,7 @@
       const changeTab = (nextTab) => {
         if (!nextTab || nextTab === tab) return;
         setTabContentLoading(true);
+        setShowSectionsMenu(false);
         setTab(nextTab);
         setTimeout(() => setTabContentLoading(false), 170);
       };
@@ -1242,26 +1251,36 @@
       }
 
       async function runConnectionDiagnostics() {
-        const start = now();
-        let pingMs = null;
-        try {
-          await requestJson('/api/app_state');
-          pingMs = now() - start;
-        } catch {
-          pingMs = null;
+        const samples = [];
+        for (let i = 0; i < 4; i++) {
+          const t0 = now();
+          try {
+            await requestJson(`/api/app_state?diag=${t0}&i=${i}`);
+            samples.push(now() - t0);
+          } catch {}
+          await sleep(40);
         }
+        const sorted = [...samples].sort((a, b) => a - b);
+        const pingMs = sorted.length ? sorted[Math.floor(sorted.length / 2)] : null;
+        const avg = sorted.length ? Math.round(sorted.reduce((a, b) => a + b, 0) / sorted.length) : null;
+        const jitterMs = sorted.length > 1 ? Math.max(...sorted) - Math.min(...sorted) : 0;
         const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown';
         const locale = navigator.language || 'ru-RU';
         const conn = navigator.connection || {};
         const netType = conn.effectiveType || 'unknown';
         const downlink = Number(conn.downlink || 0);
-        const rtt = Number(conn.rtt || 0);
-        const region = tz.includes('/') ? tz.split('/')[1].replaceAll('_', ' ') : tz;
+        const nativeRtt = Number(conn.rtt || 0);
+        const rtt = nativeRtt > 0 ? nativeRtt : (avg || 0);
+        const tzCity = tz.includes('/') ? tz.split('/')[1].replaceAll('_', ' ') : tz;
+        const region = `${tzCity} (по часовому поясу устройства)`;
         const preset = (performanceMode || isLowEndDevice || netType.includes('2g') || netType.includes('3g'))
           ? 'Эко-профиль: меньше анимаций, стабильность при слабой сети'
           : 'Стандарт-профиль: максимум плавности и визуальных эффектов';
         const report = {
           pingMs,
+          avgPingMs: avg,
+          jitterMs,
+          samples,
           region,
           locale,
           timezone: tz,
@@ -1285,6 +1304,9 @@
         { id: 'service', title: 'Сервис', icon: '🧪' },
       ];
       if (user?.is_admin) tabs.push({ id: 'admin', title: 'Админ', icon: '⚙️' });
+      const primaryTabIds = ['dashboard', 'plans', 'usage', 'support'];
+      const primaryTabs = tabs.filter((item) => primaryTabIds.includes(item.id));
+      const extraTabs = tabs.filter((item) => !primaryTabIds.includes(item.id));
 
       useEffect(() => {
         if (tab !== 'support') return;
@@ -1364,18 +1386,30 @@
                 {(usagePoints || []).length === 0 ? (
                   <div className="text-sm text-muted">Недостаточно данных для графика.</div>
                 ) : (
-                  <svg viewBox="0 0 100 32" className="h-24 w-full">
-                    <polyline
-                      fill="none"
-                      stroke="rgba(68,179,255,0.95)"
-                      strokeWidth="1.8"
-                      points={usagePoints.map((p, idx) => {
+                  <>
+                    <svg viewBox="0 0 100 32" className="h-24 w-full">
+                      <polyline
+                        fill="none"
+                        stroke="rgba(68,179,255,0.95)"
+                        strokeWidth="2"
+                        strokeLinejoin="round"
+                        strokeLinecap="round"
+                        points={usagePoints.map((p, idx) => {
+                          const x = usagePoints.length > 1 ? (idx / (usagePoints.length - 1)) * 96 + 2 : 50;
+                          const y = 28 - (p.y * 24);
+                          return `${x.toFixed(2)},${y.toFixed(2)}`;
+                        }).join(' ')}
+                      />
+                      {usagePoints.map((p, idx) => {
                         const x = usagePoints.length > 1 ? (idx / (usagePoints.length - 1)) * 96 + 2 : 50;
                         const y = 28 - (p.y * 24);
-                        return `${x.toFixed(2)},${y.toFixed(2)}`;
-                      }).join(' ')}
-                    />
-                  </svg>
+                        return <circle key={`${idx}-${x}-${y}`} cx={x} cy={y} r="1.4" fill="rgba(68,179,255,1)" />;
+                      })}
+                    </svg>
+                    {usagePoints.every((p) => p.y === 0) && (
+                      <div className="mt-2 text-xs text-muted">Пока нет расхода трафика, график построен по текущим значениям.</div>
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -1553,7 +1587,9 @@
               </div>
               <div className="mt-3 space-y-2">
                 {[
-                  ['Пинг API', d.pingMs ? `${d.pingMs} ms` : 'н/д'],
+                  ['Пинг API (median)', d.pingMs ? `${d.pingMs} ms` : 'н/д'],
+                  ['Пинг API (avg)', d.avgPingMs ? `${d.avgPingMs} ms` : 'н/д'],
+                  ['Джиттер', Number.isFinite(d.jitterMs) ? `${d.jitterMs} ms` : 'н/д'],
                   ['Регион', d.region || 'н/д'],
                   ['Сеть', d.netType || 'н/д'],
                   ['RTT', d.rtt ? `${d.rtt} ms` : 'н/д'],
@@ -1571,11 +1607,16 @@
               <div className="mt-2 rounded-2xl bg-surfaceSoft/60 px-3 py-2 text-sm readable">
                 {d.preset || 'Запустите диагностику для подбора пресета.'}
               </div>
+              <div className="mt-2 text-[11px] text-muted readable">
+                Регион берется из часового пояса устройства, а не из IP-геолокации.
+              </div>
               <button
                 onClick={impact(async () => {
                   const txt = [
                     `Диагностика Bobrik:`,
                     `Ping: ${d.pingMs ? `${d.pingMs} ms` : 'n/a'}`,
+                    `Ping avg: ${d.avgPingMs ? `${d.avgPingMs} ms` : 'n/a'}`,
+                    `Jitter: ${Number.isFinite(d.jitterMs) ? `${d.jitterMs} ms` : 'n/a'}`,
                     `Region: ${d.region || 'n/a'}`,
                     `Network: ${d.netType || 'n/a'}`,
                     `Preset: ${d.preset || 'n/a'}`,
@@ -1913,8 +1954,9 @@
             ) : renderTabContent()}
           </div>
 
-          <nav className="fixed bottom-3 left-0 right-0 z-20 mx-auto flex w-[calc(100%-20px)] max-w-md gap-2 overflow-x-auto rounded-2xl border border-white/10 px-2.5 py-2.5 glass" style={{ boxShadow: 'var(--panel-shadow)' }}>
-            {tabs.map((item) => (
+          <nav className="fixed bottom-3 left-0 right-0 z-20 mx-auto flex w-[calc(100%-20px)] max-w-md items-center gap-2 rounded-2xl border border-white/10 px-2.5 py-2.5 glass" style={{ boxShadow: 'var(--panel-shadow)' }}>
+            <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
+            {primaryTabs.map((item) => (
               <button
                 key={item.id}
                 onClick={impact(() => changeTab(item.id), 'light')}
@@ -1928,7 +1970,40 @@
                 )}
               </button>
             ))}
+            </div>
+            <button
+              onClick={impact(() => setShowSectionsMenu((v) => !v), 'light')}
+              className={`relative rounded-xl px-3 py-2 text-xs sm:text-sm ${extraTabs.some((t) => t.id === tab) || showSectionsMenu ? 'bg-accent text-black font-semibold' : 'bg-surfaceSoft/45 text-muted'}`}
+              title="Разделы"
+            >
+              ☰ Разделы
+            </button>
           </nav>
+
+          {showSectionsMenu && (
+            <div className="fixed inset-0 z-30 bg-black/50" onClick={() => setShowSectionsMenu(false)}>
+              <div className="absolute bottom-0 left-0 right-0 rounded-t-[24px] glass border-t border-white/10 p-4 modal-sheet" onClick={(event) => event.stopPropagation()}>
+                <div className="mx-auto mb-3 h-1.5 w-14 rounded-full bg-white/20"></div>
+                <div className="mb-2 text-sm font-semibold">Разделы</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {extraTabs.map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={impact(() => changeTab(item.id), 'light')}
+                      className={`relative rounded-xl px-3 py-3 text-left text-sm ${tab === item.id ? 'bg-accent text-black font-semibold' : 'border border-white/15 bg-surfaceSoft/45 text-text'}`}
+                    >
+                      <span className="mr-1">{item.icon}</span>{item.title}
+                      {Number(item.badge || 0) > 0 && tab !== item.id && (
+                        <span className="absolute right-2 top-2 min-w-[18px] rounded-full bg-danger px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
+                          {item.badge > 99 ? '99+' : item.badge}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
 
           {selectedTariff && (
             <div className="fixed inset-0 z-30 bg-black/65" onClick={() => setSelectedTariff(null)}>
