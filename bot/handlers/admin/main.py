@@ -5,11 +5,19 @@
 """
 import logging
 from aiogram import Router, F
+from aiogram.filters import Command
 from aiogram.types import CallbackQuery
+from aiogram.types import MenuButtonCommands, MenuButtonWebApp, Message, WebAppInfo
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest
 
-from database.requests import get_all_servers, get_business_metrics
+import config as app_config
+from database.requests import (
+    get_all_servers,
+    get_business_metrics,
+    is_miniapp_enabled,
+    set_miniapp_enabled,
+)
 from bot.services.vpn_api import get_client_from_server_data, format_traffic
 from bot.states.admin_states import AdminStates
 from bot.keyboards.admin import admin_main_menu_kb, author_support_kb, gift_design_kb
@@ -18,6 +26,26 @@ from bot.utils.text import safe_edit_or_send, escape_html
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+
+async def _sync_miniapp_menu_button(message: Message) -> None:
+    mini_app_url = (getattr(app_config, "MINI_APP_URL", "") or "").strip()
+    if is_miniapp_enabled() and mini_app_url:
+        try:
+            await message.bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(
+                    text=(getattr(app_config, "MINI_APP_SHORT_NAME", "VPN") or "VPN"),
+                    web_app=WebAppInfo(url=mini_app_url),
+                )
+            )
+            return
+        except Exception as exc:
+            logger.warning("Failed to set mini app menu button from admin panel: %s", exc)
+
+    try:
+        await message.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+    except Exception as exc:
+        logger.warning("Failed to reset commands menu button from admin panel: %s", exc)
 
 
 async def _collect_server_load_summary() -> dict:
@@ -109,7 +137,11 @@ async def show_admin_panel(callback: CallbackQuery, state: FSMContext):
     text = await get_admin_stats_text()
 
     try:
-        await safe_edit_or_send(callback.message, text, reply_markup=admin_main_menu_kb())
+        await safe_edit_or_send(
+            callback.message,
+            text,
+            reply_markup=admin_main_menu_kb(miniapp_enabled=is_miniapp_enabled()),
+        )
     except TelegramBadRequest as e:
         if "is not modified" not in str(e):
             logger.error(f"Ошибка при обновлении меню: {e}")
@@ -162,7 +194,42 @@ async def show_admin_business_stats(callback: CallbackQuery):
         f"{load['text']}"
     )
 
-    await safe_edit_or_send(callback.message, text, reply_markup=admin_main_menu_kb())
+    await safe_edit_or_send(
+        callback.message,
+        text,
+        reply_markup=admin_main_menu_kb(miniapp_enabled=is_miniapp_enabled()),
+    )
+
+
+@router.message(Command("admin"))
+async def cmd_admin(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+
+    await state.set_state(AdminStates.admin_menu)
+    text = await get_admin_stats_text()
+    await safe_edit_or_send(
+        message,
+        text,
+        reply_markup=admin_main_menu_kb(miniapp_enabled=is_miniapp_enabled()),
+        force_new=True,
+    )
+
+
+@router.callback_query(F.data == "admin_miniapp_toggle")
+async def admin_miniapp_toggle(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    next_value = not is_miniapp_enabled()
+    set_miniapp_enabled(next_value)
+    await _sync_miniapp_menu_button(callback.message)
+    await callback.answer(
+        "Mini App включен" if next_value else "Mini App отключен",
+        show_alert=True,
+    )
+    await show_admin_panel(callback, state)
 
 
 @router.callback_query(F.data == "admin_author_support")

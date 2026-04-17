@@ -214,8 +214,8 @@ async def admin_ticket_close(callback: CallbackQuery):
                 ticket["user_telegram_id"],
                 f"✅ Тикет #{ticket_id} закрыт поддержкой.",
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("Failed to notify user %s on ticket close #%s: %s", ticket["user_telegram_id"], ticket_id, exc)
 
     await callback.answer("Тикет закрыт")
     await admin_ticket_view(callback)

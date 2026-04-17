@@ -38,7 +38,7 @@ def home_only_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def admin_main_menu_kb() -> InlineKeyboardMarkup:
+def admin_main_menu_kb(miniapp_enabled: bool = True) -> InlineKeyboardMarkup:
     """Главное меню админ-панели."""
     builder = InlineKeyboardBuilder()
     builder.row(
@@ -56,12 +56,17 @@ def admin_main_menu_kb() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="⚙️ Настройки бота", callback_data="admin_bot_settings"),
         InlineKeyboardButton(text="📥 Скачать логи", callback_data="admin_logs_menu"),
     )
+    builder.row(
+        InlineKeyboardButton(
+            text=f"🧩 Mini App: {'ON' if miniapp_enabled else 'OFF'}",
+            callback_data="admin_miniapp_toggle",
+        )
+    )
     builder.row(InlineKeyboardButton(text="🎫 Тикеты поддержки", callback_data="admin_support_tickets"))
     builder.row(
         InlineKeyboardButton(
             text="🤌 Поддержка автора",
             callback_data="admin_author_support",
-            style="success",
         )
     )
     builder.row(home_button())

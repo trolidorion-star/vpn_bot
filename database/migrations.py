@@ -28,7 +28,7 @@ def _add_column(conn: sqlite3.Connection, table: str, column_def: str) -> None:
 
 
 # Текущая версия схемы БД
-LATEST_VERSION = 28
+LATEST_VERSION = 29
 
 
 def get_current_version() -> int:
@@ -1795,6 +1795,23 @@ def migration_28(conn: sqlite3.Connection) -> None:
     logger.info("Migration v28 applied")
 
 
+def migration_29(conn: sqlite3.Connection) -> None:
+    """
+    Migration v29:
+    - Adds one-time welcome bonus marker in users.
+    - Adds default welcome bonus setting (RUB).
+    """
+    logger.info("Applying migration v29 (welcome bonus one-time marker)...")
+
+    _add_column(conn, "users", "welcome_bonus_claimed INTEGER DEFAULT 0")
+    conn.execute(
+        "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+        ("welcome_bonus_rub", "50"),
+    )
+
+    logger.info("Migration v29 applied")
+
+
 MIGRATIONS = {
     1: migration_1,
     2: migration_2,
@@ -1824,6 +1841,7 @@ MIGRATIONS = {
     26: migration_26,
     27: migration_27,
     28: migration_28,
+    29: migration_29,
 }
 
 

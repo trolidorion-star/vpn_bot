@@ -1,11 +1,13 @@
 ﻿import hashlib
 import hmac
+import html
 import json
 import os
 import re
 import secrets
 import time
 import logging
+import aiohttp
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -25,6 +27,7 @@ from bot.services.platega_client import (
     is_platega_ready,
 )
 from bot.services.ru_bypass import get_default_ru_exclusions
+from config import ADMIN_IDS
 from database.connection import get_db
 from database.requests import (
     add_key_exclusion_for_user,
@@ -41,6 +44,7 @@ from database.requests import (
     get_key_details_for_user,
     get_or_create_user,
     get_open_ticket_for_user,
+    get_ticket_messages,
     get_referral_reward_type,
     get_referral_stats,
     get_tariff_by_id,
@@ -49,6 +53,7 @@ from database.requests import (
     is_miniapp_enabled,
     is_referral_enabled,
     set_miniapp_enabled,
+    update_transaction_status,
 )
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -141,13 +146,17 @@ def _normalize_secret(raw_value: Any) -> str:
 
 
 def _parse_admin_ids() -> set[int]:
-    raw = (
-        os.getenv("MINIAPP_ADMIN_IDS")
-        or os.getenv("ADMIN_IDS")
-        or os.getenv("BOT_ADMIN_IDS")
-        or ""
+    ids: set[int] = {int(value) for value in ADMIN_IDS if str(value).isdigit()}
+    raw = " ".join(
+        filter(
+            None,
+            [
+                os.getenv("MINIAPP_ADMIN_IDS", ""),
+                os.getenv("ADMIN_IDS", ""),
+                os.getenv("BOT_ADMIN_IDS", ""),
+            ],
+        )
     )
-    ids: set[int] = set()
     for part in re.split(r"[,\s;]+", raw):
         value = part.strip()
         if value.isdigit():
@@ -284,6 +293,78 @@ def _extract_bot_username() -> str:
 def _build_referral_link(user_id: int) -> str:
     code = ensure_user_referral_code(user_id)
     return f"https://t.me/{_extract_bot_username()}?start=ref{code}"
+
+
+def _admin_ticket_reply_markup(ticket_id: int) -> dict[str, Any]:
+    return {
+        "inline_keyboard": [
+            [
+                {"text": f"???????? #{ticket_id}", "callback_data": f"admin_ticket_reply:{ticket_id}"},
+                {"text": "???????", "callback_data": f"admin_ticket_close:{ticket_id}"},
+            ]
+        ]
+    }
+
+
+async def _notify_admins_about_ticket_message(
+    ticket_id: int,
+    user_telegram_id: int,
+    username: Optional[str],
+    text: str,
+) -> None:
+    admin_ids = _parse_admin_ids()
+    if not admin_ids:
+        return
+
+    bot_token = _normalize_secret(os.getenv("BOT_TOKEN", ""))
+    if not bot_token:
+        try:
+            bot_token = _bot_token()
+        except Exception as exc:
+            logger.warning("Cannot notify admins about support ticket #%s: %s", ticket_id, exc)
+            return
+    if not bot_token:
+        return
+
+    api_url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    safe_username = html.escape(username or "no_username")
+    safe_text = html.escape(text)
+    message = (
+        f"?? <b>????? ????????? ? ?????? #{ticket_id}</b>\n\n"
+        f"?? User ID: <code>{user_telegram_id}</code>\n"
+        f"?? Username: @{safe_username}\n\n"
+        f"?? <b>?????????:</b>\n{safe_text}"
+    )
+    reply_markup = _admin_ticket_reply_markup(ticket_id)
+    timeout = aiohttp.ClientTimeout(total=15)
+
+    async with aiohttp.ClientSession(timeout=timeout) as http:
+        for admin_id in admin_ids:
+            payload = {
+                "chat_id": int(admin_id),
+                "text": message,
+                "parse_mode": "HTML",
+                "reply_markup": reply_markup,
+                "disable_web_page_preview": True,
+            }
+            try:
+                async with http.post(api_url, json=payload) as response:
+                    body_text = await response.text()
+                    if response.status >= 400:
+                        logger.warning(
+                            "Failed to notify admin %s for ticket #%s: status=%s body=%s",
+                            admin_id,
+                            ticket_id,
+                            response.status,
+                            body_text,
+                        )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to notify admin %s for ticket #%s: %s",
+                    admin_id,
+                    ticket_id,
+                    exc,
+                )
 
 
 def _serialize_user_info(telegram_id: int, username: Optional[str]) -> dict[str, Any]:
@@ -436,14 +517,29 @@ async def create_invoice(payload: InvoiceRequest, session: dict[str, Any] = Depe
     )
 
     platega_method = get_platega_payment_method_id(method_code)
-    result = await create_payment_link(
-        amount_rub=price_rub,
-        order_id=order_id,
-        description=f"Оплата тарифа {tariff.get('name')}",
-        success_url=BOT_RETURN_URL,
-        fail_url=BOT_RETURN_URL,
-        payment_method=platega_method,
-    )
+    try:
+        result = await create_payment_link(
+            amount_rub=price_rub,
+            order_id=order_id,
+            description=f"Оплата тарифа {tariff.get('name')}",
+            success_url=BOT_RETURN_URL,
+            fail_url=BOT_RETURN_URL,
+            payment_method=platega_method,
+        )
+    except Exception as exc:
+        update_transaction_status(
+            order_id=order_id,
+            status="FAILED",
+            payload={
+                "kind": "miniapp_platega_checkout",
+                "method": method_code,
+                "tariff_name": tariff.get("name"),
+                "key_id": vpn_key_id,
+                "error": str(exc),
+            },
+        )
+        logger.warning("Failed to create Platega link for order %s: %s", order_id, exc)
+        raise HTTPException(status_code=502, detail="Failed to create Platega link") from exc
 
     create_or_update_transaction(
         order_id=order_id,
@@ -546,11 +642,14 @@ def get_support_ticket(session: dict[str, Any] = Depends(_current_session)) -> d
     telegram_id = int(session["telegram_id"])
     user, _ = get_or_create_user(telegram_id, session.get("username"))
     ticket = get_open_ticket_for_user(user["id"])
-    return {"ok": True, "data": {"ticket": ticket}}
+    messages: list[dict[str, Any]] = []
+    if ticket:
+        messages = get_ticket_messages(int(ticket["id"]), limit=100)
+    return {"ok": True, "data": {"ticket": ticket, "messages": messages}}
 
 
 @app.post("/api/support")
-def post_support_ticket(payload: SupportTicketRequest, session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
+async def post_support_ticket(payload: SupportTicketRequest, session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
     _ensure_miniapp_enabled()
     text = (payload.message or "").strip()
     if not text:
@@ -570,6 +669,12 @@ def post_support_ticket(payload: SupportTicketRequest, session: dict[str, Any] =
             username=session.get("username"),
         )
     add_ticket_message(ticket_id=ticket_id, sender_role="user", sender_telegram_id=telegram_id, text=text)
+    await _notify_admins_about_ticket_message(
+        ticket_id=ticket_id,
+        user_telegram_id=telegram_id,
+        username=session.get("username"),
+        text=text,
+    )
     return {"ok": True, "data": {"ticket_id": ticket_id}}
 
 

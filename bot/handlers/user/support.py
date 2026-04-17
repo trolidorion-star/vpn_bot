@@ -1,6 +1,7 @@
 import logging
 
 from aiogram import F, Router
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -8,7 +9,9 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from config import ADMIN_IDS
 from database.requests import (
     add_ticket_message,
+    claim_welcome_bonus_once,
     create_support_ticket,
+    get_setting,
     get_open_ticket_for_user,
     get_or_create_user,
 )
@@ -18,6 +21,47 @@ from bot.utils.text import escape_html, get_message_text_for_storage, safe_edit_
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+
+@router.message(Command("support"))
+async def cmd_support(message: Message, state: FSMContext):
+    class CallbackProxy:
+        def __init__(self, msg: Message):
+            self.from_user = msg.from_user
+            self.message = msg
+
+        async def answer(self, *args, **kwargs):
+            return None
+
+    await show_support_menu(CallbackProxy(message), state)  # type: ignore[arg-type]
+
+
+@router.message(Command("bonus"))
+async def cmd_bonus(message: Message):
+    user, _ = get_or_create_user(message.from_user.id, message.from_user.username)
+    bonus_rub = int(get_setting("welcome_bonus_rub", "50") or "50")
+    bonus_cents = max(0, bonus_rub * 100)
+    if bonus_cents <= 0:
+        await safe_edit_or_send(
+            message,
+            "🎁 Бонус сейчас недоступен. Попробуйте позже.",
+            force_new=True,
+        )
+        return
+
+    if claim_welcome_bonus_once(user["id"], bonus_cents):
+        await safe_edit_or_send(
+            message,
+            f"🎁 Бонус начислен: <b>{bonus_rub} ₽</b> на баланс.",
+            force_new=True,
+        )
+        return
+
+    await safe_edit_or_send(
+        message,
+        "🎁 Бонус уже получен ранее. Повторное получение недоступно.",
+        force_new=True,
+    )
 
 
 def support_menu_kb(has_open_ticket: bool, ticket_id: int | None = None):

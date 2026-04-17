@@ -79,6 +79,10 @@ def _api_key() -> str:
     return os.getenv("PLATEGA_API_KEY", "").strip()
 
 
+def _webhook_token() -> str:
+    return os.getenv("PLATEGA_WEBHOOK_TOKEN", "").strip()
+
+
 def _verify_headers(request: web.Request) -> bool:
     expected_merchant = _merchant_id()
     expected_secret = _api_key()
@@ -87,7 +91,15 @@ def _verify_headers(request: web.Request) -> bool:
 
     got_merchant = (request.headers.get("X-MerchantId") or "").strip()
     got_secret = (request.headers.get("X-Secret") or "").strip()
-    return hmac.compare_digest(got_merchant, expected_merchant) and hmac.compare_digest(got_secret, expected_secret)
+    header_ok = hmac.compare_digest(got_merchant, expected_merchant) and hmac.compare_digest(got_secret, expected_secret)
+    if not header_ok:
+        return False
+
+    expected_token = _webhook_token()
+    if not expected_token:
+        return True
+    got_token = (request.headers.get("X-Webhook-Token") or request.query.get("token") or "").strip()
+    return hmac.compare_digest(got_token, expected_token)
 
 
 async def _notify_user(order: dict, text: str) -> None:

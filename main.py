@@ -10,12 +10,14 @@ import os
 import signal
 import sys
 from aiogram import Bot, Dispatcher
+from aiogram.types import BotCommand, MenuButtonCommands, MenuButtonWebApp, WebAppInfo
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import BOT_TOKEN
 import config as app_config
 from database.migrations import run_migrations
 from database.db_transactions import ensure_transactions_table
+from database.requests import is_miniapp_enabled
 
 from bot.services.vpn_api import close_all_clients
 from bot.services.split_config_server import start_split_config_server, stop_split_config_server
@@ -67,6 +69,39 @@ logging.getLogger("aiohttp").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
+async def _setup_native_commands(bot: Bot) -> None:
+    commands = [
+        BotCommand(command="start", description="Главное меню"),
+        BotCommand(command="bonus", description="Получить бонус"),
+        BotCommand(command="support", description="Поддержка"),
+        BotCommand(command="admin", description="Админ-панель"),
+    ]
+    try:
+        await bot.set_my_commands(commands)
+    except Exception as exc:
+        logger.warning("Failed to set bot commands: %s", exc)
+
+
+async def _sync_menu_button(bot: Bot) -> None:
+    mini_app_url = (getattr(app_config, "MINI_APP_URL", "") or "").strip()
+    if is_miniapp_enabled() and mini_app_url:
+        try:
+            await bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(
+                    text=(getattr(app_config, "MINI_APP_SHORT_NAME", "VPN") or "VPN"),
+                    web_app=WebAppInfo(url=mini_app_url),
+                )
+            )
+            return
+        except Exception as exc:
+            logger.warning("Failed to set mini app menu button: %s", exc)
+
+    try:
+        await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
+    except Exception as exc:
+        logger.warning("Failed to set commands menu button: %s", exc)
+
+
 
 
 
@@ -97,6 +132,8 @@ async def on_startup(bot: Bot):
     # Информация о боте
     bot_info = await bot.get_me()
     bot.my_username = bot_info.username
+    await _setup_native_commands(bot)
+    await _sync_menu_button(bot)
     logger.info(f"✅ Бот запущен: @{bot_info.username}")
 
 

@@ -3,7 +3,6 @@
 !.gitignore
 
 # Explicitly ignore these (redundant due to * but good for clarity/overrides if I change * later)
-config.py
 logs/
 tests/
 !tests/

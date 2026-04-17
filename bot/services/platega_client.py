@@ -1,6 +1,7 @@
 import logging
 import os
 import secrets
+from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, Optional, Union
 
 import aiohttp
@@ -172,9 +173,19 @@ def _payment_method_candidates(value: Optional[Union[int, str]]) -> list[Union[i
     return [value]
 
 
+def _normalize_amount_rub(value: Union[int, float, str, Decimal]) -> Decimal:
+    try:
+        amount = Decimal(str(value).replace(",", ".").strip())
+    except (InvalidOperation, ValueError, AttributeError):
+        raise ValueError("amount_rub must be a valid number")
+    if amount <= 0:
+        raise ValueError("amount_rub must be positive")
+    return amount.quantize(Decimal("0.01"))
+
+
 def _build_payload(
     *,
-    amount_rub: int,
+    amount_rub: Decimal,
     order_id: str,
     description: str,
     success_url: str,
@@ -186,7 +197,7 @@ def _build_payload(
         "externalId": order_id,
         "payload": order_id,
         "paymentDetails": {
-            "amount": int(amount_rub),
+            "amount": f"{amount_rub:.2f}",
             "currency": "RUB",
         },
         "return": success_url,
@@ -210,9 +221,7 @@ async def create_payment_link(
     fail_url: str,
     payment_method: Optional[Union[int, str]] = None,
 ) -> Dict[str, Any]:
-    if amount_rub <= 0:
-        raise ValueError("amount_rub must be positive")
-    amount_rub = int(amount_rub)
+    amount_rub_normalized = _normalize_amount_rub(amount_rub)
 
     url = f"{_base_url()}/transaction/process"
     resolved_method: Optional[Union[int, str]] = payment_method if payment_method is not None else _payment_method()
@@ -226,10 +235,12 @@ async def create_payment_link(
     final_payload: Optional[Dict[str, Any]] = None
     final_error: Optional[str] = None
 
-    async with aiohttp.ClientSession() as session:
+    timeout = aiohttp.ClientTimeout(total=30)
+
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         for method_candidate in method_candidates:
             payload = _build_payload(
-                amount_rub=amount_rub,
+                amount_rub=amount_rub_normalized,
                 order_id=order_id,
                 description=description,
                 success_url=success_url,
@@ -237,26 +248,37 @@ async def create_payment_link(
                 payment_method=method_candidate,
             )
             final_payload = payload
-            async with session.post(url, json=payload, headers=headers) as response:
-                text = await response.text()
-                if response.status >= 400:
-                    logger.error(
-                        "Platega create-payment error: status=%s request_id=%s payload=%s response=%s",
-                        response.status,
-                        request_id,
-                        payload,
-                        text,
-                    )
-                    final_error = f"HTTP {response.status}"
-                    continue
+            try:
+                response_ctx = session.post(url, json=payload, headers=headers)
+                async with response_ctx as response:
+                    text = await response.text()
+            except aiohttp.ClientError as exc:
+                logger.error("Platega create-payment network error: request_id=%s payload=%s error=%s", request_id, payload, exc)
+                final_error = f"network error: {exc}"
+                continue
+            if response.status >= 400:
+                logger.error(
+                    "Platega create-payment error: status=%s request_id=%s payload=%s response=%s",
+                    response.status,
+                    request_id,
+                    payload,
+                    text,
+                )
+                final_error = f"HTTP {response.status}"
+                continue
 
-                try:
-                    data = await response.json()
-                except Exception:
-                    logger.error("Platega create-payment invalid JSON: status=%s body=%s", response.status, text)
-                    final_error = "invalid JSON response"
-                    continue
-                break
+            try:
+                data = await response.json()
+            except Exception:
+                logger.error("Platega create-payment invalid JSON: status=%s body=%s", response.status, text)
+                final_error = "invalid JSON response"
+                continue
+
+            if isinstance(data, dict) and data.get("ok") is False:
+                final_error = str(data.get("message") or data.get("detail") or "provider rejected request")
+                logger.error("Platega create-payment provider rejection: request_id=%s payload=%s response=%s", request_id, payload, data)
+                continue
+            break
 
     if data is None:
         details = f" (last payload={final_payload})" if final_payload else ""

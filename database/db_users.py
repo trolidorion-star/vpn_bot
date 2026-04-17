@@ -33,6 +33,7 @@ __all__ = [
     'mark_referral_first_payment_rewarded',
     'get_user_balance',
     'add_to_balance',
+    'claim_welcome_bonus_once',
     'deduct_from_balance',
     'get_user_referral_coefficient',
     'set_user_referral_coefficient',
@@ -834,4 +835,28 @@ def set_user_referral_coefficient(user_id: int, coefficient: float) -> bool:
         success = cursor.rowcount > 0
         if success:
             logger.info(f"Коэффициент пользователя {user_id} установлен: {coefficient}")
+        return success
+
+def claim_welcome_bonus_once(user_id: int, bonus_cents: int) -> bool:
+    """
+    Atomically credits welcome bonus once per user.
+    """
+    bonus_cents = int(bonus_cents or 0)
+    if bonus_cents <= 0:
+        return False
+
+    with get_db() as conn:
+        cursor = conn.execute(
+            """
+            UPDATE users
+            SET personal_balance = COALESCE(personal_balance, 0) + ?,
+                welcome_bonus_claimed = 1
+            WHERE id = ?
+              AND COALESCE(welcome_bonus_claimed, 0) = 0
+            """,
+            (bonus_cents, user_id),
+        )
+        success = cursor.rowcount > 0
+        if success:
+            logger.info("Welcome bonus credited: user_id=%s amount=%s", user_id, bonus_cents)
         return success
