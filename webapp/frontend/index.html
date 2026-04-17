@@ -248,6 +248,46 @@
         animation: none !important;
       }
     }
+    .theme-light body {
+      background: radial-gradient(circle at 20% -10%, #d7ecff 0%, #eef5fb 42%), #eef5fb;
+      color: #10253a;
+    }
+    .theme-light .glass {
+      background: linear-gradient(145deg, rgba(255,255,255,0.94), rgba(246,250,255,0.95));
+      border: 1px solid rgba(12, 32, 52, 0.09);
+      box-shadow: 0 10px 30px rgba(17, 53, 95, 0.14);
+    }
+    .theme-light .premium-card:hover {
+      border-color: rgba(22,104,216,.38);
+      box-shadow: 0 12px 34px rgba(22,104,216,.16);
+    }
+    .theme-light .tag {
+      border-color: rgba(22, 104, 216, .28);
+      background: rgba(22, 104, 216, .06);
+      color: #36506f;
+    }
+    .theme-light .traffic-track {
+      background: rgba(7, 32, 55, .10);
+    }
+    .theme-light .app-orb.one { background: #9ed0ff; }
+    .theme-light .app-orb.two { background: #89dec0; }
+    .theme-light .pulse-dot { background: #1f9c73; }
+    .theme-light .text-muted { color: #5f7187 !important; }
+    .theme-light .text-text { color: #10253a !important; }
+    .theme-light .border-white\/10,
+    .theme-light .border-white\/15 {
+      border-color: rgba(12, 32, 52, 0.14) !important;
+    }
+    .theme-light .bg-surface,
+    .theme-light .bg-surfaceSoft,
+    .theme-light .bg-surfaceSoft\/45,
+    .theme-light .bg-surfaceSoft\/50,
+    .theme-light .bg-surfaceSoft\/55,
+    .theme-light .bg-surfaceSoft\/60,
+    .theme-light .bg-surfaceSoft\/70 {
+      background-color: rgba(228, 238, 248, 0.82) !important;
+      color: #10253a !important;
+    }
   </style>
 </head>
 <body class="text-text">
@@ -276,11 +316,13 @@
     ];
 
     const LOGO_SRC = './assets/logo-bobrik.jpg';
-    const CACHE_KEY = 'bobrik-miniapp-cache-v7';
+    const CACHE_KEY = 'bobrik-miniapp-cache-v8';
+    const CACHE_PERSIST_KEY = 'bobrik-miniapp-cache-persist-v8';
     const SUPPORT_SEEN_KEY = 'bobrik-miniapp-support-seen-v1';
     const PERF_MODE_KEY = 'bobrik-miniapp-performance-mode-v1';
     const REDUCED_MOTION_KEY = 'bobrik-miniapp-reduced-motion-v1';
     const COMPACT_LISTS_KEY = 'bobrik-miniapp-compact-lists-v1';
+    const THEME_VARIANT_KEY = 'bobrik-miniapp-theme-variant-v1';
     const SUPPORT_QUICK_ISSUES = [
       'Проблема с подключением',
       'Не обновляется подписка после оплаты',
@@ -301,6 +343,22 @@
     const setSavedFlag = (key, value) => {
       try {
         localStorage.setItem(key, value ? '1' : '0');
+      } catch {}
+    };
+
+    const getSavedValue = (key, fallback = '') => {
+      try {
+        const raw = localStorage.getItem(key);
+        if (raw === null || raw === undefined || raw === '') return fallback;
+        return raw;
+      } catch {
+        return fallback;
+      }
+    };
+
+    const setSavedValue = (key, value) => {
+      try {
+        localStorage.setItem(key, String(value ?? ''));
       } catch {}
     };
 
@@ -330,17 +388,31 @@
     const parseCache = () => {
       try {
         const raw = sessionStorage.getItem(CACHE_KEY);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') return parsed;
+        }
+      } catch {}
+      try {
+        const raw = localStorage.getItem(CACHE_PERSIST_KEY);
         if (!raw) return null;
         const parsed = JSON.parse(raw);
-        return parsed && typeof parsed === 'object' ? parsed : null;
+        if (!parsed || typeof parsed !== 'object') return null;
+        const ts = Number(parsed?.saved_at || 0);
+        if (!ts || (now() - ts) > 1000 * 60 * 60 * 24) return null;
+        return parsed?.payload && typeof parsed.payload === 'object' ? parsed.payload : null;
       } catch {
         return null;
       }
+      return null;
     };
 
     const saveCache = (payload) => {
       try {
         sessionStorage.setItem(CACHE_KEY, JSON.stringify(payload));
+      } catch {}
+      try {
+        localStorage.setItem(CACHE_PERSIST_KEY, JSON.stringify({ saved_at: now(), payload }));
       } catch {}
     };
 
@@ -488,9 +560,10 @@
 
     function App() {
       const cache = parseCache();
+      const hasWarmCache = Boolean(cache && (cache.user || (cache.keys || []).length || (cache.tariffs || []).length));
       const [token, setToken] = useState(cache?.token || '');
       const [tab, setTab] = useState(cache?.tab || 'dashboard');
-      const [user, setUser] = useState(null);
+      const [user, setUser] = useState(cache?.user || null);
       const [keys, setKeys] = useState(cache?.keys || []);
       const [tariffs, setTariffs] = useState(cache?.tariffs || []);
       const [stats, setStats] = useState(cache?.stats || []);
@@ -511,7 +584,7 @@
       const [selectedKeyDetails, setSelectedKeyDetails] = useState(null);
       const [keyNameDraft, setKeyNameDraft] = useState('');
       const [busy, setBusy] = useState(false);
-      const [loading, setLoading] = useState(true);
+      const [loading, setLoading] = useState(!hasWarmCache);
       const [maintenance, setMaintenance] = useState(false);
       const [authError, setAuthError] = useState(null);
       const [toast, setToast] = useState(null);
@@ -521,6 +594,8 @@
       const [performanceMode, setPerformanceMode] = useState(getSavedFlag(PERF_MODE_KEY, detectLowEndDevice()));
       const [reducedMotion, setReducedMotion] = useState(getSavedFlag(REDUCED_MOTION_KEY, false));
       const [compactLists, setCompactLists] = useState(getSavedFlag(COMPACT_LISTS_KEY, false));
+      const [themeVariant, setThemeVariant] = useState(getSavedValue(THEME_VARIANT_KEY, 'dark'));
+      const [offlineMode, setOfflineMode] = useState(false);
       const [keyFilter, setKeyFilter] = useState('all');
       const bootRef = useRef(0);
       const supportScrollRef = useRef(null);
@@ -601,18 +676,35 @@
       }, []);
 
       useEffect(() => {
+        const onOnline = () => {
+          setOfflineMode(false);
+          if (token) refreshData(token, { silent: true }).catch(() => null);
+        };
+        const onOffline = () => setOfflineMode(true);
+        window.addEventListener('online', onOnline);
+        window.addEventListener('offline', onOffline);
+        return () => {
+          window.removeEventListener('online', onOnline);
+          window.removeEventListener('offline', onOffline);
+        };
+      }, [token]);
+
+      useEffect(() => {
         setSavedFlag(PERF_MODE_KEY, performanceMode);
         setSavedFlag(REDUCED_MOTION_KEY, reducedMotion);
         setSavedFlag(COMPACT_LISTS_KEY, compactLists);
+        setSavedValue(THEME_VARIANT_KEY, themeVariant);
         const root = document.documentElement;
         root.classList.toggle('perf-low', performanceMode || isLowEndDevice);
         root.classList.toggle('reduced-motion', reducedMotion);
-      }, [performanceMode, reducedMotion, compactLists, isLowEndDevice]);
+        root.classList.toggle('theme-light', themeVariant === 'light');
+      }, [performanceMode, reducedMotion, compactLists, isLowEndDevice, themeVariant]);
 
       useEffect(() => {
         saveCache({
           token,
           tab,
+          user,
           keys,
           tariffs,
           stats,
@@ -623,7 +715,7 @@
           supportClosedTickets,
           supportAdminHistory,
         });
-      }, [token, tab, keys, tariffs, stats, refData, supportTicket, supportMessages, supportHistory, supportClosedTickets, supportAdminHistory]);
+      }, [token, tab, user, keys, tariffs, stats, refData, supportTicket, supportMessages, supportHistory, supportClosedTickets, supportAdminHistory]);
 
       useEffect(() => {
         if (!user?.is_admin && tab === 'admin') {
@@ -693,12 +785,16 @@
             return;
           }
 
+          setOfflineMode(false);
           setLastSyncAt(now());
 
           if (failures.length && !silent) {
             showToast('Часть данных не обновилась', 'error');
           }
         } catch (error) {
+          if (String(error?.message || '').toLowerCase().includes('network') || String(error?.message || '').toLowerCase().includes('fetch')) {
+            setOfflineMode(true);
+          }
           if (!silent) showToast(error?.message || 'Ошибка обновления', 'error');
         }
       }
@@ -706,7 +802,7 @@
       async function bootstrap() {
         const bootId = now();
         bootRef.current = bootId;
-        setLoading(true);
+        setLoading(!hasWarmCache);
         setAuthError(null);
 
         try {
@@ -729,6 +825,12 @@
               setLoading(false);
               return;
             }
+            if (hasWarmCache) {
+              setOfflineMode(true);
+              setLoading(false);
+              showToast('Запущено из локального кэша. Проверьте интернет.', 'error');
+              return;
+            }
             const hardAuth = auth.error.status === 401 || auth.error.status === 403;
             setAuthError({
               status: auth.error.status,
@@ -743,8 +845,15 @@
           setToken(auth.payload.token);
           setUser(auth.payload.user || null);
           await refreshData(auth.payload.token, { silent: true });
+          setOfflineMode(false);
           setLoading(false);
         } catch (error) {
+          if (hasWarmCache) {
+            setOfflineMode(true);
+            setLoading(false);
+            showToast('Сеть недоступна, открыт оффлайн-кэш.', 'error');
+            return;
+          }
           setAuthError({ status: error?.status || 0, message: error?.message || 'Ошибка запуска приложения' });
           setLoading(false);
         }
@@ -783,19 +892,36 @@
         }
       }
 
+      const getPreferredKeyId = () => {
+        if (user?.key_id) return user.key_id;
+        const source = keys || [];
+        const active = source.find((item) => Boolean(item?.is_active));
+        if (active?.id) return active.id;
+        return source[0]?.id || null;
+      };
+
       async function copyMainKey() {
         if (!token) {
           showToast('Сессия не готова', 'error');
           return;
         }
         try {
-          const response = await api('/api/key_link', { token });
-          const keyLink = String(response.data?.key_link || '').trim();
-          if (!keyLink) {
-            showToast('Ключ пока недоступен', 'error');
+          const preferredKeyId = getPreferredKeyId();
+          if (preferredKeyId) {
+            const response = await api(`/api/keys/${preferredKeyId}/link`, { token });
+            const keyLink = String(response.data?.key_link || '').trim();
+            if (keyLink) {
+              await copyText(keyLink, 'Ключ скопирован');
+              return;
+            }
+          }
+          const fallbackResponse = await api('/api/key_link', { token });
+          const fallbackKeyLink = String(fallbackResponse.data?.key_link || '').trim();
+          if (fallbackKeyLink) {
+            await copyText(fallbackKeyLink, 'Ключ скопирован');
             return;
           }
-          await copyText(keyLink, 'Ключ скопирован');
+          showToast('Ключ пока недоступен', 'error');
         } catch (error) {
           const fallback = String(user?.key || '').trim();
           if (fallback && !fallback.startsWith('user_')) {
@@ -835,6 +961,26 @@
           setKeyNameDraft(String(keyData?.custom_name || keyData?.display_name || '').trim());
         } catch (error) {
           showToast(error?.message || 'Не удалось загрузить ключ', 'error');
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function refreshSelectedKeyDetails() {
+        if (!token || !selectedKeyId) return;
+        setBusy(true);
+        try {
+          const response = await api(`/api/keys/${selectedKeyId}`, { token });
+          const keyData = response.data?.key || null;
+          setSelectedKeyDetails({
+            ...(keyData || {}),
+            key_link: response.data?.key_link || '',
+          });
+          setKeyNameDraft(String(keyData?.custom_name || keyData?.display_name || '').trim());
+          await refreshData(token, { silent: true });
+          showToast('Ключ обновлен');
+        } catch (error) {
+          showToast(error?.message || 'Не удалось обновить ключ', 'error');
         } finally {
           setBusy(false);
         }
@@ -1088,18 +1234,29 @@
           <div className="space-y-3 animate-in">
             {(tariffs || []).map((tariff, idx) => (
               <button key={tariff.id} onClick={impact(() => setSelectedTariff(tariff), 'medium')} className="w-full rounded-card glass premium-card p-4 text-left shine">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <div className="text-lg font-semibold readable">{tariff.name}</div>
-                    <div className="text-sm text-muted mt-1 readable">{tariff.days} дней доступа</div>
-                  </div>
-                  <div className="rounded-xl bg-accent/15 px-3 py-2 text-accent font-semibold">{tariff.price_rub} ₽</div>
-                </div>
-                <div className="mt-3 flex items-center gap-2">
-                  {idx === 0 && <span className="tag">Популярный</span>}
-                  <span className="tag">{Math.max(1, Math.round(Number(tariff.price_rub || 0) / Math.max(1, Number(tariff.days || 1))))} ₽/день</span>
-                </div>
-                <div className="mt-3 text-xs text-muted readable">Нажмите, чтобы выбрать способ оплаты</div>
+                {(() => {
+                  const isLifetime = String(tariff?.name || '').toLowerCase().includes('навсегда') || Number(tariff?.days || 0) >= 666;
+                  const daysLabel = isLifetime ? '∞' : `${tariff.days} дней доступа`;
+                  const perDayLabel = isLifetime
+                    ? 'Лучшее долгосрочное решение'
+                    : `${Math.max(1, Math.round(Number(tariff.price_rub || 0) / Math.max(1, Number(tariff.days || 1))))} ₽/день`;
+                  return (
+                    <>
+                      <div className="flex items-center justify-between gap-3">
+                        <div>
+                          <div className="text-lg font-semibold readable">{tariff.name}</div>
+                          <div className="text-sm text-muted mt-1 readable">{daysLabel}</div>
+                        </div>
+                        <div className="rounded-xl bg-accent/15 px-3 py-2 text-accent font-semibold">{tariff.price_rub} ₽</div>
+                      </div>
+                      <div className="mt-3 flex items-center gap-2">
+                        {isLifetime ? <span className="tag">Выгодно</span> : (idx === 0 && <span className="tag">Популярный</span>)}
+                        <span className="tag">{perDayLabel}</span>
+                      </div>
+                      <div className="mt-3 text-xs text-muted readable">Нажмите, чтобы выбрать способ оплаты</div>
+                    </>
+                  );
+                })()}
               </button>
             ))}
             {(tariffs || []).length === 0 && <div className="rounded-card glass premium-card p-4 text-sm text-muted">Тарифы пока не загружены.</div>}
@@ -1148,7 +1305,7 @@
                   <div className="mt-1 text-sm text-muted">До: <span className="text-text">{fmtDate(item.expires_at)}</span></div>
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     <button onClick={impact(() => openKeyDetails(item.id), 'medium')} className="rounded-xl border border-white/15 px-3 py-2 text-xs">Управление</button>
-                    <button onClick={impact(() => copyKeyLinkById(item.id))} className="rounded-xl bg-accent/85 px-3 py-2 text-xs font-semibold text-black">Скопировать</button>
+                    <button onClick={impact(() => copyKeyLinkById(item.id))} className="rounded-xl border border-white/20 bg-gradient-to-r from-cyan-500 to-blue-600 px-3 py-2 text-xs font-semibold text-white shadow-md">Скопировать</button>
                   </div>
                 </div>
               ))
@@ -1365,6 +1522,23 @@
                   onToggle={(next) => setCompactLists(Boolean(next))}
                 />
               </div>
+              <div className="mt-4">
+                <div className="mb-2 text-xs text-muted">A/B тема интерфейса</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={impact(() => setThemeVariant('dark'))}
+                    className={`rounded-xl px-3 py-2 text-sm ${themeVariant === 'dark' ? 'bg-accent text-black font-semibold' : 'border border-white/15'}`}
+                  >
+                    Тема A: Темная
+                  </button>
+                  <button
+                    onClick={impact(() => setThemeVariant('light'))}
+                    className={`rounded-xl px-3 py-2 text-sm ${themeVariant === 'light' ? 'bg-accent text-black font-semibold' : 'border border-white/15'}`}
+                  >
+                    Тема B: Светлая
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         );
@@ -1405,6 +1579,11 @@
             <div className="app-orb two"></div>
           </div>
           <Toast item={toast} onClose={() => setToast(null)} />
+          {offlineMode && (
+            <div className="relative z-10 mb-3 rounded-2xl border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning readable">
+              Оффлайн-режим: показаны кэшированные данные. Некоторые действия могут быть временно недоступны.
+            </div>
+          )}
 
           <div className="relative z-10 mb-4 rounded-card glass premium-card hero-glow shine p-4">
             <div className="flex items-center gap-3">
@@ -1455,7 +1634,9 @@
               <div className="absolute bottom-0 left-0 right-0 rounded-t-[26px] glass border-t border-white/10 p-4 modal-sheet" onClick={(event) => event.stopPropagation()}>
                 <div className="mx-auto mb-3 h-1.5 w-14 rounded-full bg-white/20"></div>
                 <div className="text-lg font-semibold">{selectedTariff.name}</div>
-                <div className="mb-3 text-sm text-muted">{selectedTariff.days} дней • {selectedTariff.price_rub} ₽</div>
+                <div className="mb-3 text-sm text-muted">
+                  {(String(selectedTariff?.name || '').toLowerCase().includes('навсегда') || Number(selectedTariff?.days || 0) >= 666) ? '∞' : `${selectedTariff.days} дней`} • {selectedTariff.price_rub} ₽
+                </div>
                 <div className="space-y-2">
                   {PAY_METHODS.map((method) => (
                     <button key={method.code} onClick={impact(() => createInvoice(method.code), 'medium')} disabled={busy} className="w-full rounded-2xl border border-white/10 bg-surfaceSoft/70 px-4 py-3 text-left transition hover:border-accent/50">
@@ -1489,13 +1670,14 @@
                     className="mt-2 w-full rounded-xl border border-white/10 bg-surface px-3 py-2 text-sm outline-none"
                     placeholder="Например: iPhone / Рабочий"
                   />
-                  <button onClick={impact(() => saveKeyName(), 'medium')} disabled={busy} className="mt-3 w-full rounded-xl bg-accent px-3 py-2 text-sm font-semibold text-black disabled:opacity-50">
+                  <button onClick={impact(() => saveKeyName(), 'medium')} disabled={busy} className="mt-3 w-full rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
                     Сохранить название
                   </button>
                 </div>
 
-                <div className="mt-3 grid grid-cols-2 gap-2">
-                  <button onClick={impact(() => copyKeyLinkById(selectedKeyId))} className="rounded-xl border border-white/15 px-3 py-2 text-sm">Скопировать ссылку</button>
+                <div className="mt-3 grid grid-cols-3 gap-2">
+                  <button onClick={impact(() => refreshSelectedKeyDetails(), 'light')} className="rounded-xl border border-white/15 px-3 py-2 text-sm">Обновить</button>
+                  <button onClick={impact(() => copyKeyLinkById(selectedKeyId))} className="rounded-xl border border-white/20 bg-gradient-to-r from-cyan-500 to-blue-600 px-3 py-2 text-sm font-semibold text-white">Скопировать</button>
                   <button onClick={impact(() => { setSelectedKeyId(null); setSelectedKeyDetails(null); })} className="rounded-xl border border-white/15 px-3 py-2 text-sm">Закрыть</button>
                 </div>
               </div>
