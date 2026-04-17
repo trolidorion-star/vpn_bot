@@ -220,8 +220,8 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
                 logger.exception(f'Ошибка обработки платежа: {e}')
                 await safe_edit_or_send(message, '❌ Произошла ошибка при обработке платежа.', force_new=True)
         return
-    if is_new and args and args.startswith('ref_'):
-        ref_code = args[4:]
+    if is_new and args and (args.startswith('ref_') or args.startswith('ref')):
+        ref_code = args[4:] if args.startswith('ref_') else args[3:]
         referrer = get_user_by_referral_code(ref_code)
         if referrer and referrer['id'] != user['id']:
             if set_user_referrer(user['id'], referrer['id']):

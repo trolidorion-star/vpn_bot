@@ -5,14 +5,15 @@ import os
 import re
 import secrets
 import time
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 from urllib.parse import parse_qsl
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -43,7 +44,8 @@ FRONTEND_DIR = ROOT_DIR / "webapp" / "frontend"
 load_dotenv(ROOT_DIR / ".env")
 BOT_RETURN_URL = os.getenv("BOT_RETURN_URL", "https://t.me/BobrikVPNbot")
 SESSION_TTL_SECONDS = int(os.getenv("MINI_APP_SESSION_TTL", "21600"))
-TELEGRAM_INITDATA_TTL_SECONDS = int(os.getenv("TELEGRAM_INITDATA_TTL", "86400"))
+TELEGRAM_INITDATA_TTL_SECONDS = max(86400, int(os.getenv("TELEGRAM_INITDATA_TTL", "86400")))
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Bobrik Mini App API", version="1.0.0")
 app.add_middleware(
@@ -179,7 +181,7 @@ def _extract_bot_username() -> str:
 
 def _build_referral_link(user_id: int) -> str:
     code = ensure_user_referral_code(user_id)
-    return f"https://t.me/{_extract_bot_username()}?start=ref_{code}"
+    return f"https://t.me/{_extract_bot_username()}?start=ref{code}"
 
 
 def _serialize_user_info(telegram_id: int, username: Optional[str]) -> dict[str, Any]:
@@ -375,6 +377,18 @@ def set_ru_bypass(payload: RuBypassRequest, session: dict[str, Any] = Depends(_c
 @app.get("/", include_in_schema=False)
 def root() -> FileResponse:
     return FileResponse(FRONTEND_DIR / "index.html")
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    logger.exception("Unhandled backend error on %s: %s", request.url.path, exc)
+    return JSONResponse(
+        status_code=500,
+        content={
+            "ok": False,
+            "detail": "Internal server error",
+        },
+    )
 
 
 app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

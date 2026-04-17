@@ -67,7 +67,7 @@ async def show_referral_system(callback: CallbackQuery):
     
     referral_code = ensure_user_referral_code(user_internal_id)
     bot_username = callback.bot.my_username if hasattr(callback.bot, 'my_username') else callback.bot.username
-    referral_link = f"https://t.me/{bot_username}?start=ref_{referral_code}"
+    referral_link = f"https://t.me/{bot_username}?start=ref{referral_code}"
     
     reward_type = get_referral_reward_type()
     from bot.utils.message_editor import get_message_data

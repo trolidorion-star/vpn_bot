@@ -15,7 +15,9 @@
             panelSoft: "#1f1f1f",
             accent: "#ffcc00",
             text: "#f4f4f5",
-            muted: "#a1a1aa"
+            muted: "#a1a1aa",
+            fur: "#b78148",
+            wood: "#6a3e1d"
           },
           borderRadius: {
             xl2: "20px"
@@ -33,15 +35,36 @@
       from { opacity: 0; transform: translateY(8px); }
       to { opacity: 1; transform: translateY(0); }
     }
+
+    @keyframes bobrik-spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+
+    @keyframes bobrik-pulse {
+      0%, 100% { transform: scale(1); opacity: 0.9; }
+      50% { transform: scale(1.06); opacity: 1; }
+    }
+
+    .bobrik-loader-ring {
+      animation: bobrik-spin 1.15s linear infinite;
+    }
+
+    .bobrik-loader-body {
+      animation: bobrik-pulse 1.25s ease-in-out infinite;
+    }
   </style>
 </head>
 <body class="bg-bg text-text min-h-screen">
   <div id="root" class="min-h-screen"></div>
 
   <script type="text/babel">
-    const { useEffect, useMemo, useState } = React;
+    const { useEffect, useMemo, useRef, useState } = React;
     const tg = window.Telegram?.WebApp;
-    if (tg) { tg.ready(); tg.expand(); }
+    if (tg) {
+      tg.ready();
+      tg.expand();
+    }
 
     const METHODS = [
       { code: "sbp", label: "СБП" },
@@ -49,15 +72,109 @@
       { code: "crypto", label: "Криптовалюта" },
     ];
 
-    async function api(path, { method = "GET", token, body } = {}) {
+    const CACHE_KEY = "bobrik-miniapp-cache-v3";
+
+    class ApiError extends Error {
+      constructor(message, status = 0, payload = null) {
+        super(message);
+        this.name = "ApiError";
+        this.status = status;
+        this.payload = payload;
+      }
+    }
+
+    function sleep(ms) {
+      return new Promise((resolve) => setTimeout(resolve, ms));
+    }
+
+    function hapticImpact(style = "light") {
+      tg?.HapticFeedback?.impactOccurred?.(style);
+    }
+
+    function hapticSuccess() {
+      tg?.HapticFeedback?.notificationOccurred?.("success");
+    }
+
+    function hapticError() {
+      tg?.HapticFeedback?.notificationOccurred?.("error");
+    }
+
+    async function requestJson(path, { method = "GET", token, body } = {}) {
       const headers = { "Content-Type": "application/json" };
       if (token) headers.Authorization = `Bearer ${token}`;
-      const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+
+      const res = await fetch(path, {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.ok === false) {
-        throw new Error(data.detail || data.error || `HTTP ${res.status}`);
+      return { status: res.status, ok: res.ok, data };
+    }
+
+    async function api(path, options = {}) {
+      const { status, ok, data } = await requestJson(path, options);
+      if (!ok || data.ok === false) {
+        throw new ApiError(data.detail || data.error || `HTTP ${status}`, status, data);
       }
       return data;
+    }
+
+    function formatCountdown(msLeft) {
+      if (msLeft <= 0) return "00:00:00";
+      const totalSeconds = Math.floor(msLeft / 1000);
+      const h = Math.floor(totalSeconds / 3600);
+      const m = Math.floor((totalSeconds % 3600) / 60);
+      const s = totalSeconds % 60;
+      return [h, m, s].map((n) => String(n).padStart(2, "0")).join(":");
+    }
+
+    function formatExpiresAt(expiresAtRaw) {
+      if (!expiresAtRaw) return "Не задано";
+      const dt = new Date(expiresAtRaw);
+      if (Number.isNaN(dt.getTime())) return "Не задано";
+      return dt.toLocaleString("ru-RU", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    }
+
+    function parseCache() {
+      try {
+        const raw = sessionStorage.getItem(CACHE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object") return null;
+        return parsed;
+      } catch (_) {
+        return null;
+      }
+    }
+
+    function saveCache(payload) {
+      try {
+        sessionStorage.setItem(CACHE_KEY, JSON.stringify(payload));
+      } catch (_) {
+        // noop
+      }
+    }
+
+    function normalizeReferralLink(rawLink) {
+      if (!rawLink) return "";
+      try {
+        const url = new URL(rawLink);
+        const botName = (url.pathname || "").replaceAll("/", "") || "BobrikVPNbot";
+        const startParam = String(url.searchParams.get("start") || "").trim();
+        const code = startParam.replace(/^ref_?/, "");
+        if (!code) return `https://t.me/${botName}`;
+        return `https://t.me/${botName}?start=ref${code}`;
+      } catch (_) {
+        return String(rawLink).replace("?start=ref_", "?start=ref");
+      }
     }
 
     function StatusBadge({ status }) {
@@ -69,52 +186,39 @@
       );
     }
 
-    function formatCountdown(msLeft) {
-      if (msLeft <= 0) return "00:00:00";
-      const totalSeconds = Math.floor(msLeft / 1000);
-      const h = Math.floor(totalSeconds / 3600);
-      const m = Math.floor((totalSeconds % 3600) / 60);
-      const s = totalSeconds % 60;
-      const parts = [h, m, s].map((n) => String(n).padStart(2, "0"));
-      return parts.join(":");
-    }
-
-    function formatExpiresAt(expiresAtRaw) {
-      if (!expiresAtRaw) return "Не задано";
-      const dt = new Date(expiresAtRaw);
-      if (Number.isNaN(dt.getTime())) return "Не задано";
-      return dt.toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+    function SplashScreen() {
+      return (
+        <div className="min-h-screen bg-gradient-to-b from-bg via-[#121212] to-bg flex flex-col items-center justify-center px-6">
+          <div className="relative mb-6 h-28 w-28">
+            <div className="bobrik-loader-ring absolute inset-0 rounded-full border-4 border-accent/20 border-t-accent"></div>
+            <div className="bobrik-loader-body absolute inset-3 rounded-full bg-fur shadow-[0_0_25px_rgba(183,129,72,0.5)]">
+              <div className="absolute left-4 top-5 h-2.5 w-2.5 rounded-full bg-black"></div>
+              <div className="absolute right-4 top-5 h-2.5 w-2.5 rounded-full bg-black"></div>
+              <div className="absolute left-1/2 top-10 h-2 w-8 -translate-x-1/2 rounded-full bg-wood"></div>
+              <div className="absolute left-1/2 bottom-5 h-4 w-10 -translate-x-1/2 rounded-md bg-wood"></div>
+            </div>
+          </div>
+          <div className="text-xl font-semibold tracking-wide">Bobrik VPN</div>
+          <div className="mt-2 text-sm text-muted">Загружаем безопасное соединение...</div>
+        </div>
+      );
     }
 
     function App() {
-      const [tab, setTab] = useState("home");
-      const [token, setToken] = useState("");
-      const [user, setUser] = useState(null);
-      const [tariffs, setTariffs] = useState([]);
+      const initialCache = parseCache();
+      const [tab, setTab] = useState(initialCache?.tab || "home");
+      const [token, setToken] = useState(initialCache?.token || "");
+      const [user, setUser] = useState(initialCache?.user || null);
+      const [tariffs, setTariffs] = useState(initialCache?.tariffs || []);
       const [selectedTariff, setSelectedTariff] = useState(null);
       const [loading, setLoading] = useState(true);
+      const [authError, setAuthError] = useState(null);
+      const [inlineError, setInlineError] = useState("");
       const [ruBypass, setRuBypass] = useState(false);
       const [busy, setBusy] = useState(false);
       const [nowMs, setNowMs] = useState(Date.now());
       const [transitionTick, setTransitionTick] = useState(0);
-
-      useEffect(() => {
-        (async () => {
-          try {
-            const initData = tg?.initData || "";
-            const session = await api("/api/auth/session", { method: "POST", body: { initData } });
-            setToken(session.token);
-            setUser(session.user);
-
-            const tariffRes = await api("/api/get_tariffs", { token: session.token });
-            setTariffs(tariffRes.data || []);
-          } catch (e) {
-            alert(`Ошибка Mini App: ${e.message}`);
-          } finally {
-            setLoading(false);
-          }
-        })();
-      }, []);
+      const bootCounterRef = useRef(0);
 
       const hasKey = useMemo(() => Boolean(user?.key), [user]);
       const expiresAtMs = useMemo(() => {
@@ -125,15 +229,134 @@
       const msLeft = Math.max(0, expiresAtMs - nowMs);
       const countdown = formatCountdown(msLeft);
       const subscriptionIsActive = user?.status === "active" && msLeft > 0;
+      const referralLink = normalizeReferralLink(user?.referral_link || "");
 
-      async function refreshUser() {
+      useEffect(() => {
+        const id = setInterval(() => setNowMs(Date.now()), 1000);
+        return () => clearInterval(id);
+      }, []);
+
+      useEffect(() => {
+        saveCache({ token, user, tariffs, tab });
+      }, [token, user, tariffs, tab]);
+
+      useEffect(() => {
         if (!token) return;
-        const res = await api("/api/get_user_info", { token });
-        setUser(res.data);
+        const id = setInterval(() => {
+          refreshUser(true).catch(() => null);
+        }, 30000);
+        return () => clearInterval(id);
+      }, [token]);
+
+      async function authWithRetry(initData, retries = 2) {
+        let lastError = { status: 0, detail: "Ошибка авторизации" };
+
+        for (let attempt = 0; attempt <= retries; attempt += 1) {
+          try {
+            const { status, ok, data } = await requestJson("/api/auth/session", {
+              method: "POST",
+              body: { initData },
+            });
+
+            if (ok && data.ok !== false && data.token) {
+              return { ok: true, payload: data };
+            }
+
+            lastError = {
+              status,
+              detail: data.detail || data.error || `HTTP ${status}`,
+            };
+          } catch (e) {
+            lastError = {
+              status: 0,
+              detail: e?.message || "Network error",
+            };
+          }
+
+          if (attempt < retries) {
+            await sleep(280 * (attempt + 1));
+          }
+        }
+
+        return { ok: false, error: lastError };
+      }
+
+      async function bootstrap() {
+        const bootId = Date.now();
+        bootCounterRef.current = bootId;
+        setLoading(true);
+        setAuthError(null);
+        setInlineError("");
+
+        const initData = tg?.initData || "";
+        const auth = await authWithRetry(initData, 2);
+
+        if (bootCounterRef.current !== bootId) return;
+
+        if (!auth.ok) {
+          const status = auth.error.status || 0;
+          const forbidden = status === 401 || status === 403;
+          if (forbidden) {
+            setAuthError({
+              status,
+              message: "Не удалось подтвердить сессию Telegram. Откройте Mini App заново из бота.",
+            });
+          } else {
+            setAuthError({
+              status,
+              message: auth.error.detail || "Сервис временно недоступен. Попробуйте еще раз.",
+            });
+          }
+          setLoading(false);
+          return;
+        }
+
+        const session = auth.payload;
+        setToken(session.token);
+        setUser(session.user || null);
+
+        try {
+          const tariffRes = await api("/api/get_tariffs", { token: session.token });
+          setTariffs(tariffRes.data || []);
+        } catch (e) {
+          setTariffs(initialCache?.tariffs || []);
+          setInlineError("Не удалось обновить список тарифов. Используем кэш.");
+        }
+
+        setLoading(false);
+      }
+
+      useEffect(() => {
+        bootstrap();
+      }, []);
+
+      async function refreshUser(silent = false) {
+        if (!token) return;
+        try {
+          const res = await api("/api/get_user_info", { token });
+          setUser(res.data);
+        } catch (e) {
+          if (!silent) {
+            setInlineError(e.message || "Ошибка обновления профиля");
+          }
+        }
+      }
+
+      function switchTab(nextTab) {
+        hapticImpact("light");
+        if (nextTab === tab) return;
+        setTransitionTick((v) => v + 1);
+        setTab(nextTab);
+      }
+
+      async function copyToClipboard(text) {
+        if (!text) throw new Error("Пустое значение");
+        await navigator.clipboard.writeText(text);
       }
 
       async function createInvoice(method) {
-        if (!selectedTariff) return;
+        if (!selectedTariff || !token) return;
+        hapticImpact("medium");
         setBusy(true);
         try {
           const res = await api("/api/create_invoice", {
@@ -142,17 +365,19 @@
             body: { tariff_id: selectedTariff.id, method, key_id: user?.key_id || null },
           });
           setSelectedTariff(null);
-          window.open(res.data.redirect_url, "_blank");
+          tg?.openLink?.(res.data.redirect_url);
         } catch (e) {
-          alert(e.message);
+          hapticError();
+          tg?.showAlert?.(e.message || "Не удалось создать счет");
         } finally {
           setBusy(false);
         }
       }
 
       async function toggleRuBypass(next) {
-        if (!user?.key_id) {
-          alert("Сначала создайте ключ");
+        hapticImpact("light");
+        if (!user?.key_id || !token) {
+          tg?.showAlert?.("Сначала создайте ключ");
           return;
         }
         setBusy(true);
@@ -163,55 +388,69 @@
             body: { key_id: user.key_id, enabled: next },
           });
           setRuBypass(next);
+          hapticSuccess();
         } catch (e) {
-          alert(e.message);
+          hapticError();
+          tg?.showAlert?.(e.message || "Ошибка настройки RU Bypass");
         } finally {
           setBusy(false);
         }
       }
 
       async function copyKey() {
+        hapticImpact("light");
         if (!user?.key) return;
         try {
-          await navigator.clipboard.writeText(user.key);
-          if (tg?.showPopup) tg.showPopup({ title: "Готово", message: "Ключ скопирован", buttons: [{ type: "ok" }] });
+          await copyToClipboard(user.key);
+          hapticSuccess();
+          tg?.showAlert?.("Ключ скопирован");
         } catch (e) {
-          alert("Не удалось скопировать ключ");
+          hapticError();
+          tg?.showAlert?.("Не удалось скопировать ключ");
         }
       }
 
       async function copyReferralLink() {
-        if (!user?.referral_link) {
-          alert("Реферальная ссылка недоступна");
+        hapticImpact("light");
+        if (!referralLink) {
+          hapticError();
+          tg?.showAlert?.("Реферальная ссылка недоступна");
           return;
         }
+
         try {
-          await navigator.clipboard.writeText(user.referral_link);
-          if (tg?.showPopup) tg.showPopup({ title: "Готово", message: "Реферальная ссылка скопирована", buttons: [{ type: "ok" }] });
+          await copyToClipboard(referralLink);
+          hapticSuccess();
+          tg?.showAlert?.("Реферальная ссылка скопирована");
         } catch (e) {
-          alert("Не удалось скопировать ссылку");
+          hapticError();
+          tg?.showAlert?.("Не удалось скопировать ссылку");
         }
       }
 
-      function switchTab(nextTab) {
-        if (nextTab === tab) return;
-        setTransitionTick((v) => v + 1);
-        setTab(nextTab);
+      if (loading) {
+        return <SplashScreen />;
       }
 
-      useEffect(() => {
-        const id = setInterval(() => setNowMs(Date.now()), 1000);
-        return () => clearInterval(id);
-      }, []);
-
-      useEffect(() => {
-        if (!token) return;
-        const id = setInterval(() => refreshUser().catch(() => null), 30000);
-        return () => clearInterval(id);
-      }, [token]);
-
-      if (loading) {
-        return <div className="p-6 text-center text-muted">Загрузка...</div>;
+      if (authError) {
+        return (
+          <div className="min-h-screen bg-gradient-to-b from-bg via-[#121212] to-bg px-4 py-6">
+            <div className="mx-auto mt-10 max-w-md rounded-xl2 border border-red-900/40 bg-panel p-5">
+              <div className="text-lg font-semibold text-red-300">Ошибка авторизации</div>
+              <div className="mt-2 text-sm text-muted">{authError.message}</div>
+              <div className="mt-1 text-xs text-zinc-500">HTTP: {authError.status || "n/a"}</div>
+              <button
+                onClick={() => {
+                  hapticImpact("medium");
+                  bootstrap();
+                }}
+                className="mt-4 w-full rounded-xl2 bg-accent py-3 font-semibold text-black"
+              >
+                Повторить
+              </button>
+            </div>
+          </div>
+        );
       }
 
       return (
@@ -219,10 +458,11 @@
           <div className="mb-4 rounded-xl2 bg-panel p-4 border border-zinc-800">
             <div className="text-sm text-muted">Bobrik VPN Mini App</div>
             <div className="mt-1 text-2xl font-semibold">{user?.balance_rub?.toFixed?.(2) || "0.00"} ₽</div>
+            {inlineError ? <div className="mt-2 text-xs text-amber-300">{inlineError}</div> : null}
           </div>
 
-          {tab === "home" && (
-            <section key={`home-${transitionTick}`} className="space-y-3 animate-[fadein_.25s_ease-out]">
+          <div className="relative min-h-[420px]">
+            <section className={`space-y-3 transition-all duration-200 ${tab === "home" ? "opacity-100 translate-y-0 relative" : "opacity-0 translate-y-1 absolute inset-0 pointer-events-none"} animate-[fadein_.25s_ease-out]`} key={`home-${transitionTick}`}>
               <div className="rounded-xl2 bg-panel p-4 border border-zinc-800">
                 <div className="flex items-center justify-between">
                   <h2 className="text-lg font-semibold">Ваш доступ</h2>
@@ -246,15 +486,16 @@
                 </button>
               </div>
             </section>
-          )}
 
-          {tab === "shop" && (
-            <section key={`shop-${transitionTick}`} className="space-y-3 animate-[fadein_.25s_ease-out]">
+            <section className={`space-y-3 transition-all duration-200 ${tab === "shop" ? "opacity-100 translate-y-0 relative" : "opacity-0 translate-y-1 absolute inset-0 pointer-events-none"} animate-[fadein_.25s_ease-out]`} key={`shop-${transitionTick}`}>
               {tariffs.map((tariff) => (
                 <button
                   key={tariff.id}
                   className="w-full rounded-xl2 bg-panel p-4 border border-zinc-800 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-zinc-600"
-                  onClick={() => setSelectedTariff(tariff)}
+                  onClick={() => {
+                    hapticImpact("light");
+                    setSelectedTariff(tariff);
+                  }}
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-lg font-medium">{tariff.name}</span>
@@ -264,10 +505,8 @@
                 </button>
               ))}
             </section>
-          )}
 
-          {tab === "settings" && (
-            <section key={`settings-${transitionTick}`} className="space-y-3 animate-[fadein_.25s_ease-out]">
+            <section className={`space-y-3 transition-all duration-200 ${tab === "settings" ? "opacity-100 translate-y-0 relative" : "opacity-0 translate-y-1 absolute inset-0 pointer-events-none"} animate-[fadein_.25s_ease-out]`} key={`settings-${transitionTick}`}>
               <div className="rounded-xl2 bg-panel p-4 border border-zinc-800">
                 <div className="flex items-center justify-between">
                   <div>
@@ -285,19 +524,19 @@
               </div>
               <div className="rounded-xl2 bg-panel p-4 border border-zinc-800">
                 <div className="font-semibold">Реферальная программа</div>
-                <div className="mt-1 text-sm text-muted break-all">{user?.referral_link || "Ссылка недоступна"}</div>
+                <div className="mt-1 text-sm text-muted break-all">{referralLink || "Ссылка недоступна"}</div>
                 <button
                   onClick={copyReferralLink}
                   className="mt-3 w-full rounded-xl2 border border-zinc-700 bg-zinc-900 py-3 text-sm font-medium transition-all duration-200 hover:border-zinc-500"
                 >
-                  Copy Link
+                  Copy Referral Link
                 </button>
               </div>
             </section>
-          )}
+          </div>
 
           <nav className="fixed bottom-3 left-0 right-0 mx-auto flex w-[calc(100%-24px)] max-w-md justify-between rounded-xl2 bg-panelSoft px-4 py-3 border border-zinc-800">
-            <button className={tab === "home" ? "text-accent transition-colors" : "text-muted transition-colors"} onClick={() => switchTab("home")}>Главная</button>
+            <button className={tab === "home" ? "text-accent transition-colors" : "text-muted transition-colors"} onClick={() => switchTab("home")}>Профиль</button>
             <button className={tab === "shop" ? "text-accent transition-colors" : "text-muted transition-colors"} onClick={() => switchTab("shop")}>Магазин</button>
             <button className={tab === "settings" ? "text-accent transition-colors" : "text-muted transition-colors"} onClick={() => switchTab("settings")}>Настройки</button>
           </nav>
