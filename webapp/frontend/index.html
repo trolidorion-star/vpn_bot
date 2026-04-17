@@ -5,568 +5,115 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Bobrik Mini App</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            bg: "#0b0b0b",
-            panel: "#171717",
-            panelSoft: "#1f1f1f",
-            accent: "#ffcc00",
-            text: "#f4f4f5",
-            muted: "#a1a1aa",
-            fur: "#b78148",
-            wood: "#6a3e1d"
-          },
-          borderRadius: {
-            xl2: "20px"
-          }
-        }
-      }
-    }
-  </script>
+  <script>tailwind.config={theme:{extend:{colors:{bg:'#0b0b0b',panel:'#171717',panelSoft:'#1f1f1f',accent:'#ffcc00',text:'#f4f4f5',muted:'#a1a1aa',fur:'#b78148',wood:'#6a3e1d',danger:'#ef4444',ok:'#10b981'},borderRadius:{xl2:'20px'}}}};</script>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <style>
-    @keyframes fadein {
-      from { opacity: 0; transform: translateY(8px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-
-    @keyframes bobrik-spin {
-      0% { transform: rotate(0deg); }
-      100% { transform: rotate(360deg); }
-    }
-
-    @keyframes bobrik-pulse {
-      0%, 100% { transform: scale(1); opacity: 0.9; }
-      50% { transform: scale(1.06); opacity: 1; }
-    }
-
-    .bobrik-loader-ring {
-      animation: bobrik-spin 1.15s linear infinite;
-    }
-
-    .bobrik-loader-body {
-      animation: bobrik-pulse 1.25s ease-in-out infinite;
-    }
-  </style>
+  <style>@keyframes fadein{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}@keyframes spin{to{transform:rotate(360deg)}}@keyframes pulse{0%,100%{transform:scale(1);opacity:.9}50%{transform:scale(1.06);opacity:1}}.ring{animation:spin 1.15s linear infinite}.body{animation:pulse 1.25s ease-in-out infinite}</style>
 </head>
-<body class="bg-bg text-text min-h-screen">
-  <div id="root" class="min-h-screen"></div>
+<body class="bg-bg text-text min-h-screen"><div id="root" class="min-h-screen"></div>
+<script type="text/babel">
+const {useEffect,useMemo,useRef,useState}=React;const tg=window.Telegram?.WebApp;if(tg){tg.ready();tg.expand();}
+const METHODS=[{code:'sbp',label:'СБП'},{code:'card',label:'Карта РФ'},{code:'crypto',label:'Криптовалюта'}];
+const CACHE_KEY='bobrik-miniapp-cache-v4';
+class ApiError extends Error{constructor(message,status=0,payload=null){super(message);this.name='ApiError';this.status=status;this.payload=payload;}}
+const sleep=(ms)=>new Promise((r)=>setTimeout(r,ms));
+const haptic=(s='light')=>tg?.HapticFeedback?.impactOccurred?.(s);
+const hapticNotify=(s='success')=>tg?.HapticFeedback?.notificationOccurred?.(s);
+async function requestJson(path,{method='GET',token,body}={}){const headers={'Content-Type':'application/json'};if(token)headers.Authorization=`Bearer ${token}`;const res=await fetch(path,{method,headers,body:body?JSON.stringify(body):undefined});const data=await res.json().catch(()=>({}));return{status:res.status,ok:res.ok,data};}
+async function api(path,opts={}){const {status,ok,data}=await requestJson(path,opts);if(!ok||data.ok===false)throw new ApiError(data.detail||data.error||`HTTP ${status}`,status,data);return data;}
+const parseCache=()=>{try{const raw=sessionStorage.getItem(CACHE_KEY);if(!raw)return null;const parsed=JSON.parse(raw);return parsed&&typeof parsed==='object'?parsed:null;}catch{return null;}};
+const saveCache=(payload)=>{try{sessionStorage.setItem(CACHE_KEY,JSON.stringify(payload));}catch{}};
+const normalizeReferralLink=(raw)=>{if(!raw)return'';try{const url=new URL(raw);const bot=(url.pathname||'').replaceAll('/','')||'BobrikVPNbot';const start=String(url.searchParams.get('start')||'').trim();const code=start.replace(/^ref_?/,'');return code?`https://t.me/${bot}?start=ref${code}`:`https://t.me/${bot}`;}catch{return String(raw).replace('?start=ref_','?start=ref');}};
+const fmtExp=(raw)=>{if(!raw)return'Не задано';const dt=new Date(raw);if(Number.isNaN(dt.getTime()))return'Не задано';return dt.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});};
+const fmtCountdown=(ms)=>{if(ms<=0)return'00:00:00';const t=Math.floor(ms/1000),h=Math.floor(t/3600),m=Math.floor((t%3600)/60),s=t%60;return[h,m,s].map((n)=>String(n).padStart(2,'0')).join(':');};
+const fmtMoney=(n)=>`${(Number(n)||0).toFixed(2)} ₽`;
 
-  <script type="text/babel">
-    const { useEffect, useMemo, useRef, useState } = React;
-    const tg = window.Telegram?.WebApp;
-    if (tg) {
-      tg.ready();
-      tg.expand();
-    }
+function Splash(){return <div className="min-h-screen bg-gradient-to-b from-bg via-[#121212] to-bg flex flex-col items-center justify-center px-6"><div className="relative mb-6 h-28 w-28"><div className="ring absolute inset-0 rounded-full border-4 border-accent/20 border-t-accent"></div><div className="body absolute inset-3 rounded-full bg-fur shadow-[0_0_25px_rgba(183,129,72,0.5)]"><div className="absolute left-4 top-5 h-2.5 w-2.5 rounded-full bg-black"></div><div className="absolute right-4 top-5 h-2.5 w-2.5 rounded-full bg-black"></div><div className="absolute left-1/2 top-10 h-2 w-8 -translate-x-1/2 rounded-full bg-wood"></div><div className="absolute left-1/2 bottom-5 h-4 w-10 -translate-x-1/2 rounded-md bg-wood"></div></div></div><div className="text-xl font-semibold tracking-wide">Bobrik VPN</div><div className="mt-2 text-sm text-muted">Загружаем безопасное соединение...</div></div>;}
+function Toast({item,onClose}){if(!item)return null;const tone=item.type==='error'?'border-danger/40 text-red-200':'border-ok/40 text-emerald-200';return <div className="fixed top-4 left-0 right-0 z-50 px-4"><div className={`mx-auto max-w-md rounded-xl2 border bg-panel px-4 py-3 text-sm ${tone}`} onClick={onClose}>{item.message}</div></div>;}
+function Maintenance({onRetry}){return <div className="min-h-screen bg-gradient-to-b from-bg via-[#121212] to-bg px-4 py-8"><div className="mx-auto mt-10 max-w-md rounded-xl2 border border-amber-800/40 bg-panel p-5"><div className="text-lg font-semibold text-amber-300">Maintenance Mode</div><div className="mt-2 text-sm text-muted">Mini App временно отключен администратором. Попробуйте снова позже.</div><button onClick={onRetry} className="mt-4 w-full rounded-xl2 bg-accent py-3 font-semibold text-black">Обновить статус</button></div></div>;}
 
-    const METHODS = [
-      { code: "sbp", label: "СБП" },
-      { code: "card", label: "Карта РФ" },
-      { code: "crypto", label: "Криптовалюта" },
-    ];
+function App(){
+  const c=parseCache();
+  const [token,setToken]=useState(c?.token||'');const [tab,setTab]=useState(c?.tab||'profile');
+  const [user,setUser]=useState(c?.user||null);const [tariffs,setTariffs]=useState(c?.tariffs||[]);
+  const [stats,setStats]=useState(c?.stats||[]);const [refData,setRefData]=useState(c?.refData||null);
+  const [support,setSupport]=useState(c?.support||null);const [loading,setLoading]=useState(true);
+  const [authErr,setAuthErr]=useState(null);const [busy,setBusy]=useState(false);const [toast,setToast]=useState(null);
+  const [selectedTariff,setSelectedTariff]=useState(null);const [maintenance,setMaintenance]=useState(false);
+  const [ruBypass,setRuBypass]=useState(false);const [supportText,setSupportText]=useState('');
+  const [nowMs,setNowMs]=useState(Date.now());const [tick,setTick]=useState(0);const bootRef=useRef(0);
 
-    const CACHE_KEY = "bobrik-miniapp-cache-v3";
+  const showToast=(message,type='ok')=>{setToast({message,type});setTimeout(()=>setToast(null),2600);};
+  const tap=(fn,style='light')=>(e)=>{haptic(style);fn?.(e);};
 
-    class ApiError extends Error {
-      constructor(message, status = 0, payload = null) {
-        super(message);
-        this.name = "ApiError";
-        this.status = status;
-        this.payload = payload;
-      }
-    }
+  const expiresMs=useMemo(()=>{const v=new Date(user?.expires_at||0).getTime();return Number.isNaN(v)?0:v;},[user?.expires_at]);
+  const msLeft=Math.max(0,expiresMs-nowMs);const countdown=fmtCountdown(msLeft);
+  const subActive=user?.status==='active'&&msLeft>0;const referralLink=normalizeReferralLink(refData?.referral_link||user?.referral_link||'');
 
-    function sleep(ms) {
-      return new Promise((resolve) => setTimeout(resolve, ms));
-    }
+  useEffect(()=>{const id=setInterval(()=>setNowMs(Date.now()),1000);return()=>clearInterval(id);},[]);
+  useEffect(()=>{saveCache({token,tab,user,tariffs,stats,refData,support});},[token,tab,user,tariffs,stats,refData,support]);
 
-    function hapticImpact(style = "light") {
-      tg?.HapticFeedback?.impactOccurred?.(style);
-    }
+  async function checkAppState(){const res=await requestJson('/api/app_state');if(!res.ok)throw new ApiError('App state unavailable',res.status,res.data);return Boolean(res.data?.data?.miniapp_enabled!==false);}
+  async function authWithRetry(initData,retries=2){let last={status:0,detail:'Ошибка авторизации'};for(let i=0;i<=retries;i++){try{const r=await requestJson('/api/auth/session',{method:'POST',body:{initData}});if(r.ok&&r.data?.ok!==false&&r.data?.token)return{ok:true,payload:r.data};last={status:r.status,detail:r.data?.detail||`HTTP ${r.status}`};if(r.status===503)return{ok:false,error:last};}catch(e){last={status:0,detail:e?.message||'Network error'};}if(i<retries)await sleep(280*(i+1));}return{ok:false,error:last};}
 
-    function hapticSuccess() {
-      tg?.HapticFeedback?.notificationOccurred?.("success");
-    }
+  async function refreshData(sessionToken){const [u,t,s,r,sup]=await Promise.allSettled([api('/api/get_user_info',{token:sessionToken}),api('/api/get_tariffs',{token:sessionToken}),api('/api/subscription/stats',{token:sessionToken}),api('/api/referrals',{token:sessionToken}),api('/api/support',{token:sessionToken})]);
+    if(u.status==='fulfilled')setUser(u.value.data);if(t.status==='fulfilled')setTariffs(t.value.data||[]);if(s.status==='fulfilled')setStats(s.value.data||[]);if(r.status==='fulfilled')setRefData(r.value.data||null);if(sup.status==='fulfilled')setSupport(sup.value.data?.ticket||null);
+    const rejects=[u,t,s,r,sup].filter((x)=>x.status==='rejected').map((x)=>x.reason);if(rejects.some((e)=>e?.status===503)){setMaintenance(true);return;}if(rejects.length)showToast('Часть данных не обновилась, используем кэш','error');
+  }
 
-    function hapticError() {
-      tg?.HapticFeedback?.notificationOccurred?.("error");
-    }
+  async function bootstrap(){const bootId=Date.now();bootRef.current=bootId;setLoading(true);setAuthErr(null);try{const enabled=await checkAppState();if(!enabled){setMaintenance(true);setLoading(false);return;}setMaintenance(false);const initData=tg?.initData||'';const auth=await authWithRetry(initData,2);if(bootRef.current!==bootId)return;if(!auth.ok){if(auth.error.status===503){setMaintenance(true);setLoading(false);return;}const hard=auth.error.status===401||auth.error.status===403;setAuthErr({status:auth.error.status,message:hard?'Не удалось подтвердить Telegram сессию. Откройте Mini App заново из бота.':(auth.error.detail||'Сервис недоступен')});setLoading(false);return;}setToken(auth.payload.token);setUser(auth.payload.user||null);await refreshData(auth.payload.token);setLoading(false);}catch(e){setAuthErr({status:e?.status||0,message:e?.message||'Ошибка запуска'});setLoading(false);}}
 
-    async function requestJson(path, { method = "GET", token, body } = {}) {
-      const headers = { "Content-Type": "application/json" };
-      if (token) headers.Authorization = `Bearer ${token}`;
+  useEffect(()=>{bootstrap();},[]);
+  useEffect(()=>{if(!token)return;const id=setInterval(()=>refreshData(token).catch(()=>null),30000);return()=>clearInterval(id);},[token]);
 
-      const res = await fetch(path, {
-        method,
-        headers,
-        body: body ? JSON.stringify(body) : undefined,
-      });
+  async function copyText(text,msg){try{await navigator.clipboard.writeText(text);hapticNotify('success');showToast(msg||'Скопировано');}catch{hapticNotify('error');showToast('Не удалось скопировать','error');}}
+  async function createInvoice(method){if(!selectedTariff||!token)return;setBusy(true);try{const res=await api('/api/create_invoice',{method:'POST',token,body:{tariff_id:selectedTariff.id,method,key_id:user?.key_id||null}});setSelectedTariff(null);tg?.openLink?.(res.data.redirect_url);}catch(e){if(e.status===503){setMaintenance(true);return;}hapticNotify('error');showToast(e.message||'Не удалось создать счет','error');}finally{setBusy(false);}}
+  async function toggleRu(next){if(!user?.key_id||!token){showToast('Сначала создайте ключ','error');return;}setBusy(true);try{await api('/api/set_ru_bypass',{method:'POST',token,body:{key_id:user.key_id,enabled:next}});setRuBypass(next);hapticNotify('success');showToast(next?'RU Bypass включен':'RU Bypass выключен');}catch(e){hapticNotify('error');showToast(e.message||'Ошибка настройки RU Bypass','error');}finally{setBusy(false);}}
+  async function sendSupport(){const text=(supportText||'').trim();if(!text){showToast('Введите сообщение для поддержки','error');return;}setBusy(true);try{const res=await api('/api/support',{method:'POST',token,body:{message:text}});setSupportText('');showToast(`Тикет #${res.data.ticket_id} обновлен`);await refreshData(token);}catch(e){showToast(e.message||'Ошибка отправки','error');}finally{setBusy(false);}}
+  async function toggleMiniApp(enabled){setBusy(true);try{await api('/api/admin/miniapp_state',{method:'POST',token,body:{enabled}});showToast(enabled?'Mini App включен':'Mini App выключен');await refreshData(token);}catch(e){showToast(e.message||'Нет прав','error');}finally{setBusy(false);}}
 
-      const data = await res.json().catch(() => ({}));
-      return { status: res.status, ok: res.ok, data };
-    }
+  if(loading)return <><Toast item={toast} onClose={()=>setToast(null)} /><Splash /></>;
+  if(maintenance)return <><Toast item={toast} onClose={()=>setToast(null)} /><Maintenance onRetry={tap(()=>bootstrap(),'medium')} /></>;
+  if(authErr)return <div className="min-h-screen bg-gradient-to-b from-bg via-[#121212] to-bg px-4 py-6"><Toast item={toast} onClose={()=>setToast(null)} /><div className="mx-auto mt-10 max-w-md rounded-xl2 border border-red-900/40 bg-panel p-5"><div className="text-lg font-semibold text-red-300">Ошибка авторизации</div><div className="mt-2 text-sm text-muted">{authErr.message}</div><div className="mt-1 text-xs text-zinc-500">HTTP: {authErr.status||'n/a'}</div><button onClick={tap(()=>bootstrap(),'medium')} className="mt-4 w-full rounded-xl2 bg-accent py-3 font-semibold text-black">Повторить</button></div></div>;
 
-    async function api(path, options = {}) {
-      const { status, ok, data } = await requestJson(path, options);
-      if (!ok || data.ok === false) {
-        throw new ApiError(data.detail || data.error || `HTTP ${status}`, status, data);
-      }
-      return data;
-    }
+  const nav=[{id:'profile',label:'Профиль'},{id:'shop',label:'Магазин'},{id:'stats',label:'Статистика'},{id:'ref',label:'Рефералы'},{id:'support',label:'Поддержка'}];if(user?.is_admin)nav.push({id:'admin',label:'Админ'});
 
-    function formatCountdown(msLeft) {
-      if (msLeft <= 0) return "00:00:00";
-      const totalSeconds = Math.floor(msLeft / 1000);
-      const h = Math.floor(totalSeconds / 3600);
-      const m = Math.floor((totalSeconds % 3600) / 60);
-      const s = totalSeconds % 60;
-      return [h, m, s].map((n) => String(n).padStart(2, "0")).join(":");
-    }
+  return <div className="min-h-screen bg-gradient-to-b from-bg via-[#101010] to-bg px-4 pb-24 pt-5"><Toast item={toast} onClose={()=>setToast(null)} />
+    <div className="mb-4 rounded-xl2 bg-panel p-4 border border-zinc-800"><div className="text-sm text-muted">Bobrik VPN Mini App</div><div className="mt-1 text-2xl font-semibold">{fmtMoney(user?.balance_rub)}</div></div>
+    <div className="relative min-h-[470px]">
+      <section className={`space-y-3 transition-all duration-200 ${tab==='profile'?'opacity-100 translate-y-0 relative':'opacity-0 translate-y-1 absolute inset-0 pointer-events-none'} animate-[fadein_.25s_ease-out]`} key={`profile-${tick}`}>
+        <div className="rounded-xl2 bg-panel p-4 border border-zinc-800"><div className="flex items-center justify-between"><h2 className="text-lg font-semibold">Подписка</h2><span className={`px-3 py-1 rounded-full text-xs font-semibold ${subActive?'bg-emerald-700/40 text-emerald-300':'bg-red-700/40 text-red-300'}`}>{subActive?'Subscription Active':'Subscription Inactive'}</span></div><div className="mt-3 rounded-xl2 border border-zinc-700 bg-zinc-900/40 p-3"><div className="text-sm text-muted">Истекает: <span className="text-text">{fmtExp(user?.expires_at)}</span></div><div className="mt-1 text-sm text-muted">Таймер: <span className="text-accent font-semibold">{countdown}</span></div><div className="mt-1 text-sm text-muted">Ключей: <span className="text-text">{user?.active_keys||0} активных / {user?.keys_total||0} всего</span></div></div><button onClick={tap(()=>copyText(user?.key,'Ключ скопирован'))} disabled={!user?.key} className="mt-4 w-full rounded-xl2 bg-accent py-3 font-semibold text-black disabled:opacity-40">Скопировать ключ</button></div>
+        <div className="rounded-xl2 bg-panel p-4 border border-zinc-800"><div className="flex items-center justify-between"><div><div className="font-semibold">RU Bypass</div><div className="text-sm text-muted">Исключения RU-доменов</div></div><button onClick={tap(()=>toggleRu(!ruBypass))} disabled={busy} className={`h-8 w-14 rounded-full transition ${ruBypass?'bg-accent':'bg-zinc-700'}`}><span className={`block h-6 w-6 rounded-full bg-white transition ${ruBypass?'translate-x-7':'translate-x-1'}`}></span></button></div></div>
+      </section>
 
-    function formatExpiresAt(expiresAtRaw) {
-      if (!expiresAtRaw) return "Не задано";
-      const dt = new Date(expiresAtRaw);
-      if (Number.isNaN(dt.getTime())) return "Не задано";
-      return dt.toLocaleString("ru-RU", {
-        day: "2-digit",
-        month: "2-digit",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-    }
+      <section className={`space-y-3 transition-all duration-200 ${tab==='shop'?'opacity-100 translate-y-0 relative':'opacity-0 translate-y-1 absolute inset-0 pointer-events-none'} animate-[fadein_.25s_ease-out]`} key={`shop-${tick}`}>
+        {(tariffs||[]).map((t)=><button key={t.id} className="w-full rounded-xl2 bg-panel p-4 border border-zinc-800 text-left" onClick={tap(()=>setSelectedTariff(t))}><div className="flex items-center justify-between"><span className="text-lg font-medium">{t.name}</span><span className="text-accent font-semibold">{t.price_rub} ₽</span></div><div className="mt-1 text-sm text-muted">{t.days} дней</div></button>)}
+      </section>
 
-    function parseCache() {
-      try {
-        const raw = sessionStorage.getItem(CACHE_KEY);
-        if (!raw) return null;
-        const parsed = JSON.parse(raw);
-        if (!parsed || typeof parsed !== "object") return null;
-        return parsed;
-      } catch (_) {
-        return null;
-      }
-    }
+      <section className={`space-y-3 transition-all duration-200 ${tab==='stats'?'opacity-100 translate-y-0 relative':'opacity-0 translate-y-1 absolute inset-0 pointer-events-none'} animate-[fadein_.25s_ease-out]`} key={`stats-${tick}`}>
+        {(stats||[]).length===0?<div className="rounded-xl2 bg-panel p-4 border border-zinc-800 text-sm text-muted">Ключи пока не найдены.</div>:stats.map((k)=><div key={k.id} className="rounded-xl2 bg-panel p-4 border border-zinc-800"><div className="flex items-center justify-between"><div className="font-semibold">{k.display_name||`Ключ #${k.id}`}</div><div className={`text-xs ${k.status==='active'?'text-emerald-300':'text-red-300'}`}>{k.status==='active'?'Активен':'Истек'}</div></div><div className="mt-2 text-sm text-muted">Сервер: <span className="text-text">{k.server_name||'—'}</span></div><div className="mt-1 text-sm text-muted">Трафик: <span className="text-text">{k.traffic_used_human} / {k.traffic_limit_human}</span></div><div className="mt-1 text-sm text-muted">Осталось: <span className="text-text">{k.traffic_remaining_human}</span></div></div>)}
+      </section>
 
-    function saveCache(payload) {
-      try {
-        sessionStorage.setItem(CACHE_KEY, JSON.stringify(payload));
-      } catch (_) {
-        // noop
-      }
-    }
+      <section className={`space-y-3 transition-all duration-200 ${tab==='ref'?'opacity-100 translate-y-0 relative':'opacity-0 translate-y-1 absolute inset-0 pointer-events-none'} animate-[fadein_.25s_ease-out]`} key={`ref-${tick}`}>
+        <div className="rounded-xl2 bg-panel p-4 border border-zinc-800"><div className="font-semibold">Реферальная ссылка</div><div className="mt-1 text-sm text-muted break-all">{referralLink||'Ссылка недоступна'}</div><button onClick={tap(async()=>{if(!referralLink){showToast('Ссылка недоступна','error');return;}await copyText(referralLink,'Реферальная ссылка скопирована');})} className="mt-3 w-full rounded-xl2 border border-zinc-700 bg-zinc-900 py-3 text-sm font-medium">Copy Referral Link</button><div className="mt-3 text-sm text-muted">Приглашено: <span className="text-text">{refData?.direct_total||0}</span> • Оплатили: <span className="text-text">{refData?.direct_paid||0}</span></div></div>
+        <div className="rounded-xl2 bg-panel p-4 border border-zinc-800"><div className="font-semibold mb-2">Список приглашенных</div>{(refData?.direct_invites||[]).length===0?<div className="text-sm text-muted">Пока нет приглашенных пользователей.</div>:(refData.direct_invites||[]).slice(0,10).map((u)=><div key={`${u.id}-${u.telegram_id}`} className="text-sm border-b border-zinc-800 py-2 last:border-0"><span className="text-text">{u.username?`@${u.username}`:`ID ${u.telegram_id}`}</span><span className="text-muted"> · {u.last_tariff_name||'без оплат'}</span></div>)}</div>
+      </section>
 
-    function normalizeReferralLink(rawLink) {
-      if (!rawLink) return "";
-      try {
-        const url = new URL(rawLink);
-        const botName = (url.pathname || "").replaceAll("/", "") || "BobrikVPNbot";
-        const startParam = String(url.searchParams.get("start") || "").trim();
-        const code = startParam.replace(/^ref_?/, "");
-        if (!code) return `https://t.me/${botName}`;
-        return `https://t.me/${botName}?start=ref${code}`;
-      } catch (_) {
-        return String(rawLink).replace("?start=ref_", "?start=ref");
-      }
-    }
+      <section className={`space-y-3 transition-all duration-200 ${tab==='support'?'opacity-100 translate-y-0 relative':'opacity-0 translate-y-1 absolute inset-0 pointer-events-none'} animate-[fadein_.25s_ease-out]`} key={`support-${tick}`}>
+        <div className="rounded-xl2 bg-panel p-4 border border-zinc-800"><div className="font-semibold">Поддержка</div><div className="mt-1 text-sm text-muted">{support?.id?`Открытый тикет #${support.id}`:'Открытого тикета пока нет'}</div><textarea value={supportText} onChange={(e)=>setSupportText(e.target.value)} className="mt-3 w-full rounded-xl2 border border-zinc-700 bg-zinc-900 p-3 text-sm outline-none" rows="4" placeholder="Опишите проблему или вопрос" /><button onClick={tap(()=>sendSupport(),'medium')} disabled={busy} className="mt-3 w-full rounded-xl2 bg-accent py-3 font-semibold text-black disabled:opacity-50">Отправить в поддержку</button></div>
+      </section>
 
-    function StatusBadge({ status }) {
-      const active = status === "active";
-      return (
-        <span className={`px-3 py-1 rounded-full text-xs font-semibold ${active ? "bg-emerald-700/40 text-emerald-300" : "bg-red-700/40 text-red-300"}`}>
-          {active ? "Активен" : "Истек"}
-        </span>
-      );
-    }
+      <section className={`space-y-3 transition-all duration-200 ${tab==='admin'?'opacity-100 translate-y-0 relative':'opacity-0 translate-y-1 absolute inset-0 pointer-events-none'} animate-[fadein_.25s_ease-out]`} key={`admin-${tick}`}>
+        <div className="rounded-xl2 bg-panel p-4 border border-zinc-800"><div className="font-semibold">Mini App Master Switch</div><div className="mt-1 text-sm text-muted">Управление доступностью Mini App для пользователей.</div><div className="mt-4 grid grid-cols-2 gap-2"><button onClick={tap(()=>toggleMiniApp(true),'medium')} disabled={busy} className="rounded-xl2 bg-emerald-700/50 py-3 font-semibold">Enable</button><button onClick={tap(()=>toggleMiniApp(false),'medium')} disabled={busy} className="rounded-xl2 bg-red-700/50 py-3 font-semibold">Disable</button></div></div>
+      </section>
+    </div>
 
-    function SplashScreen() {
-      return (
-        <div className="min-h-screen bg-gradient-to-b from-bg via-[#121212] to-bg flex flex-col items-center justify-center px-6">
-          <div className="relative mb-6 h-28 w-28">
-            <div className="bobrik-loader-ring absolute inset-0 rounded-full border-4 border-accent/20 border-t-accent"></div>
-            <div className="bobrik-loader-body absolute inset-3 rounded-full bg-fur shadow-[0_0_25px_rgba(183,129,72,0.5)]">
-              <div className="absolute left-4 top-5 h-2.5 w-2.5 rounded-full bg-black"></div>
-              <div className="absolute right-4 top-5 h-2.5 w-2.5 rounded-full bg-black"></div>
-              <div className="absolute left-1/2 top-10 h-2 w-8 -translate-x-1/2 rounded-full bg-wood"></div>
-              <div className="absolute left-1/2 bottom-5 h-4 w-10 -translate-x-1/2 rounded-md bg-wood"></div>
-            </div>
-          </div>
-          <div className="text-xl font-semibold tracking-wide">Bobrik VPN</div>
-          <div className="mt-2 text-sm text-muted">Загружаем безопасное соединение...</div>
-        </div>
-      );
-    }
+    <nav className="fixed bottom-3 left-0 right-0 mx-auto flex w-[calc(100%-24px)] max-w-md justify-between rounded-xl2 bg-panelSoft px-3 py-3 border border-zinc-800 overflow-x-auto gap-3">{nav.map((n)=><button key={n.id} className={`${tab===n.id?'text-accent':'text-muted'} whitespace-nowrap`} onClick={tap(()=>{if(n.id!==tab){setTick((v)=>v+1);setTab(n.id);}})}>{n.label}</button>)}</nav>
 
-    function App() {
-      const initialCache = parseCache();
-      const [tab, setTab] = useState(initialCache?.tab || "home");
-      const [token, setToken] = useState(initialCache?.token || "");
-      const [user, setUser] = useState(initialCache?.user || null);
-      const [tariffs, setTariffs] = useState(initialCache?.tariffs || []);
-      const [selectedTariff, setSelectedTariff] = useState(null);
-      const [loading, setLoading] = useState(true);
-      const [authError, setAuthError] = useState(null);
-      const [inlineError, setInlineError] = useState("");
-      const [ruBypass, setRuBypass] = useState(false);
-      const [busy, setBusy] = useState(false);
-      const [nowMs, setNowMs] = useState(Date.now());
-      const [transitionTick, setTransitionTick] = useState(0);
-      const bootCounterRef = useRef(0);
-
-      const hasKey = useMemo(() => Boolean(user?.key), [user]);
-      const expiresAtMs = useMemo(() => {
-        if (!user?.expires_at) return 0;
-        const v = new Date(user.expires_at).getTime();
-        return Number.isNaN(v) ? 0 : v;
-      }, [user?.expires_at]);
-      const msLeft = Math.max(0, expiresAtMs - nowMs);
-      const countdown = formatCountdown(msLeft);
-      const subscriptionIsActive = user?.status === "active" && msLeft > 0;
-      const referralLink = normalizeReferralLink(user?.referral_link || "");
-
-      useEffect(() => {
-        const id = setInterval(() => setNowMs(Date.now()), 1000);
-        return () => clearInterval(id);
-      }, []);
-
-      useEffect(() => {
-        saveCache({ token, user, tariffs, tab });
-      }, [token, user, tariffs, tab]);
-
-      useEffect(() => {
-        if (!token) return;
-        const id = setInterval(() => {
-          refreshUser(true).catch(() => null);
-        }, 30000);
-        return () => clearInterval(id);
-      }, [token]);
-
-      async function authWithRetry(initData, retries = 2) {
-        let lastError = { status: 0, detail: "Ошибка авторизации" };
-
-        for (let attempt = 0; attempt <= retries; attempt += 1) {
-          try {
-            const { status, ok, data } = await requestJson("/api/auth/session", {
-              method: "POST",
-              body: { initData },
-            });
-
-            if (ok && data.ok !== false && data.token) {
-              return { ok: true, payload: data };
-            }
-
-            lastError = {
-              status,
-              detail: data.detail || data.error || `HTTP ${status}`,
-            };
-          } catch (e) {
-            lastError = {
-              status: 0,
-              detail: e?.message || "Network error",
-            };
-          }
-
-          if (attempt < retries) {
-            await sleep(280 * (attempt + 1));
-          }
-        }
-
-        return { ok: false, error: lastError };
-      }
-
-      async function bootstrap() {
-        const bootId = Date.now();
-        bootCounterRef.current = bootId;
-        setLoading(true);
-        setAuthError(null);
-        setInlineError("");
-
-        const initData = tg?.initData || "";
-        const auth = await authWithRetry(initData, 2);
-
-        if (bootCounterRef.current !== bootId) return;
-
-        if (!auth.ok) {
-          const status = auth.error.status || 0;
-          const forbidden = status === 401 || status === 403;
-          if (forbidden) {
-            setAuthError({
-              status,
-              message: "Не удалось подтвердить сессию Telegram. Откройте Mini App заново из бота.",
-            });
-          } else {
-            setAuthError({
-              status,
-              message: auth.error.detail || "Сервис временно недоступен. Попробуйте еще раз.",
-            });
-          }
-          setLoading(false);
-          return;
-        }
-
-        const session = auth.payload;
-        setToken(session.token);
-        setUser(session.user || null);
-
-        try {
-          const tariffRes = await api("/api/get_tariffs", { token: session.token });
-          setTariffs(tariffRes.data || []);
-        } catch (e) {
-          setTariffs(initialCache?.tariffs || []);
-          setInlineError("Не удалось обновить список тарифов. Используем кэш.");
-        }
-
-        setLoading(false);
-      }
-
-      useEffect(() => {
-        bootstrap();
-      }, []);
-
-      async function refreshUser(silent = false) {
-        if (!token) return;
-        try {
-          const res = await api("/api/get_user_info", { token });
-          setUser(res.data);
-        } catch (e) {
-          if (!silent) {
-            setInlineError(e.message || "Ошибка обновления профиля");
-          }
-        }
-      }
-
-      function switchTab(nextTab) {
-        hapticImpact("light");
-        if (nextTab === tab) return;
-        setTransitionTick((v) => v + 1);
-        setTab(nextTab);
-      }
-
-      async function copyToClipboard(text) {
-        if (!text) throw new Error("Пустое значение");
-        await navigator.clipboard.writeText(text);
-      }
-
-      async function createInvoice(method) {
-        if (!selectedTariff || !token) return;
-        hapticImpact("medium");
-        setBusy(true);
-        try {
-          const res = await api("/api/create_invoice", {
-            method: "POST",
-            token,
-            body: { tariff_id: selectedTariff.id, method, key_id: user?.key_id || null },
-          });
-          setSelectedTariff(null);
-          tg?.openLink?.(res.data.redirect_url);
-        } catch (e) {
-          hapticError();
-          tg?.showAlert?.(e.message || "Не удалось создать счет");
-        } finally {
-          setBusy(false);
-        }
-      }
-
-      async function toggleRuBypass(next) {
-        hapticImpact("light");
-        if (!user?.key_id || !token) {
-          tg?.showAlert?.("Сначала создайте ключ");
-          return;
-        }
-        setBusy(true);
-        try {
-          await api("/api/set_ru_bypass", {
-            method: "POST",
-            token,
-            body: { key_id: user.key_id, enabled: next },
-          });
-          setRuBypass(next);
-          hapticSuccess();
-        } catch (e) {
-          hapticError();
-          tg?.showAlert?.(e.message || "Ошибка настройки RU Bypass");
-        } finally {
-          setBusy(false);
-        }
-      }
-
-      async function copyKey() {
-        hapticImpact("light");
-        if (!user?.key) return;
-        try {
-          await copyToClipboard(user.key);
-          hapticSuccess();
-          tg?.showAlert?.("Ключ скопирован");
-        } catch (e) {
-          hapticError();
-          tg?.showAlert?.("Не удалось скопировать ключ");
-        }
-      }
-
-      async function copyReferralLink() {
-        hapticImpact("light");
-        if (!referralLink) {
-          hapticError();
-          tg?.showAlert?.("Реферальная ссылка недоступна");
-          return;
-        }
-
-        try {
-          await copyToClipboard(referralLink);
-          hapticSuccess();
-          tg?.showAlert?.("Реферальная ссылка скопирована");
-        } catch (e) {
-          hapticError();
-          tg?.showAlert?.("Не удалось скопировать ссылку");
-        }
-      }
-
-      if (loading) {
-        return <SplashScreen />;
-      }
-
-      if (authError) {
-        return (
-          <div className="min-h-screen bg-gradient-to-b from-bg via-[#121212] to-bg px-4 py-6">
-            <div className="mx-auto mt-10 max-w-md rounded-xl2 border border-red-900/40 bg-panel p-5">
-              <div className="text-lg font-semibold text-red-300">Ошибка авторизации</div>
-              <div className="mt-2 text-sm text-muted">{authError.message}</div>
-              <div className="mt-1 text-xs text-zinc-500">HTTP: {authError.status || "n/a"}</div>
-              <button
-                onClick={() => {
-                  hapticImpact("medium");
-                  bootstrap();
-                }}
-                className="mt-4 w-full rounded-xl2 bg-accent py-3 font-semibold text-black"
-              >
-                Повторить
-              </button>
-            </div>
-          </div>
-        );
-      }
-
-      return (
-        <div className="min-h-screen bg-gradient-to-b from-bg via-[#101010] to-bg px-4 pb-24 pt-5">
-          <div className="mb-4 rounded-xl2 bg-panel p-4 border border-zinc-800">
-            <div className="text-sm text-muted">Bobrik VPN Mini App</div>
-            <div className="mt-1 text-2xl font-semibold">{user?.balance_rub?.toFixed?.(2) || "0.00"} ₽</div>
-            {inlineError ? <div className="mt-2 text-xs text-amber-300">{inlineError}</div> : null}
-          </div>
-
-          <div className="relative min-h-[420px]">
-            <section className={`space-y-3 transition-all duration-200 ${tab === "home" ? "opacity-100 translate-y-0 relative" : "opacity-0 translate-y-1 absolute inset-0 pointer-events-none"} animate-[fadein_.25s_ease-out]`} key={`home-${transitionTick}`}>
-              <div className="rounded-xl2 bg-panel p-4 border border-zinc-800">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-semibold">Ваш доступ</h2>
-                  <StatusBadge status={user?.status} />
-                </div>
-                <div className="mt-3 rounded-xl2 border border-zinc-700 bg-zinc-900/40 p-3">
-                  <div className="text-sm text-muted">Статус подписки</div>
-                  <div className={`mt-1 text-base font-semibold ${subscriptionIsActive ? "text-emerald-300" : "text-red-300"}`}>
-                    {subscriptionIsActive ? "Subscription Active" : "Subscription Inactive"}
-                  </div>
-                  <div className="mt-2 text-sm text-muted">Истекает: <span className="text-text">{formatExpiresAt(user?.expires_at)}</span></div>
-                  <div className="mt-1 text-sm text-muted">Таймер: <span className="text-accent font-semibold">{countdown}</span></div>
-                </div>
-                <div className="mt-3 text-muted">Осталось дней: <span className="text-text font-medium">{user?.days_left ?? 0}</span></div>
-                <button
-                  onClick={copyKey}
-                  disabled={!hasKey}
-                  className="mt-4 w-full rounded-xl2 bg-accent py-3 font-semibold text-black transition-transform duration-200 hover:scale-[1.01] active:scale-[0.99] disabled:opacity-40"
-                >
-                  Скопировать ключ
-                </button>
-              </div>
-            </section>
-
-            <section className={`space-y-3 transition-all duration-200 ${tab === "shop" ? "opacity-100 translate-y-0 relative" : "opacity-0 translate-y-1 absolute inset-0 pointer-events-none"} animate-[fadein_.25s_ease-out]`} key={`shop-${transitionTick}`}>
-              {tariffs.map((tariff) => (
-                <button
-                  key={tariff.id}
-                  className="w-full rounded-xl2 bg-panel p-4 border border-zinc-800 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-zinc-600"
-                  onClick={() => {
-                    hapticImpact("light");
-                    setSelectedTariff(tariff);
-                  }}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="text-lg font-medium">{tariff.name}</span>
-                    <span className="text-accent font-semibold">{tariff.price_rub} ₽</span>
-                  </div>
-                  <div className="mt-1 text-sm text-muted">{tariff.days} дней</div>
-                </button>
-              ))}
-            </section>
-
-            <section className={`space-y-3 transition-all duration-200 ${tab === "settings" ? "opacity-100 translate-y-0 relative" : "opacity-0 translate-y-1 absolute inset-0 pointer-events-none"} animate-[fadein_.25s_ease-out]`} key={`settings-${transitionTick}`}>
-              <div className="rounded-xl2 bg-panel p-4 border border-zinc-800">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="font-semibold">RU Bypass</div>
-                    <div className="text-sm text-muted">Добавляет/убирает RU-домены из исключений</div>
-                  </div>
-                  <button
-                    onClick={() => toggleRuBypass(!ruBypass)}
-                    disabled={busy}
-                    className={`h-8 w-14 rounded-full transition ${ruBypass ? "bg-accent" : "bg-zinc-700"}`}
-                  >
-                    <span className={`block h-6 w-6 rounded-full bg-white transition ${ruBypass ? "translate-x-7" : "translate-x-1"}`}></span>
-                  </button>
-                </div>
-              </div>
-              <div className="rounded-xl2 bg-panel p-4 border border-zinc-800">
-                <div className="font-semibold">Реферальная программа</div>
-                <div className="mt-1 text-sm text-muted break-all">{referralLink || "Ссылка недоступна"}</div>
-                <button
-                  onClick={copyReferralLink}
-                  className="mt-3 w-full rounded-xl2 border border-zinc-700 bg-zinc-900 py-3 text-sm font-medium transition-all duration-200 hover:border-zinc-500"
-                >
-                  Copy Referral Link
-                </button>
-              </div>
-            </section>
-          </div>
-
-          <nav className="fixed bottom-3 left-0 right-0 mx-auto flex w-[calc(100%-24px)] max-w-md justify-between rounded-xl2 bg-panelSoft px-4 py-3 border border-zinc-800">
-            <button className={tab === "home" ? "text-accent transition-colors" : "text-muted transition-colors"} onClick={() => switchTab("home")}>Профиль</button>
-            <button className={tab === "shop" ? "text-accent transition-colors" : "text-muted transition-colors"} onClick={() => switchTab("shop")}>Магазин</button>
-            <button className={tab === "settings" ? "text-accent transition-colors" : "text-muted transition-colors"} onClick={() => switchTab("settings")}>Настройки</button>
-          </nav>
-
-          {selectedTariff && (
-            <div className="fixed inset-0 z-20 bg-black/60" onClick={() => setSelectedTariff(null)}>
-              <div className="absolute bottom-0 left-0 right-0 rounded-t-[24px] bg-panel p-4 border-t border-zinc-700" onClick={(e) => e.stopPropagation()}>
-                <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-zinc-600"></div>
-                <div className="text-lg font-semibold">{selectedTariff.name}</div>
-                <div className="mb-3 text-sm text-muted">{selectedTariff.days} дней · {selectedTariff.price_rub} ₽</div>
-                <div className="space-y-2">
-                  {METHODS.map((m) => (
-                    <button
-                      key={m.code}
-                      onClick={() => createInvoice(m.code)}
-                      disabled={busy}
-                      className="w-full rounded-xl2 border border-zinc-700 px-4 py-3 text-left"
-                    >
-                      {m.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      );
-    }
-
-    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
-  </script>
-</body>
-</html>
+    {selectedTariff&&<div className="fixed inset-0 z-20 bg-black/60" onClick={tap(()=>setSelectedTariff(null))}><div className="absolute bottom-0 left-0 right-0 rounded-t-[24px] bg-panel p-4 border-t border-zinc-700" onClick={(e)=>e.stopPropagation()}><div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-zinc-600"></div><div className="text-lg font-semibold">{selectedTariff.name}</div><div className="mb-3 text-sm text-muted">{selectedTariff.days} дней · {selectedTariff.price_rub} ₽</div><div className="space-y-2">{METHODS.map((m)=><button key={m.code} onClick={tap(()=>createInvoice(m.code),'medium')} disabled={busy} className="w-full rounded-xl2 border border-zinc-700 px-4 py-3 text-left">{m.label}</button>)}</div></div></div>}
+  </div>;
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script></body></html>

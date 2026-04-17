@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
 from bot.services.platega_client import (
     create_payment_link,
@@ -28,15 +28,27 @@ from bot.services.ru_bypass import get_default_ru_exclusions
 from database.connection import get_db
 from database.requests import (
     add_key_exclusion_for_user,
+    add_ticket_message,
+    count_direct_paid_referrals,
+    count_direct_referrals,
+    create_support_ticket,
     create_or_update_transaction,
     create_pending_order,
     ensure_user_referral_code,
+    get_active_referral_levels,
     get_all_tariffs,
+    get_direct_referrals_with_purchase_info,
     get_key_details_for_user,
     get_or_create_user,
+    get_open_ticket_for_user,
+    get_referral_reward_type,
+    get_referral_stats,
     get_tariff_by_id,
     get_user_balance,
     get_user_keys_for_display,
+    is_miniapp_enabled,
+    is_referral_enabled,
+    set_miniapp_enabled,
 )
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -45,6 +57,11 @@ load_dotenv(ROOT_DIR / ".env")
 BOT_RETURN_URL = os.getenv("BOT_RETURN_URL", "https://t.me/BobrikVPNbot")
 SESSION_TTL_SECONDS = int(os.getenv("MINI_APP_SESSION_TTL", "21600"))
 TELEGRAM_INITDATA_TTL_SECONDS = max(86400, int(os.getenv("TELEGRAM_INITDATA_TTL", "86400")))
+BOT_TOKEN_ENV_FILES = (
+    ROOT_DIR / ".env",
+    ROOT_DIR / "deploy" / ".env",
+    Path("/etc/bobrik/.env"),
+)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Bobrik Mini App API", version="1.0.0")
@@ -55,6 +72,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def miniapp_gatekeeper(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/api/") and not is_miniapp_enabled():
+        allowed_paths = {
+            "/api/health",
+            "/api/app_state",
+            "/api/admin/miniapp_state",
+        }
+        if path not in allowed_paths:
+            return JSONResponse(
+                status_code=503,
+                content={"ok": False, "detail": "Mini App is temporarily disabled for maintenance"},
+            )
+    return await call_next(request)
 
 _sessions: dict[str, dict[str, Any]] = {}
 
@@ -74,12 +108,77 @@ class RuBypassRequest(BaseModel):
     enabled: bool
 
 
+class AdminMiniAppToggleRequest(BaseModel):
+    enabled: bool
+
+
+class SupportTicketRequest(BaseModel):
+    message: str
+
+
 def _bot_token() -> str:
-    raw_token = os.getenv("BOT_TOKEN", "")
-    token = re.sub(r"[\u200b-\u200d\u2060\ufeff]", "", raw_token).strip().strip("'\"")
+    token = _normalize_secret(os.getenv("BOT_TOKEN", ""))
     if token:
         return token
+
+    for env_path in BOT_TOKEN_ENV_FILES:
+        if not env_path.exists():
+            continue
+        try:
+            values = dotenv_values(env_path)
+        except Exception as exc:
+            logger.warning("Failed to read BOT_TOKEN from %s: %s", env_path, exc)
+            continue
+        token = _normalize_secret(values.get("BOT_TOKEN", "") if isinstance(values, dict) else "")
+        if token:
+            return token
+
     raise RuntimeError("BOT_TOKEN is required")
+
+
+def _normalize_secret(raw_value: Any) -> str:
+    return re.sub(r"[\u200b-\u200d\u2060\ufeff]", "", str(raw_value or "")).strip().strip("'\"")
+
+
+def _parse_admin_ids() -> set[int]:
+    raw = (
+        os.getenv("MINIAPP_ADMIN_IDS")
+        or os.getenv("ADMIN_IDS")
+        or os.getenv("BOT_ADMIN_IDS")
+        or ""
+    )
+    ids: set[int] = set()
+    for part in re.split(r"[,\s;]+", raw):
+        value = part.strip()
+        if value.isdigit():
+            ids.add(int(value))
+    return ids
+
+
+def _ensure_miniapp_enabled() -> None:
+    if not is_miniapp_enabled():
+        raise HTTPException(status_code=503, detail="Mini App is temporarily disabled for maintenance")
+
+
+def _ensure_admin(session: dict[str, Any]) -> None:
+    admin_ids = _parse_admin_ids()
+    telegram_id = int(session["telegram_id"])
+    if telegram_id not in admin_ids:
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+
+
+def _format_bytes(value: int) -> str:
+    if value <= 0:
+        return "0 B"
+    units = ("B", "KB", "MB", "GB", "TB", "PB")
+    size = float(value)
+    index = 0
+    while size >= 1024 and index < len(units) - 1:
+        size /= 1024.0
+        index += 1
+    if index == 0:
+        return f"{int(size)} {units[index]}"
+    return f"{size:.2f} {units[index]}"
 
 
 def _verify_telegram_init_data(init_data: str) -> dict[str, Any]:
@@ -111,7 +210,10 @@ def _verify_telegram_init_data(init_data: str) -> dict[str, Any]:
     if not user_raw:
         raise HTTPException(status_code=401, detail="Telegram user is missing")
 
-    user = json.loads(user_raw)
+    try:
+        user = json.loads(user_raw)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=401, detail="Invalid Telegram user") from None
     if not isinstance(user, dict) or "id" not in user:
         raise HTTPException(status_code=401, detail="Invalid Telegram user")
     return user
@@ -186,9 +288,11 @@ def _build_referral_link(user_id: int) -> str:
 
 def _serialize_user_info(telegram_id: int, username: Optional[str]) -> dict[str, Any]:
     user, _ = get_or_create_user(telegram_id, username)
+    all_keys = get_user_keys_for_display(telegram_id)
     key = _resolve_main_key(telegram_id)
     days = _days_left(key.get("expires_at") if key else None)
     status = "active" if key and key.get("is_active") else "expired"
+    admin_ids = _parse_admin_ids()
     return {
         "telegram_id": telegram_id,
         "username": username,
@@ -200,6 +304,10 @@ def _serialize_user_info(telegram_id: int, username: Optional[str]) -> dict[str,
         "display_name": key.get("display_name") if key else None,
         "expires_at": key.get("expires_at") if key else None,
         "referral_link": _build_referral_link(user["id"]),
+        "active_keys": sum(1 for item in all_keys if item.get("is_active")),
+        "keys_total": len(all_keys),
+        "is_admin": telegram_id in admin_ids,
+        "miniapp_enabled": is_miniapp_enabled(),
     }
 
 
@@ -224,6 +332,11 @@ def _remove_ru_defaults_for_key(telegram_id: int, key_id: int) -> None:
                 """,
                 (key_id, rule_type, rule_value, telegram_id),
             )
+
+
+@app.get("/api/app_state")
+def app_state() -> dict[str, Any]:
+    return {"ok": True, "data": {"miniapp_enabled": is_miniapp_enabled()}}
 
 
 @app.get("/api/health")
@@ -252,6 +365,7 @@ def get_user_info(session: dict[str, Any] = Depends(_current_session)) -> dict[s
 
 @app.get("/api/get_tariffs")
 def get_tariffs(session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
+    _ensure_miniapp_enabled()
     _ = session
     tariffs = get_all_tariffs(include_hidden=False)
     data = []
@@ -272,6 +386,7 @@ def get_tariffs(session: dict[str, Any] = Depends(_current_session)) -> dict[str
 
 @app.post("/api/create_invoice")
 async def create_invoice(payload: InvoiceRequest, session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
+    _ensure_miniapp_enabled()
     if not is_platega_ready():
         raise HTTPException(status_code=400, detail="Platega disabled")
 
@@ -358,6 +473,7 @@ async def create_invoice(payload: InvoiceRequest, session: dict[str, Any] = Depe
 
 @app.post("/api/set_ru_bypass")
 def set_ru_bypass(payload: RuBypassRequest, session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
+    _ensure_miniapp_enabled()
     telegram_id = int(session["telegram_id"])
     key = get_key_details_for_user(payload.key_id, telegram_id)
     if not key:
@@ -372,6 +488,105 @@ def set_ru_bypass(payload: RuBypassRequest, session: dict[str, Any] = Depends(_c
 
     _remove_ru_defaults_for_key(telegram_id, payload.key_id)
     return {"ok": True, "data": {"enabled": False}}
+
+
+@app.get("/api/subscription/stats")
+def subscription_stats(session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
+    _ensure_miniapp_enabled()
+    telegram_id = int(session["telegram_id"])
+    keys = get_user_keys_for_display(telegram_id)
+    data = []
+    for key in keys:
+        traffic_used = int(key.get("traffic_used") or 0)
+        traffic_limit = int(key.get("traffic_limit") or 0)
+        remaining = max(0, traffic_limit - traffic_used) if traffic_limit > 0 else 0
+        data.append(
+            {
+                "id": key["id"],
+                "display_name": key.get("display_name"),
+                "status": "active" if key.get("is_active") else "expired",
+                "traffic_used_bytes": traffic_used,
+                "traffic_limit_bytes": traffic_limit,
+                "traffic_remaining_bytes": remaining if traffic_limit > 0 else None,
+                "traffic_used_human": _format_bytes(traffic_used),
+                "traffic_limit_human": "Unlimited" if traffic_limit <= 0 else _format_bytes(traffic_limit),
+                "traffic_remaining_human": "Unlimited" if traffic_limit <= 0 else _format_bytes(remaining),
+                "expires_at": key.get("expires_at"),
+                "server_name": key.get("server_name"),
+            }
+        )
+    return {"ok": True, "data": data}
+
+
+@app.get("/api/referrals")
+def referral_data(session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
+    _ensure_miniapp_enabled()
+    telegram_id = int(session["telegram_id"])
+    username = session.get("username")
+    user, _ = get_or_create_user(telegram_id, username)
+    invites = get_direct_referrals_with_purchase_info(user["id"], limit=30)
+    return {
+        "ok": True,
+        "data": {
+            "enabled": is_referral_enabled(),
+            "reward_type": get_referral_reward_type(),
+            "levels": get_active_referral_levels(),
+            "stats": get_referral_stats(user["id"]),
+            "direct_invites": invites,
+            "direct_total": count_direct_referrals(user["id"]),
+            "direct_paid": count_direct_paid_referrals(user["id"]),
+            "referral_link": _build_referral_link(user["id"]),
+        },
+    }
+
+
+@app.get("/api/support")
+def get_support_ticket(session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
+    _ensure_miniapp_enabled()
+    telegram_id = int(session["telegram_id"])
+    user, _ = get_or_create_user(telegram_id, session.get("username"))
+    ticket = get_open_ticket_for_user(user["id"])
+    return {"ok": True, "data": {"ticket": ticket}}
+
+
+@app.post("/api/support")
+def post_support_ticket(payload: SupportTicketRequest, session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
+    _ensure_miniapp_enabled()
+    text = (payload.message or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Message is required")
+    if len(text) > 1500:
+        raise HTTPException(status_code=400, detail="Message is too long")
+
+    telegram_id = int(session["telegram_id"])
+    user, _ = get_or_create_user(telegram_id, session.get("username"))
+    ticket = get_open_ticket_for_user(user["id"])
+    if ticket:
+        ticket_id = int(ticket["id"])
+    else:
+        ticket_id = create_support_ticket(
+            user_id=user["id"],
+            user_telegram_id=telegram_id,
+            username=session.get("username"),
+        )
+    add_ticket_message(ticket_id=ticket_id, sender_role="user", sender_telegram_id=telegram_id, text=text)
+    return {"ok": True, "data": {"ticket_id": ticket_id}}
+
+
+@app.get("/api/admin/miniapp_state")
+def get_admin_miniapp_state(session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
+    _ensure_admin(session)
+    return {"ok": True, "data": {"miniapp_enabled": is_miniapp_enabled()}}
+
+
+@app.post("/api/admin/miniapp_state")
+def set_admin_miniapp_state(
+    payload: AdminMiniAppToggleRequest,
+    session: dict[str, Any] = Depends(_current_session),
+) -> dict[str, Any]:
+    _ensure_admin(session)
+    set_miniapp_enabled(bool(payload.enabled))
+    return {"ok": True, "data": {"miniapp_enabled": is_miniapp_enabled()}}
 
 
 @app.get("/", include_in_schema=False)

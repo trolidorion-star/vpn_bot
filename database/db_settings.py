@@ -25,6 +25,8 @@ __all__ = [
     'get_yookassa_credentials',
     'is_trial_enabled',
     'get_trial_tariff_id',
+    'is_miniapp_enabled',
+    'set_miniapp_enabled',
 ]
 
 def get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
@@ -181,3 +183,13 @@ def get_trial_tariff_id() -> Optional[int]:
     """
     val = get_setting('trial_tariff_id', '')
     return int(val) if val and val.isdigit() else None
+
+
+def is_miniapp_enabled() -> bool:
+    """Проверяет, доступен ли Mini App для пользователей."""
+    return _is_enabled_setting('miniapp_enabled', '1')
+
+
+def set_miniapp_enabled(enabled: bool) -> None:
+    """Включает или выключает Mini App."""
+    set_setting('miniapp_enabled', '1' if enabled else '0')

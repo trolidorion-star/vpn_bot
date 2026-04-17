@@ -6,10 +6,11 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root/my-private
+WorkingDirectory=/opt/bobrik-vpn
 Environment=PYTHONUNBUFFERED=1
-EnvironmentFile=-/root/my-private/.env
-ExecStart=/usr/bin/python3 -m uvicorn webapp.backend.main:app --host 0.0.0.0 --port 8090
+Environment="BOT_TOKEN=CHANGE_ME_BOT_TOKEN"
+EnvironmentFile=-/opt/bobrik-vpn/.env
+ExecStart=/usr/bin/python3 -m uvicorn webapp.backend.main:app --app-dir /opt/bobrik-vpn --host 0.0.0.0 --port 8090
 Restart=always
 RestartSec=2
 StartLimitIntervalSec=60
