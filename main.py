@@ -10,13 +10,14 @@ import os
 import signal
 import sys
 from aiogram import Bot, Dispatcher
-from aiogram.types import BotCommand, MenuButtonCommands
+from aiogram.types import BotCommand, MenuButtonCommands, MenuButtonWebApp, WebAppInfo
 from aiogram.fsm.storage.memory import MemoryStorage
 
 from config import BOT_TOKEN
 import config as app_config
 from database.migrations import run_migrations
 from database.db_transactions import ensure_transactions_table
+from database.requests import is_miniapp_enabled
 from bot.services.vpn_api import close_all_clients
 from bot.services.split_config_server import start_split_config_server, stop_split_config_server
 from bot.services.platega_webhook_server import (
@@ -81,8 +82,21 @@ async def _setup_native_commands(bot: Bot) -> None:
 
 
 async def _sync_menu_button(bot: Bot) -> None:
-    # Telegram supports only one menu button type at once.
-    # Keep commands button in chat UI; Mini App remains accessible from bot keyboard.
+    mini_app_url = (getattr(app_config, "MINI_APP_URL", "") or "").strip()
+    mini_app_short_name = (getattr(app_config, "MINI_APP_SHORT_NAME", "Mini App") or "Mini App").strip()
+
+    if mini_app_url and is_miniapp_enabled():
+        try:
+            await bot.set_chat_menu_button(
+                menu_button=MenuButtonWebApp(
+                    text=mini_app_short_name,
+                    web_app=WebAppInfo(url=mini_app_url),
+                )
+            )
+            return
+        except Exception as exc:
+            logger.warning("Failed to set mini app menu button: %s", exc)
+
     try:
         await bot.set_chat_menu_button(menu_button=MenuButtonCommands())
     except Exception as exc:

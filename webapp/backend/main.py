@@ -299,8 +299,8 @@ def _admin_ticket_reply_markup(ticket_id: int) -> dict[str, Any]:
     return {
         "inline_keyboard": [
             [
-                {"text": f"Reply #{ticket_id}", "callback_data": f"admin_ticket_reply:{ticket_id}"},
-                {"text": "Close", "callback_data": f"admin_ticket_close:{ticket_id}"},
+                {"text": f"💬 Ответить #{ticket_id}", "callback_data": f"admin_ticket_reply:{ticket_id}"},
+                {"text": "✅ Закрыть", "callback_data": f"admin_ticket_close:{ticket_id}"},
             ]
         ]
     }
@@ -330,10 +330,10 @@ async def _notify_admins_about_ticket_message(
     safe_username = html.escape(username or "no_username")
     safe_text = html.escape(text)
     message = (
-        f"<b>New support message in ticket #{ticket_id}</b>\n\n"
-        f"User ID: <code>{user_telegram_id}</code>\n"
-        f"Username: @{safe_username}\n\n"
-        f"<b>Message:</b>\n{safe_text}"
+        f"🎫 <b>Новый запрос в тикете #{ticket_id}</b>\n\n"
+        f"👤 User ID: <code>{user_telegram_id}</code>\n"
+        f"👤 Username: @{safe_username}\n\n"
+        f"💬 <b>Сообщение:</b>\n{safe_text}"
     )
     reply_markup = _admin_ticket_reply_markup(ticket_id)
     timeout = aiohttp.ClientTimeout(total=15)

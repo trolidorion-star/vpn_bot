@@ -1,6 +1,7 @@
 import logging
 import os
 import secrets
+import json
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, Optional, Union
 
@@ -15,14 +16,25 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
-PLATEGA_METHOD_SBP = 2
-PLATEGA_METHOD_CARD_RU = 10
-PLATEGA_METHOD_INTL = 12
+DEFAULT_PLATEGA_METHOD_IDS: Dict[str, int] = {
+    "sbp": 2,
+    "card": 10,
+    "crypto": 12,
+}
 
 PLATEGA_METHODS: Dict[str, Dict[str, Any]] = {
-    "sbp": {"id": PLATEGA_METHOD_SBP, "label": "СБП / QR", "api": [PLATEGA_METHOD_SBP, "SBPQR"]},
-    "card": {"id": PLATEGA_METHOD_CARD_RU, "label": "Карта РФ", "api": [PLATEGA_METHOD_CARD_RU, "CardRu"]},
-    "crypto": {"id": PLATEGA_METHOD_INTL, "label": "Криптовалюта", "api": [PLATEGA_METHOD_INTL, "International"]},
+    "sbp": {
+        "label": "СБП / QR",
+        "api_aliases": ["SBPQR", "sbpqr", "SBP", "sbp", "qr"],
+    },
+    "card": {
+        "label": "Карта РФ",
+        "api_aliases": ["CardRu", "CARDRU", "card", "CARD", "bank_card", "bankCard"],
+    },
+    "crypto": {
+        "label": "Криптовалюта",
+        "api_aliases": ["International", "INTERNATIONAL", "crypto", "CRYPTO", "intl", "INTL"],
+    },
 }
 
 
@@ -76,7 +88,7 @@ def _payment_method() -> int:
     try:
         return int(raw)
     except Exception:
-        return 2
+        return DEFAULT_PLATEGA_METHOD_IDS["sbp"]
 
 
 def _intl_balance() -> str:
@@ -86,23 +98,53 @@ def _intl_balance() -> str:
     return os.getenv("PLATEGA_INTL_BALANCE", "EUR").strip() or "EUR"
 
 
-def get_platega_payment_method_id(code: str) -> Optional[int]:
-    method = PLATEGA_METHODS.get((code or "").strip().lower())
-    if not method:
+def _method_id_setting_key(code: str) -> str:
+    return f"platega_method_{code}_id"
+
+
+def _method_id_env_key(code: str) -> str:
+    return f"PLATEGA_METHOD_{code.upper()}_ID"
+
+
+def _method_id_for_code(code: str) -> Optional[int]:
+    normalized = (code or "").strip().lower()
+    if normalized not in PLATEGA_METHODS:
         return None
-    return int(method["id"])
+
+    db_raw = _db_get_setting(_method_id_setting_key(normalized), None)
+    env_raw = os.getenv(_method_id_env_key(normalized), "").strip()
+    raw = str(db_raw).strip() if db_raw is not None and str(db_raw).strip() else env_raw
+
+    if not raw:
+        return int(DEFAULT_PLATEGA_METHOD_IDS[normalized])
+
+    try:
+        return int(raw)
+    except Exception:
+        logger.warning("Invalid Platega method id for %s: %r", normalized, raw)
+        return int(DEFAULT_PLATEGA_METHOD_IDS[normalized])
+
+
+def get_platega_payment_method_id(code: str) -> Optional[int]:
+    return _method_id_for_code(code)
 
 
 def get_enabled_platega_methods() -> list[tuple[str, str, int]]:
     methods = [
-        ("sbp", "СБП", PLATEGA_METHOD_SBP, "platega_method_sbp_enabled"),
-        ("card", "Карта РФ", PLATEGA_METHOD_CARD_RU, "platega_method_card_enabled"),
-        ("crypto", "Криптовалюта", PLATEGA_METHOD_INTL, "platega_method_crypto_enabled"),
+        ("sbp", "СБП", "platega_method_sbp_enabled"),
+        ("card", "Карта РФ", "platega_method_card_enabled"),
+        ("crypto", "Криптовалюта", "platega_method_crypto_enabled"),
     ]
     enabled: list[tuple[str, str, int]] = []
-    for code, label, method_id, setting_key in methods:
-        if _to_bool(_db_get_setting(setting_key, "1"), default=True):
-            enabled.append((code, label, method_id))
+
+    for code, label, setting_key in methods:
+        if not _to_bool(_db_get_setting(setting_key, "1"), default=True):
+            continue
+        method_id = _method_id_for_code(code)
+        if method_id is None:
+            continue
+        enabled.append((code, label, method_id))
+
     return enabled
 
 
@@ -132,23 +174,28 @@ def _headers() -> Dict[str, str]:
 def _method_key_from_value(value: Optional[Union[int, str]]) -> Optional[str]:
     if value is None:
         return None
+
     if isinstance(value, int):
-        for key, meta in PLATEGA_METHODS.items():
-            if int(meta["id"]) == value:
+        for key in PLATEGA_METHODS.keys():
+            method_id = _method_id_for_code(key)
+            if method_id == value:
                 return key
         return None
 
     raw = str(value).strip()
     if not raw:
         return None
+
     lowered = raw.lower()
     if lowered in PLATEGA_METHODS:
         return lowered
 
     aliases = {
         "sbpqr": "sbp",
+        "qr": "sbp",
         "cardru": "card",
         "international": "crypto",
+        "intl": "crypto",
     }
     if lowered in aliases:
         return aliases[lowered]
@@ -157,19 +204,56 @@ def _method_key_from_value(value: Optional[Union[int, str]]) -> Optional[str]:
         numeric = int(raw)
     except Exception:
         numeric = None
+
     if numeric is not None:
-        for key, meta in PLATEGA_METHODS.items():
-            if int(meta["id"]) == numeric:
+        for key in PLATEGA_METHODS.keys():
+            method_id = _method_id_for_code(key)
+            if method_id == numeric:
                 return key
+
     return None
+
+
+def _dedupe_values(seq: list[Union[int, str, None]]) -> list[Union[int, str, None]]:
+    out: list[Union[int, str, None]] = []
+    seen: set[str] = set()
+
+    for item in seq:
+        marker = repr(item)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        out.append(item)
+
+    return out
+
+
+def _method_candidates_for_key(method_key: str) -> list[Union[int, str, None]]:
+    method_id = _method_id_for_code(method_key)
+    aliases = list(PLATEGA_METHODS[method_key].get("api_aliases", []))
+    candidates: list[Union[int, str, None]] = []
+
+    if method_id is not None:
+        candidates.extend([method_id, str(method_id)])
+
+    candidates.extend(aliases)
+    return _dedupe_values(candidates)
 
 
 def _payment_method_candidates(value: Optional[Union[int, str]]) -> list[Union[int, str, None]]:
     method_key = _method_key_from_value(value)
     if method_key:
-        return list(PLATEGA_METHODS[method_key]["api"])
+        candidates = _method_candidates_for_key(method_key)
+
+        fallback_key = _method_key_from_value(_payment_method())
+        if fallback_key and fallback_key != method_key:
+            candidates.extend(_method_candidates_for_key(fallback_key))
+
+        return _dedupe_values(candidates)
+
     if value is None:
         return [None]
+
     return [value]
 
 
@@ -178,8 +262,10 @@ def _normalize_amount_rub(value: Union[int, float, str, Decimal]) -> Decimal:
         amount = Decimal(str(value).replace(",", ".").strip())
     except (InvalidOperation, ValueError, AttributeError):
         raise ValueError("amount_rub must be a valid number")
+
     if amount <= 0:
         raise ValueError("amount_rub must be positive")
+
     return amount.quantize(Decimal("0.01"))
 
 
@@ -203,12 +289,14 @@ def _build_payload(
         "return": success_url,
         "failedUrl": fail_url,
     }
+
     if payment_method is not None:
         payload["paymentMethod"] = payment_method
 
     method_key = _method_key_from_value(payment_method)
     if method_key == "crypto":
         payload["balance"] = _intl_balance()
+
     return payload
 
 
@@ -248,36 +336,50 @@ async def create_payment_link(
                 payment_method=method_candidate,
             )
             final_payload = payload
+
             try:
-                response_ctx = session.post(url, json=payload, headers=headers)
-                async with response_ctx as response:
+                async with session.post(url, json=payload, headers=headers) as response:
                     text = await response.text()
+                    status = response.status
             except aiohttp.ClientError as exc:
-                logger.error("Platega create-payment network error: request_id=%s payload=%s error=%s", request_id, payload, exc)
+                logger.error(
+                    "Platega create-payment network error: request_id=%s payload=%s error=%s",
+                    request_id,
+                    payload,
+                    exc,
+                )
                 final_error = f"network error: {exc}"
                 continue
-            if response.status >= 400:
+
+            if status >= 400:
                 logger.error(
                     "Platega create-payment error: status=%s request_id=%s payload=%s response=%s",
-                    response.status,
+                    status,
                     request_id,
                     payload,
                     text,
                 )
-                final_error = f"HTTP {response.status}"
+                final_error = f"HTTP {status}"
                 continue
 
             try:
-                data = await response.json()
+                data = json.loads(text)
+
             except Exception:
-                logger.error("Platega create-payment invalid JSON: status=%s body=%s", response.status, text)
+                logger.error("Platega create-payment invalid JSON: status=%s body=%s", status, text)
                 final_error = "invalid JSON response"
                 continue
 
             if isinstance(data, dict) and data.get("ok") is False:
                 final_error = str(data.get("message") or data.get("detail") or "provider rejected request")
-                logger.error("Platega create-payment provider rejection: request_id=%s payload=%s response=%s", request_id, payload, data)
+                logger.error(
+                    "Platega create-payment provider rejection: request_id=%s payload=%s response=%s",
+                    request_id,
+                    payload,
+                    data,
+                )
                 continue
+
             break
 
     if data is None:
@@ -293,6 +395,7 @@ async def create_payment_link(
         or data.get("url")
         or data.get("redirectUrl")
     )
+
     if not transaction_id or not redirect_url:
         logger.error("Platega create-payment missing fields: response=%s", data)
         raise RuntimeError("Platega create payment response is missing transaction id or redirect url")
@@ -333,3 +436,4 @@ async def get_transaction_status(transaction_id: str) -> Dict[str, Any]:
                 raise RuntimeError("Platega status check returned invalid JSON")
 
     return data
+

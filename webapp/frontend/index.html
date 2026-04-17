@@ -90,6 +90,7 @@
       { code: 'crypto', title: 'Криптовалюта', hint: 'Международная оплата' },
     ];
 
+    const LOGO_SRC = './assets/logo-bobrik.jpg';
     const CACHE_KEY = 'bobrik-miniapp-cache-v6';
 
     class ApiError extends Error {
@@ -143,6 +144,17 @@
       }
       return data;
     }
+
+    const normalizeApiError = (error) => {
+      const raw = String(error?.message || '').trim();
+      if (!raw) return 'Ошибка сервиса. Попробуйте позже.';
+      if (raw.includes('Failed to create Platega link') || raw.includes('Platega create payment failed')) {
+        return 'Не удалось создать ссылку на оплату. Попробуйте другой способ или повторите позже.';
+      }
+      if (raw.includes('Payment method is disabled')) return 'Этот способ оплаты временно отключен.';
+      if (raw.includes('Unsupported payment method')) return 'Способ оплаты не поддерживается.';
+      return raw;
+    };
 
     const fmtMoney = (value) => `${(Number(value) || 0).toFixed(2)} ₽`;
     const fmtDate = (raw) => {
@@ -423,7 +435,7 @@
             setMaintenance(true);
             return;
           }
-          showToast(error?.message || 'Не удалось создать счет', 'error');
+          showToast(normalizeApiError(error), 'error');
         } finally {
           setBusy(false);
         }
@@ -485,13 +497,13 @@
       }
 
       const tabs = [
-        { id: 'dashboard', title: 'Главная' },
-        { id: 'plans', title: 'Тарифы' },
-        { id: 'usage', title: 'Статистика' },
-        { id: 'ref', title: 'Рефералы' },
-        { id: 'support', title: 'Поддержка' },
+        { id: 'dashboard', title: 'Главная', icon: '🏠' },
+        { id: 'plans', title: 'Тарифы', icon: '💳' },
+        { id: 'usage', title: 'Ключи', icon: '📈' },
+        { id: 'ref', title: 'Рефералы', icon: '👥' },
+        { id: 'support', title: 'Поддержка', icon: '💬' },
       ];
-      if (user?.is_admin) tabs.push({ id: 'admin', title: 'Админ' });
+      if (user?.is_admin) tabs.push({ id: 'admin', title: 'Админ', icon: '⚙️' });
 
       function renderDashboard() {
         return (
@@ -695,8 +707,22 @@
           <Toast item={toast} onClose={() => setToast(null)} />
 
           <div className="mb-4 rounded-card glass border border-white/10 p-4" style={{ boxShadow: 'var(--panel-shadow)' }}>
-            <div className="text-xs uppercase tracking-wider text-muted">Bobrik VPN Mini App</div>
-            <div className="mt-1 text-2xl font-semibold">{fmtMoney(user?.balance_rub)}</div>
+            <div className="flex items-center gap-3">
+              <img
+                src={LOGO_SRC}
+                alt="Bobrik VPN"
+                className="h-14 w-14 rounded-2xl object-cover ring-1 ring-white/15"
+                onError={(event) => { event.currentTarget.style.display = 'none'; }}
+              />
+              <div className="min-w-0">
+                <div className="text-xs uppercase tracking-wider text-muted">Bobrik VPN Mini App</div>
+                <div className="mt-1 text-2xl font-semibold">{fmtMoney(user?.balance_rub)}</div>
+              </div>
+            </div>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <button onClick={impact(() => setTab('plans'))} className="rounded-xl border border-white/15 px-3 py-2 text-xs">Купить тариф</button>
+              <button onClick={impact(() => setTab('support'))} className="rounded-xl border border-white/15 px-3 py-2 text-xs">Написать в поддержку</button>
+            </div>
           </div>
 
           {renderTabContent()}
@@ -708,7 +734,7 @@
                 onClick={impact(() => setTab(item.id), 'light')}
                 className={`whitespace-nowrap rounded-xl px-3 py-2 text-sm ${tab === item.id ? 'bg-accent text-black font-semibold' : 'text-muted'}`}
               >
-                {item.title}
+                <span className="mr-1">{item.icon}</span>{item.title}
               </button>
             ))}
           </nav>
