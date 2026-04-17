@@ -3,7 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#071018" />
   <title>Bobrik Mini App</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
@@ -34,10 +38,28 @@
   <style>
     :root {
       --panel-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+      --font-ui: "Manrope", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      --font-mono: "JetBrains Mono", "Cascadia Mono", "Fira Code", monospace;
+      --focus-ring: 0 0 0 2px rgba(68, 179, 255, 0.45);
     }
     html, body {
       background: radial-gradient(circle at 20% -10%, #194266 0%, #071018 42%), var(--tg-bg-color, #071018);
       min-height: 100%;
+      font-family: var(--font-ui);
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+    body {
+      letter-spacing: 0.01em;
+    }
+    *:focus-visible {
+      outline: none;
+      box-shadow: var(--focus-ring);
+    }
+    .readable {
+      line-height: 1.4;
+      text-wrap: balance;
     }
     .app-bg {
       position: fixed;
@@ -45,6 +67,7 @@
       pointer-events: none;
       z-index: 0;
       overflow: hidden;
+      contain: strict;
     }
     .app-orb {
       position: absolute;
@@ -71,6 +94,7 @@
       background: linear-gradient(145deg, rgba(17,31,45,0.92), rgba(12,24,37,0.94));
       background-size: 180% 180%;
       animation: glassShift 9s ease-in-out infinite;
+      border: 1px solid rgba(255, 255, 255, 0.12);
     }
     @keyframes glassShift {
       0% { background-position: 0% 50%; }
@@ -78,9 +102,11 @@
       100% { background-position: 0% 50%; }
     }
     .premium-card {
-      border: 1px solid rgba(255,255,255,.12);
       box-shadow: var(--panel-shadow);
       transition: transform .22s ease, border-color .22s ease, box-shadow .22s ease;
+      will-change: transform;
+      content-visibility: auto;
+      contain-intrinsic-size: 180px;
     }
     .premium-card:hover {
       border-color: rgba(68,179,255,.45);
@@ -140,6 +166,88 @@
       from { opacity: .7; transform: translateY(8px) scale(.985); }
       to { opacity: 1; transform: translateY(0) scale(1); }
     }
+    .shine {
+      position: relative;
+      overflow: hidden;
+      isolation: isolate;
+    }
+    .shine::before {
+      content: "";
+      position: absolute;
+      inset: -140% -50%;
+      background: linear-gradient(120deg, rgba(255,255,255,0.00) 20%, rgba(255,255,255,0.11) 50%, rgba(255,255,255,0.00) 80%);
+      transform: translateX(-55%);
+      animation: shineSweep 6.2s ease-in-out infinite;
+      pointer-events: none;
+      z-index: 0;
+    }
+    @keyframes shineSweep {
+      0% { transform: translateX(-58%) rotate(8deg); opacity: 0; }
+      18% { opacity: 1; }
+      55% { opacity: 1; }
+      100% { transform: translateX(58%) rotate(8deg); opacity: 0; }
+    }
+    .tag {
+      border: 1px solid rgba(255,255,255,.18);
+      background: rgba(255,255,255,.04);
+      border-radius: 999px;
+      padding: 2px 10px;
+      font-size: 11px;
+      color: var(--tg-hint-color, #8da4bf);
+      letter-spacing: .03em;
+    }
+    .traffic-track {
+      height: 8px;
+      background: rgba(255,255,255,.08);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .traffic-fill {
+      height: 100%;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #21c98a 0%, #44b3ff 100%);
+      transition: width .3s ease;
+    }
+    .perf-low .glass {
+      backdrop-filter: none;
+      background: linear-gradient(145deg, rgba(15, 27, 40, 0.98), rgba(12, 23, 34, 0.98));
+      animation: none !important;
+    }
+    .perf-low .hero-glow::after,
+    .perf-low .shine::before,
+    .perf-low .app-orb {
+      animation: none !important;
+      opacity: .15 !important;
+    }
+    .perf-low .premium-card {
+      transition: border-color .18s ease, box-shadow .18s ease;
+    }
+    .reduced-motion * {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+    .mono {
+      font-family: var(--font-mono);
+      letter-spacing: .01em;
+    }
+    @media (max-width: 420px) {
+      .premium-card { content-visibility: visible; }
+      .app-orb.one { width: 210px; height: 210px; }
+      .app-orb.two { width: 180px; height: 180px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .glass,
+      .hero-glow::after,
+      .shine::before,
+      .pulse-dot,
+      .animate-in,
+      .card-rise,
+      .modal-sheet {
+        animation: none !important;
+      }
+    }
   </style>
 </head>
 <body class="text-text">
@@ -170,12 +278,39 @@
     const LOGO_SRC = './assets/logo-bobrik.jpg';
     const CACHE_KEY = 'bobrik-miniapp-cache-v7';
     const SUPPORT_SEEN_KEY = 'bobrik-miniapp-support-seen-v1';
+    const PERF_MODE_KEY = 'bobrik-miniapp-performance-mode-v1';
+    const REDUCED_MOTION_KEY = 'bobrik-miniapp-reduced-motion-v1';
+    const COMPACT_LISTS_KEY = 'bobrik-miniapp-compact-lists-v1';
     const SUPPORT_QUICK_ISSUES = [
       'Проблема с подключением',
       'Не обновляется подписка после оплаты',
       'Нужна помощь с настройкой клиента',
       'Не работает ключ на устройстве',
     ];
+
+    const getSavedFlag = (key, fallback = false) => {
+      try {
+        const raw = localStorage.getItem(key);
+        if (raw === null) return fallback;
+        return raw === '1';
+      } catch {
+        return fallback;
+      }
+    };
+
+    const setSavedFlag = (key, value) => {
+      try {
+        localStorage.setItem(key, value ? '1' : '0');
+      } catch {}
+    };
+
+    const detectLowEndDevice = () => {
+      const memory = Number(navigator.deviceMemory || 0);
+      const cores = Number(navigator.hardwareConcurrency || 0);
+      const saveData = Boolean(navigator.connection?.saveData);
+      const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+      return saveData || reduced || (memory > 0 && memory <= 2) || (cores > 0 && cores <= 4);
+    };
 
     class ApiError extends Error {
       constructor(message, status = 0, payload = null) {
@@ -241,6 +376,25 @@
     };
 
     const fmtMoney = (value) => `${(Number(value) || 0).toFixed(2)} ₽`;
+    const fmtBytes = (value) => {
+      const num = Number(value) || 0;
+      if (num <= 0) return '0 B';
+      const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+      let idx = 0;
+      let n = num;
+      while (n >= 1024 && idx < units.length - 1) {
+        n /= 1024;
+        idx += 1;
+      }
+      const prec = n >= 100 ? 0 : (n >= 10 ? 1 : 2);
+      return `${n.toFixed(prec)} ${units[idx]}`;
+    };
+    const pct = (used, limit) => {
+      const u = Number(used) || 0;
+      const l = Number(limit) || 0;
+      if (l <= 0) return 0;
+      return Math.max(0, Math.min(100, Math.round((u / l) * 100)));
+    };
     const fmtDate = (raw) => {
       if (!raw) return 'Не задано';
       const dt = new Date(raw);
@@ -314,6 +468,24 @@
       );
     }
 
+    function ToggleRow({ title, hint, enabled, onToggle, disabled = false }) {
+      return (
+        <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-surfaceSoft/45 px-3 py-2.5">
+          <div className="pr-3">
+            <div className="text-sm font-semibold readable">{title}</div>
+            <div className="text-[11px] text-muted readable">{hint}</div>
+          </div>
+          <button
+            onClick={() => onToggle?.(!enabled)}
+            disabled={disabled}
+            className={`h-8 w-14 rounded-full transition ${enabled ? 'bg-accent' : 'bg-surface'} ${disabled ? 'opacity-60' : ''}`}
+          >
+            <span className={`block h-6 w-6 rounded-full bg-white transition ${enabled ? 'translate-x-7' : 'translate-x-1'}`}></span>
+          </button>
+        </div>
+      );
+    }
+
     function App() {
       const cache = parseCache();
       const [token, setToken] = useState(cache?.token || '');
@@ -345,6 +517,11 @@
       const [toast, setToast] = useState(null);
       const [clock, setClock] = useState(now());
       const [lastSyncAt, setLastSyncAt] = useState(null);
+      const [isLowEndDevice, setIsLowEndDevice] = useState(detectLowEndDevice());
+      const [performanceMode, setPerformanceMode] = useState(getSavedFlag(PERF_MODE_KEY, detectLowEndDevice()));
+      const [reducedMotion, setReducedMotion] = useState(getSavedFlag(REDUCED_MOTION_KEY, false));
+      const [compactLists, setCompactLists] = useState(getSavedFlag(COMPACT_LISTS_KEY, false));
+      const [keyFilter, setKeyFilter] = useState('all');
       const bootRef = useRef(0);
       const supportScrollRef = useRef(null);
 
@@ -367,6 +544,36 @@
         });
       }, [stats]);
 
+      const keysFiltered = useMemo(() => {
+        const source = keys || [];
+        if (keyFilter === 'active') return source.filter((item) => Boolean(item?.is_active));
+        if (keyFilter === 'expired') return source.filter((item) => !item?.is_active);
+        return source;
+      }, [keys, keyFilter]);
+
+      const activeKeysCount = useMemo(
+        () => (keys || []).filter((item) => Boolean(item?.is_active)).length,
+        [keys]
+      );
+
+      const totalTraffic = useMemo(() => {
+        return (keys || []).reduce((acc, item) => {
+          const used = Number(item?.traffic_used_bytes || 0);
+          const limit = Number(item?.traffic_limit_bytes || 0);
+          return {
+            used: acc.used + (Number.isFinite(used) ? used : 0),
+            limit: acc.limit + (Number.isFinite(limit) ? limit : 0),
+          };
+        }, { used: 0, limit: 0 });
+      }, [keys]);
+
+      const referralConversion = useMemo(() => {
+        const total = Number(refData?.direct_total || 0);
+        const paid = Number(refData?.direct_paid || 0);
+        if (total <= 0) return 0;
+        return Math.max(0, Math.min(100, Math.round((paid / total) * 100)));
+      }, [refData]);
+
       const showToast = (message, type = 'ok') => {
         setToast({ message, type });
         setTimeout(() => setToast(null), 2600);
@@ -381,6 +588,26 @@
         const id = setInterval(() => setClock(now()), 1000);
         return () => clearInterval(id);
       }, []);
+
+      useEffect(() => {
+        const onChange = () => setIsLowEndDevice(detectLowEndDevice());
+        const mq = window.matchMedia?.('(prefers-reduced-motion: reduce)');
+        mq?.addEventListener?.('change', onChange);
+        window.addEventListener('resize', onChange, { passive: true });
+        return () => {
+          mq?.removeEventListener?.('change', onChange);
+          window.removeEventListener('resize', onChange);
+        };
+      }, []);
+
+      useEffect(() => {
+        setSavedFlag(PERF_MODE_KEY, performanceMode);
+        setSavedFlag(REDUCED_MOTION_KEY, reducedMotion);
+        setSavedFlag(COMPACT_LISTS_KEY, compactLists);
+        const root = document.documentElement;
+        root.classList.toggle('perf-low', performanceMode || isLowEndDevice);
+        root.classList.toggle('reduced-motion', reducedMotion);
+      }, [performanceMode, reducedMotion, compactLists, isLowEndDevice]);
 
       useEffect(() => {
         saveCache({
@@ -527,21 +754,23 @@
 
       useEffect(() => {
         if (!token) return;
+        const pollMs = (performanceMode || isLowEndDevice) ? 45000 : 20000;
         const timer = setInterval(() => {
           if (document.hidden) return;
           refreshData(token, { silent: true }).catch(() => null);
-        }, 20000);
+        }, pollMs);
         return () => clearInterval(timer);
-      }, [token]);
+      }, [token, performanceMode, isLowEndDevice]);
 
       useEffect(() => {
         if (!token || tab !== 'support') return;
+        const pollMs = (performanceMode || isLowEndDevice) ? 15000 : 8000;
         const timer = setInterval(() => {
           if (document.hidden) return;
           refreshData(token, { silent: true }).catch(() => null);
-        }, 8000);
+        }, pollMs);
         return () => clearInterval(timer);
-      }, [token, tab]);
+      }, [token, tab, performanceMode, isLowEndDevice]);
 
       async function copyText(text, okText = 'Скопировано') {
         try {
@@ -754,27 +983,46 @@
       }, [tab, supportMessages]);
 
       function renderDashboard() {
+        const totalPct = pct(totalTraffic.used, totalTraffic.limit);
         return (
           <div className="space-y-3 animate-in">
-            <div className="rounded-card glass premium-card p-4">
+            <div className="rounded-card glass premium-card hero-glow shine p-4">
               <div className="flex items-center justify-between">
-                <p className="text-sm text-muted">Текущая подписка</p>
+                <p className="text-sm text-muted readable">Текущая подписка</p>
                 <div className="flex items-center gap-2 text-xs text-muted">
                   <span className="pulse-dot"></span>
                   Sync {lastSyncAt ? fmtDate(lastSyncAt) : '...'}
                 </div>
               </div>
-              <div className="mt-2 flex items-center justify-between">
+              <div className="mt-2 flex items-center justify-between gap-3">
                 <div>
-                  <div className="text-2xl font-semibold">{fmtMoney(user?.balance_rub)}</div>
+                  <div className="text-2xl font-semibold readable">{fmtMoney(user?.balance_rub)}</div>
                   <div className="text-xs text-muted mt-1">Истекает: {fmtDate(user?.expires_at)}</div>
                 </div>
                 <div className={`rounded-2xl px-3 py-2 text-xs font-semibold ${isActive ? 'bg-ok/20 text-emerald-200' : 'bg-danger/20 text-red-200'}`}>
                   {isActive ? 'Активна' : 'Неактивна'}
                 </div>
               </div>
-              <div className="mt-3 rounded-2xl bg-surfaceSoft/70 px-3 py-2 text-sm">
+              <div className="mt-3 rounded-2xl bg-surfaceSoft/70 px-3 py-2 text-sm readable">
                 Осталось: <span className="font-semibold text-accent">{fmtCountdown(msLeft)}</span>
+              </div>
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                <div className="rounded-2xl bg-surfaceSoft/55 px-3 py-2">
+                  <div className="text-[11px] text-muted">Ключи</div>
+                  <div className="mt-1 text-sm font-semibold">{keys?.length || 0}</div>
+                </div>
+                <div className="rounded-2xl bg-surfaceSoft/55 px-3 py-2">
+                  <div className="text-[11px] text-muted">Активных</div>
+                  <div className="mt-1 text-sm font-semibold text-emerald-200">{activeKeysCount}</div>
+                </div>
+                <div className="rounded-2xl bg-surfaceSoft/55 px-3 py-2">
+                  <div className="text-[11px] text-muted">Трафик</div>
+                  <div className="mt-1 text-sm font-semibold">{totalPct}%</div>
+                </div>
+              </div>
+              <div className="mt-2 traffic-track"><div className="traffic-fill" style={{ width: `${totalPct}%` }}></div></div>
+              <div className="mt-1 text-[11px] text-muted readable">
+                Использовано {fmtBytes(totalTraffic.used)} из {fmtBytes(totalTraffic.limit || 0)}
               </div>
               <div className="mt-4 grid grid-cols-2 gap-2">
                 <button onClick={impact(() => copyMainKey())} disabled={!token} className="rounded-2xl bg-accent px-3 py-3 text-sm font-semibold text-black disabled:opacity-40">Скопировать ключ</button>
@@ -824,7 +1072,7 @@
               <div className="flex items-center justify-between">
                 <div>
                   <div className="font-semibold">RU Bypass</div>
-                  <div className="text-xs text-muted mt-1">Добавляет RU-исключения в активный ключ</div>
+                  <div className="text-xs text-muted mt-1 readable">Добавляет RU-исключения в активный ключ</div>
                 </div>
                 <button onClick={impact(() => toggleRuBypass(!ruBypass))} disabled={busy} className={`h-8 w-14 rounded-full transition ${ruBypass ? 'bg-accent' : 'bg-surfaceSoft'}`}>
                   <span className={`block h-6 w-6 rounded-full bg-white transition ${ruBypass ? 'translate-x-7' : 'translate-x-1'}`}></span>
@@ -838,16 +1086,20 @@
       function renderPlans() {
         return (
           <div className="space-y-3 animate-in">
-            {(tariffs || []).map((tariff) => (
-              <button key={tariff.id} onClick={impact(() => setSelectedTariff(tariff), 'medium')} className="w-full rounded-card glass premium-card p-4 text-left">
-                <div className="flex items-center justify-between">
+            {(tariffs || []).map((tariff, idx) => (
+              <button key={tariff.id} onClick={impact(() => setSelectedTariff(tariff), 'medium')} className="w-full rounded-card glass premium-card p-4 text-left shine">
+                <div className="flex items-center justify-between gap-3">
                   <div>
-                    <div className="text-lg font-semibold">{tariff.name}</div>
-                    <div className="text-sm text-muted mt-1">{tariff.days} дней доступа</div>
+                    <div className="text-lg font-semibold readable">{tariff.name}</div>
+                    <div className="text-sm text-muted mt-1 readable">{tariff.days} дней доступа</div>
                   </div>
                   <div className="rounded-xl bg-accent/15 px-3 py-2 text-accent font-semibold">{tariff.price_rub} ₽</div>
                 </div>
-                <div className="mt-3 text-xs text-muted">Нажмите, чтобы выбрать способ оплаты</div>
+                <div className="mt-3 flex items-center gap-2">
+                  {idx === 0 && <span className="tag">Популярный</span>}
+                  <span className="tag">{Math.max(1, Math.round(Number(tariff.price_rub || 0) / Math.max(1, Number(tariff.days || 1))))} ₽/день</span>
+                </div>
+                <div className="mt-3 text-xs text-muted readable">Нажмите, чтобы выбрать способ оплаты</div>
               </button>
             ))}
             {(tariffs || []).length === 0 && <div className="rounded-card glass premium-card p-4 text-sm text-muted">Тарифы пока не загружены.</div>}
@@ -856,19 +1108,42 @@
       }
 
       function renderUsage() {
+        const cardPad = compactLists ? 'p-3' : 'p-4';
         return (
           <div className="space-y-3 animate-in">
+            <div className="rounded-card glass border border-white/10 p-3">
+              <div className="flex flex-wrap gap-2">
+                {[
+                  ['all', 'Все'],
+                  ['active', 'Активные'],
+                  ['expired', 'Истекшие'],
+                ].map(([id, label]) => (
+                  <button
+                    key={id}
+                    onClick={impact(() => setKeyFilter(id))}
+                    className={`rounded-xl px-3 py-1.5 text-xs ${keyFilter === id ? 'bg-accent text-black font-semibold' : 'border border-white/15 text-muted'}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
             {(keys || []).length === 0 ? (
               <div className="rounded-card glass border border-white/10 p-4 text-sm text-muted">Ключи пока не найдены.</div>
+            ) : (keysFiltered || []).length === 0 ? (
+              <div className="rounded-card glass border border-white/10 p-4 text-sm text-muted">Для выбранного фильтра ключей нет.</div>
             ) : (
-              keys.map((item) => (
-                <div key={item.id} className="rounded-card glass border border-white/10 p-4 card-rise">
+              keysFiltered.map((item) => (
+                <div key={item.id} className={`rounded-card glass border border-white/10 ${cardPad} card-rise`}>
                   <div className="flex items-center justify-between">
-                    <div className="font-semibold">{item.display_name || `Ключ #${item.id}`}</div>
+                    <div className="font-semibold readable">{item.display_name || `Ключ #${item.id}`}</div>
                     <div className={`text-xs ${item.is_active ? 'text-emerald-300' : 'text-red-300'}`}>{item.is_active ? 'Активен' : 'Истек'}</div>
                   </div>
                   <div className="mt-2 text-sm text-muted">Сервер: <span className="text-text">{item.server_name || '—'}</span></div>
                   <div className="mt-1 text-sm text-muted">Трафик: <span className="text-text">{item.traffic_used_human} / {item.traffic_limit_human}</span></div>
+                  <div className="mt-2 traffic-track">
+                    <div className="traffic-fill" style={{ width: `${pct(item.traffic_used_bytes, item.traffic_limit_bytes)}%` }}></div>
+                  </div>
                   <div className="mt-1 text-sm text-muted">Осталось: <span className="text-text">{item.traffic_remaining_human}</span></div>
                   <div className="mt-1 text-sm text-muted">До: <span className="text-text">{fmtDate(item.expires_at)}</span></div>
                   <div className="mt-3 grid grid-cols-2 gap-2">
@@ -885,7 +1160,7 @@
       function renderReferrals() {
         return (
           <div className="space-y-3 animate-in">
-            <div className="rounded-card glass border border-white/10 p-4">
+            <div className="rounded-card glass border border-white/10 p-4 premium-card">
               <div className="font-semibold">Реферальная ссылка</div>
               <div className="mt-2 rounded-2xl bg-surfaceSoft/70 p-3 text-xs text-muted break-all">{referralLink || 'Ссылка недоступна'}</div>
               <button onClick={impact(async () => {
@@ -897,6 +1172,8 @@
                 {' '}•{' '}
                 Оплатили: <span className="text-text">{refData?.direct_paid || 0}</span>
               </div>
+              <div className="mt-2 traffic-track"><div className="traffic-fill" style={{ width: `${referralConversion}%` }}></div></div>
+              <div className="mt-1 text-xs text-muted">Конверсия в оплату: {referralConversion}%</div>
             </div>
 
             <div className="rounded-card glass border border-white/10 p-4">
@@ -1048,7 +1325,7 @@
           ['Тарифов', `${tariffs?.length || 0}`],
           ['Последний sync', lastSyncAt ? fmtDate(lastSyncAt) : '—'],
         ];
-        return (
+      return (
           <div className="space-y-3 animate-in">
             <div className="rounded-card glass border border-white/10 p-4">
               <div className="font-semibold">Диагностика Mini App</div>
@@ -1063,6 +1340,30 @@
               <div className="mt-3 grid grid-cols-2 gap-2">
                 <button onClick={impact(async () => { await refreshData(token); showToast('Данные обновлены'); }, 'medium')} className="rounded-xl border border-white/15 px-3 py-2 text-sm">Обновить всё</button>
                 <button onClick={impact(async () => copyText(String(user?.telegram_id || ''), 'ID скопирован'))} className="rounded-xl border border-white/15 px-3 py-2 text-sm">Скопировать ID</button>
+              </div>
+            </div>
+            <div className="rounded-card glass border border-white/10 p-4">
+              <div className="font-semibold">Производительность и интерфейс</div>
+              <div className="mt-1 text-xs text-muted readable">Настройки сохраняются локально на устройстве.</div>
+              <div className="mt-3 space-y-2">
+                <ToggleRow
+                  title="Режим экономии"
+                  hint="Меньше эффектов и реже синхронизация для старых устройств"
+                  enabled={performanceMode || isLowEndDevice}
+                  onToggle={(next) => setPerformanceMode(Boolean(next))}
+                />
+                <ToggleRow
+                  title="Сократить анимации"
+                  hint="Минимум движения, быстрее отклик на слабых телефонах"
+                  enabled={reducedMotion}
+                  onToggle={(next) => setReducedMotion(Boolean(next))}
+                />
+                <ToggleRow
+                  title="Компактные списки"
+                  hint="Больше информации на экране, меньше прокрутки"
+                  enabled={compactLists}
+                  onToggle={(next) => setCompactLists(Boolean(next))}
+                />
               </div>
             </div>
           </div>
@@ -1105,7 +1406,7 @@
           </div>
           <Toast item={toast} onClose={() => setToast(null)} />
 
-          <div className="relative z-10 mb-4 rounded-card glass premium-card hero-glow p-4">
+          <div className="relative z-10 mb-4 rounded-card glass premium-card hero-glow shine p-4">
             <div className="flex items-center gap-3">
               <img
                 src={LOGO_SRC}
@@ -1116,6 +1417,10 @@
               <div className="min-w-0">
                 <div className="text-xs uppercase tracking-wider text-muted">Bobrik VPN Mini App</div>
                 <div className="mt-1 text-2xl font-semibold">{fmtMoney(user?.balance_rub)}</div>
+                <div className="mt-1 flex flex-wrap items-center gap-2">
+                  <span className="tag">{isActive ? 'Подписка активна' : 'Подписка неактивна'}</span>
+                  {(performanceMode || isLowEndDevice) && <span className="tag">Eco mode</span>}
+                </div>
               </div>
             </div>
             <div className="mt-3 grid grid-cols-2 gap-2">
@@ -1128,12 +1433,12 @@
             {renderTabContent()}
           </div>
 
-          <nav className="fixed bottom-3 left-0 right-0 z-20 mx-auto flex w-[calc(100%-20px)] max-w-md gap-2 overflow-x-auto rounded-2xl border border-white/10 px-3 py-3 glass" style={{ boxShadow: 'var(--panel-shadow)' }}>
+          <nav className="fixed bottom-3 left-0 right-0 z-20 mx-auto flex w-[calc(100%-20px)] max-w-md gap-2 overflow-x-auto rounded-2xl border border-white/10 px-2.5 py-2.5 glass" style={{ boxShadow: 'var(--panel-shadow)' }}>
             {tabs.map((item) => (
               <button
                 key={item.id}
                 onClick={impact(() => setTab(item.id), 'light')}
-                className={`relative whitespace-nowrap rounded-xl px-3 py-2 text-sm transition ${tab === item.id ? 'bg-accent text-black font-semibold' : 'bg-surfaceSoft/45 text-muted'}`}
+                className={`relative whitespace-nowrap rounded-xl px-3 py-2 text-xs sm:text-sm transition ${tab === item.id ? 'bg-accent text-black font-semibold' : 'bg-surfaceSoft/45 text-muted'}`}
               >
                 <span className="mr-1">{item.icon}</span>{item.title}
                 {Number(item.badge || 0) > 0 && tab !== item.id && (
