@@ -24,6 +24,13 @@ DEFAULT_PLATEGA_METHOD_IDS: Dict[str, int] = {
     "crypto": 13,
 }
 
+FALLBACK_METHOD_IDS: Dict[str, list[int]] = {
+    # Some merchants still use legacy mapping.
+    "sbp": [2],
+    "card": [11, 10],
+    "crypto": [13, 12],
+}
+
 PLATEGA_METHODS: Dict[str, Dict[str, Any]] = {
     "sbp": {
         "label": "СБП / QR",
@@ -235,8 +242,15 @@ def _method_candidates_for_key(method_key: str) -> list[Union[int, str, None]]:
     aliases = list(PLATEGA_METHODS[method_key].get("api_aliases", []))
     candidates: list[Union[int, str, None]] = []
 
+    candidate_ids: list[int] = []
     if method_id is not None:
-        candidates.extend([method_id, str(method_id)])
+        candidate_ids.append(method_id)
+    for fallback_id in FALLBACK_METHOD_IDS.get(method_key, []):
+        if fallback_id not in candidate_ids:
+            candidate_ids.append(fallback_id)
+
+    for cid in candidate_ids:
+        candidates.extend([cid, str(cid)])
 
     candidates.extend(aliases)
     return _dedupe_values(candidates)

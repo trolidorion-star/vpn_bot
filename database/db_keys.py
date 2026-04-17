@@ -482,7 +482,7 @@ def get_user_keys_for_display(telegram_id: int) -> List[Dict[str, Any]]:
         cursor = conn.execute("""
             SELECT 
                 vk.id, vk.client_uuid, vk.custom_name, vk.expires_at, 
-                s.name as server_name, s.id as server_id, vk.panel_email,
+                s.name as server_name, s.id as server_id, vk.panel_email, vk.split_config_token,
                 vk.traffic_used, vk.traffic_limit,
                 CASE 
                     WHEN vk.expires_at > datetime('now') THEN 1 

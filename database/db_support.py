@@ -10,6 +10,8 @@ __all__ = [
     "create_support_ticket",
     "add_ticket_message",
     "list_open_tickets",
+    "list_user_tickets",
+    "list_admin_tickets",
     "get_ticket_by_id",
     "set_ticket_status",
     "get_ticket_messages",
@@ -96,6 +98,46 @@ def list_open_tickets(limit: int = 20) -> List[Dict[str, Any]]:
             """,
             (limit,),
         )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def list_user_tickets(user_id: int, status: Optional[str] = None, limit: int = 30) -> List[Dict[str, Any]]:
+    """List tickets for a single user, newest first."""
+    where = ["user_id = ?"]
+    params: list[Any] = [user_id]
+
+    if status in ("open", "closed"):
+        where.append("status = ?")
+        params.append(status)
+
+    params.append(int(limit))
+    query = f"""
+        SELECT *
+        FROM support_tickets
+        WHERE {" AND ".join(where)}
+        ORDER BY updated_at DESC, id DESC
+        LIMIT ?
+    """
+    with get_db() as conn:
+        cursor = conn.execute(query, tuple(params))
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def list_admin_tickets(status: Optional[str] = None, limit: int = 50) -> List[Dict[str, Any]]:
+    """List tickets for admin queue (all users)."""
+    params: list[Any] = []
+    query = """
+        SELECT *
+        FROM support_tickets
+    """
+    if status in ("open", "closed"):
+        query += " WHERE status = ?"
+        params.append(status)
+
+    query += " ORDER BY updated_at DESC, id DESC LIMIT ?"
+    params.append(int(limit))
+    with get_db() as conn:
+        cursor = conn.execute(query, tuple(params))
         return [dict(row) for row in cursor.fetchall()]
 
 

@@ -27,6 +27,7 @@ from bot.services.platega_client import (
     is_platega_ready,
 )
 from bot.services.ru_bypass import get_default_ru_exclusions
+from bot.services.split_config_settings import get_split_config_public_base_url
 from config import ADMIN_IDS
 from database.connection import get_db
 from database.requests import (
@@ -44,6 +45,9 @@ from database.requests import (
     get_key_details_for_user,
     get_or_create_user,
     get_open_ticket_for_user,
+    list_user_tickets,
+    list_admin_tickets,
+    get_ticket_by_id,
     get_ticket_messages,
     get_referral_reward_type,
     get_referral_stats,
@@ -295,6 +299,28 @@ def _build_referral_link(user_id: int) -> str:
     return f"https://t.me/{_extract_bot_username()}?start=ref{code}"
 
 
+def _build_key_copy_value(key: Optional[dict[str, Any]]) -> str:
+    if not key:
+        return ""
+    direct = str(key.get("subscription_url") or "").strip()
+    if direct:
+        return direct
+
+    token = str(key.get("split_config_token") or "").strip()
+    base = get_split_config_public_base_url().strip().rstrip("/")
+    if token and base:
+        return f"{base}/split/{token}?format=link"
+
+    email = str(key.get("panel_email") or "").strip()
+    if email:
+        return email
+
+    uuid = str(key.get("client_uuid") or "").strip()
+    if uuid:
+        return uuid
+    return ""
+
+
 def _admin_ticket_reply_markup(ticket_id: int) -> dict[str, Any]:
     return {
         "inline_keyboard": [
@@ -374,13 +400,14 @@ def _serialize_user_info(telegram_id: int, username: Optional[str]) -> dict[str,
     days = _days_left(key.get("expires_at") if key else None)
     status = "active" if key and key.get("is_active") else "expired"
     admin_ids = _parse_admin_ids()
+    key_copy = _build_key_copy_value(key)
     return {
         "telegram_id": telegram_id,
         "username": username,
         "balance_rub": round(get_user_balance(user["id"]) / 100, 2),
         "days_left": days,
         "status": status,
-        "key": key.get("subscription_url") if key else None,
+        "key": key_copy or None,
         "key_id": key.get("id") if key else None,
         "display_name": key.get("display_name") if key else None,
         "expires_at": key.get("expires_at") if key else None,
@@ -645,6 +672,40 @@ def get_support_ticket(session: dict[str, Any] = Depends(_current_session)) -> d
     messages: list[dict[str, Any]] = []
     if ticket:
         messages = get_ticket_messages(int(ticket["id"]), limit=100)
+    history = list_user_tickets(user["id"], status=None, limit=30)
+    closed = [item for item in history if item.get("status") == "closed"]
+    open_items = [item for item in history if item.get("status") == "open"]
+
+    admin_history: list[dict[str, Any]] = []
+    if telegram_id in _parse_admin_ids():
+        admin_history = list_admin_tickets(status=None, limit=50)
+    return {
+        "ok": True,
+        "data": {
+            "ticket": ticket,
+            "messages": messages,
+            "history": history,
+            "open_tickets": open_items,
+            "closed_tickets": closed,
+            "admin_history": admin_history,
+        },
+    }
+
+
+@app.get("/api/support/ticket/{ticket_id}")
+def get_support_ticket_by_id(ticket_id: int, session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
+    _ensure_miniapp_enabled()
+    telegram_id = int(session["telegram_id"])
+    user, _ = get_or_create_user(telegram_id, session.get("username"))
+    ticket = get_ticket_by_id(ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+
+    is_admin = telegram_id in _parse_admin_ids()
+    if not is_admin and int(ticket.get("user_id") or 0) != int(user["id"]):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    messages = get_ticket_messages(ticket_id, limit=200)
     return {"ok": True, "data": {"ticket": ticket, "messages": messages}}
 
 

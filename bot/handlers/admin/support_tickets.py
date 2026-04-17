@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -12,27 +12,34 @@ from database.requests import (
     add_ticket_message,
     get_ticket_by_id,
     get_ticket_messages,
+    list_admin_tickets,
     list_open_tickets,
     set_ticket_status,
 )
 
 logger = logging.getLogger(__name__)
-
 router = Router()
 
 
-def admin_tickets_menu_kb(tickets):
+def admin_tickets_menu_kb(tickets, view: str = "open"):
     builder = InlineKeyboardBuilder()
     for ticket in tickets:
         username = f"@{ticket['username']}" if ticket.get("username") else "no_username"
+        icon = "🎫" if ticket.get("status") == "open" else "📁"
         builder.row(
             InlineKeyboardButton(
-                text=f"🎫 #{ticket['id']} {username}",
+                text=f"{icon} #{ticket['id']} {username}",
                 callback_data=f"admin_ticket_view:{ticket['id']}",
             )
         )
+
+    if view == "open":
+        builder.row(InlineKeyboardButton(text="📚 Закрытые", callback_data="admin_support_tickets_closed"))
+    else:
+        builder.row(InlineKeyboardButton(text="📬 Открытые", callback_data="admin_support_tickets"))
+
     builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="admin_panel"))
-    builder.row(InlineKeyboardButton(text="🈴 На главную", callback_data="start"))
+    builder.row(InlineKeyboardButton(text="🏠 На главную", callback_data="start"))
     return builder.as_markup()
 
 
@@ -57,10 +64,32 @@ def admin_ticket_actions_kb(ticket_id: int, status: str):
             )
         )
     builder.row(
-        InlineKeyboardButton(text="📋 К тикетам", callback_data="admin_support_tickets"),
-        InlineKeyboardButton(text="🈴 На главную", callback_data="start"),
+        InlineKeyboardButton(text="📬 Открытые", callback_data="admin_support_tickets"),
+        InlineKeyboardButton(text="📚 Закрытые", callback_data="admin_support_tickets_closed"),
     )
+    builder.row(InlineKeyboardButton(text="🏠 На главную", callback_data="start"))
     return builder.as_markup()
+
+
+def _render_ticket_text(ticket: dict, messages: list[dict]) -> str:
+    lines = [
+        f"🎫 <b>Тикет #{ticket['id']}</b>",
+        "",
+        f"Статус: <b>{'Открыт' if ticket['status'] == 'open' else 'Закрыт'}</b>",
+        f"User ID: <code>{ticket['user_telegram_id']}</code>",
+        f"Username: @{escape_html(ticket.get('username') or 'no_username')}",
+        "",
+        "<b>Последние сообщения:</b>",
+    ]
+
+    if not messages:
+        lines.append("—")
+    else:
+        for item in messages:
+            role = "👤 Пользователь" if item["sender_role"] == "user" else "🛡️ Админ"
+            lines.append(f"{role}: {escape_html(item['text'])}")
+
+    return "\n".join(lines)
 
 
 @router.callback_query(F.data == "admin_support_tickets")
@@ -82,7 +111,31 @@ async def admin_support_tickets(callback: CallbackQuery):
     await safe_edit_or_send(
         callback.message,
         text,
-        reply_markup=admin_tickets_menu_kb(tickets),
+        reply_markup=admin_tickets_menu_kb(tickets, view="open"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "admin_support_tickets_closed")
+async def admin_support_tickets_closed(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    tickets = list_admin_tickets(status="closed", limit=40)
+    if not tickets:
+        text = "📚 <b>Закрытые тикеты</b>\n\nЗакрытых тикетов нет."
+    else:
+        text = (
+            "📚 <b>Закрытые тикеты</b>\n\n"
+            f"Всего: <b>{len(tickets)}</b>\n"
+            "Выберите тикет:"
+        )
+
+    await safe_edit_or_send(
+        callback.message,
+        text,
+        reply_markup=admin_tickets_menu_kb(tickets, view="closed"),
     )
     await callback.answer()
 
@@ -99,26 +152,10 @@ async def admin_ticket_view(callback: CallbackQuery):
         await callback.answer("Тикет не найден", show_alert=True)
         return
 
-    messages = get_ticket_messages(ticket_id, limit=8)
-    lines = [
-        f"🎫 <b>Тикет #{ticket_id}</b>",
-        "",
-        f"Статус: <b>{'Открыт' if ticket['status'] == 'open' else 'Закрыт'}</b>",
-        f"User ID: <code>{ticket['user_telegram_id']}</code>",
-        f"Username: @{escape_html(ticket.get('username') or 'no_username')}",
-        "",
-        "<b>Последние сообщения:</b>",
-    ]
-    if not messages:
-        lines.append("—")
-    else:
-        for item in messages:
-            role = "👤 Пользователь" if item["sender_role"] == "user" else "🛡️ Админ"
-            lines.append(f"{role}: {escape_html(item['text'])}")
-
+    messages = get_ticket_messages(ticket_id, limit=20)
     await safe_edit_or_send(
         callback.message,
-        "\n".join(lines),
+        _render_ticket_text(ticket, messages),
         reply_markup=admin_ticket_actions_kb(ticket_id, ticket["status"]),
     )
     await callback.answer()
@@ -185,8 +222,8 @@ async def admin_ticket_reply_save(message: Message, state: FSMContext):
             f"💬 <b>Ответ поддержки по тикету #{ticket_id}</b>\n\n{escape_html(text)}",
             parse_mode="HTML",
         )
-    except Exception as e:
-        logger.warning(f"Failed to send reply to user {ticket['user_telegram_id']}: {e}")
+    except Exception as exc:
+        logger.warning("Failed to send reply to user %s: %s", ticket["user_telegram_id"], exc)
 
     await state.clear()
     await safe_edit_or_send(
@@ -231,5 +268,6 @@ async def admin_ticket_open(callback: CallbackQuery):
     if not set_ticket_status(ticket_id, "open"):
         await callback.answer("Тикет не найден", show_alert=True)
         return
+
     await callback.answer("Тикет открыт")
     await admin_ticket_view(callback)

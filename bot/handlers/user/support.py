@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -14,12 +14,14 @@ from database.requests import (
     get_setting,
     get_open_ticket_for_user,
     get_or_create_user,
+    get_ticket_by_id,
+    get_ticket_messages,
+    list_user_tickets,
 )
 from bot.states.user_states import UserStates
 from bot.utils.text import escape_html, get_message_text_for_storage, safe_edit_or_send
 
 logger = logging.getLogger(__name__)
-
 router = Router()
 
 
@@ -64,26 +66,25 @@ async def cmd_bonus(message: Message):
     )
 
 
-def support_menu_kb(has_open_ticket: bool, ticket_id: int | None = None):
+def support_menu_kb(open_ticket_id: int | None = None):
     builder = InlineKeyboardBuilder()
-    builder.row(
-        InlineKeyboardButton(text="📝 Создать тикет", callback_data="support_ticket_new")
-    )
-    if has_open_ticket and ticket_id:
+    builder.row(InlineKeyboardButton(text="📝 Написать в поддержку", callback_data="support_ticket_new"))
+    if open_ticket_id:
         builder.row(
             InlineKeyboardButton(
-                text=f"📨 Открытый тикет #{ticket_id}",
-                callback_data=f"support_ticket_view:{ticket_id}",
+                text=f"📨 Открытый тикет #{open_ticket_id}",
+                callback_data=f"support_ticket_view:{open_ticket_id}",
             )
         )
-    builder.row(InlineKeyboardButton(text="🈴 На главную", callback_data="start"))
+    builder.row(InlineKeyboardButton(text="📚 Закрытые тикеты", callback_data="support_tickets_closed"))
+    builder.row(InlineKeyboardButton(text="🏠 На главную", callback_data="start"))
     return builder.as_markup()
 
 
 def support_wait_kb():
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="❌ Отмена", callback_data="support"))
-    builder.row(InlineKeyboardButton(text="🈴 На главную", callback_data="start"))
+    builder.row(InlineKeyboardButton(text="🏠 На главную", callback_data="start"))
     return builder.as_markup()
 
 
@@ -102,29 +103,38 @@ def _admin_ticket_actions_kb(ticket_id: int):
     return builder.as_markup()
 
 
+def _format_ticket_dialog(ticket: dict, messages: list[dict]) -> str:
+    status = "Открыт" if ticket.get("status") == "open" else "Закрыт"
+    lines = [
+        f"📨 <b>Тикет #{ticket['id']}</b>",
+        "",
+        f"Статус: <b>{status}</b>",
+        "",
+        "<b>История сообщений:</b>",
+    ]
+    if not messages:
+        lines.append("—")
+    else:
+        for item in messages:
+            role = "Вы" if item.get("sender_role") == "user" else "Поддержка"
+            lines.append(f"• <b>{role}:</b> {escape_html(item.get('text') or '')}")
+    return "\n".join(lines)
+
+
 @router.callback_query(F.data == "support")
 async def show_support_menu(callback: CallbackQuery, state: FSMContext):
-    """Open support section for a user."""
     user, _ = get_or_create_user(callback.from_user.id, callback.from_user.username)
     open_ticket = get_open_ticket_for_user(user["id"])
-    has_open = bool(open_ticket)
-    ticket_id = open_ticket["id"] if open_ticket else None
+    open_ticket_id = int(open_ticket["id"]) if open_ticket else None
 
     text = (
         "💬 <b>Поддержка</b>\n\n"
-        "Если у вас есть вопрос или проблема, создайте тикет.\n"
-        "Мы ответим в этом боте.\n\n"
+        "Напишите одним сообщением, и мы ответим в этом же тикете.\n"
+        "В разделе закрытых тикетов можно посмотреть историю прошлых обращений."
     )
-    if has_open and ticket_id:
-        text += f"У вас уже есть открытый тикет: <b>#{ticket_id}</b>.\n"
-        text += "Вы можете отправить новое сообщение в этот же тикет."
 
     await state.clear()
-    await safe_edit_or_send(
-        callback.message,
-        text,
-        reply_markup=support_menu_kb(has_open, ticket_id),
-    )
+    await safe_edit_or_send(callback.message, text, reply_markup=support_menu_kb(open_ticket_id))
     await callback.answer()
 
 
@@ -132,22 +142,43 @@ async def show_support_menu(callback: CallbackQuery, state: FSMContext):
 async def show_user_ticket_view(callback: CallbackQuery):
     ticket_id = int(callback.data.split(":")[1])
     user, _ = get_or_create_user(callback.from_user.id, callback.from_user.username)
-    open_ticket = get_open_ticket_for_user(user["id"])
-
-    if not open_ticket or open_ticket["id"] != ticket_id:
+    ticket = get_ticket_by_id(ticket_id)
+    if not ticket or int(ticket.get("user_id") or 0) != int(user["id"]):
         await callback.answer("Тикет не найден", show_alert=True)
         return
 
-    text = (
-        f"📨 <b>Тикет #{ticket_id}</b>\n\n"
-        "Статус: <b>Открыт</b>\n"
-        "Чтобы добавить сообщение, нажмите «Создать тикет» и отправьте текст."
-    )
+    messages = get_ticket_messages(ticket_id, limit=100)
+    open_ticket = get_open_ticket_for_user(user["id"])
+    open_ticket_id = int(open_ticket["id"]) if open_ticket else None
     await safe_edit_or_send(
         callback.message,
-        text,
-        reply_markup=support_menu_kb(True, ticket_id),
+        _format_ticket_dialog(ticket, messages),
+        reply_markup=support_menu_kb(open_ticket_id),
     )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "support_tickets_closed")
+async def show_closed_tickets(callback: CallbackQuery):
+    user, _ = get_or_create_user(callback.from_user.id, callback.from_user.username)
+    closed = list_user_tickets(user["id"], status="closed", limit=25)
+
+    builder = InlineKeyboardBuilder()
+    for item in closed:
+        builder.row(
+            InlineKeyboardButton(
+                text=f"📁 #{item['id']} {item.get('updated_at', '')[:16]}",
+                callback_data=f"support_ticket_view:{item['id']}",
+            )
+        )
+    builder.row(InlineKeyboardButton(text="⬅️ Назад", callback_data="support"))
+    builder.row(InlineKeyboardButton(text="🏠 На главную", callback_data="start"))
+
+    text = "📚 <b>Закрытые тикеты</b>\n\nВыберите тикет для просмотра истории."
+    if not closed:
+        text = "📚 <b>Закрытые тикеты</b>\n\nПока нет закрытых тикетов."
+
+    await safe_edit_or_send(callback.message, text, reply_markup=builder.as_markup())
     await callback.answer()
 
 
@@ -156,9 +187,8 @@ async def start_ticket_message(callback: CallbackQuery, state: FSMContext):
     await state.set_state(UserStates.waiting_support_ticket_message)
     await safe_edit_or_send(
         callback.message,
-        "📝 <b>Новый тикет</b>\n\n"
-        "Отправьте одним сообщением, с чем помочь.\n"
-        "Текст попадет в поддержку.",
+        "📝 <b>Новое сообщение в поддержку</b>\n\n"
+        "Отправьте одним сообщением, с чем помочь.",
         reply_markup=support_wait_kb(),
     )
     await callback.answer()
@@ -180,7 +210,7 @@ async def save_ticket_message(message: Message, state: FSMContext):
     open_ticket = get_open_ticket_for_user(user["id"])
 
     if open_ticket:
-        ticket_id = open_ticket["id"]
+        ticket_id = int(open_ticket["id"])
     else:
         ticket_id = create_support_ticket(
             user_id=user["id"],
@@ -210,13 +240,13 @@ async def save_ticket_message(message: Message, state: FSMContext):
                 reply_markup=_admin_ticket_actions_kb(ticket_id),
                 parse_mode="HTML",
             )
-        except Exception as e:
-            logger.warning(f"Failed to notify admin {admin_id} about ticket #{ticket_id}: {e}")
+        except Exception as exc:
+            logger.warning("Failed to notify admin %s about ticket #%s: %s", admin_id, ticket_id, exc)
 
     await state.clear()
     await safe_edit_or_send(
         message,
         f"✅ Сообщение отправлено в поддержку.\nВаш тикет: <b>#{ticket_id}</b>.",
-        reply_markup=support_menu_kb(True, ticket_id),
+        reply_markup=support_menu_kb(ticket_id),
         force_new=True,
     )
