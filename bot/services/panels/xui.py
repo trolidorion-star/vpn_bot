@@ -14,6 +14,7 @@ import logging
 import json
 import uuid
 import time
+from urllib.parse import urlparse
 from typing import Optional, Dict, Any, List
 from config import RETRY_CONFIG
 
@@ -76,6 +77,48 @@ def _normalize_reality_settings(stream_settings: Dict[str, Any]) -> Dict[str, An
     stream_settings["realitySettings"] = merged
 
     return normalized
+
+
+def _normalize_panel_endpoint(server: Dict[str, Any]) -> Dict[str, Any]:
+    host = str(server.get("host") or "").strip()
+    raw_protocol = str(server.get("protocol") or "").strip().lower()
+    raw_port = server.get("port")
+    path = str(server.get("web_base_path") or "").strip()
+
+    if host.startswith(("http://", "https://")):
+        parsed = urlparse(host)
+        host = parsed.hostname or host
+        if raw_port in (None, "", 0):
+            raw_port = parsed.port
+        if parsed.path and parsed.path != "/":
+            path = parsed.path
+        if raw_protocol not in ("http", "https") and parsed.scheme in ("http", "https"):
+            raw_protocol = parsed.scheme
+
+    try:
+        port = int(raw_port)
+    except (TypeError, ValueError):
+        port = 0
+
+    protocol = raw_protocol if raw_protocol in ("http", "https") else ""
+    if not protocol:
+        protocol = "http" if port == 80 else "https"
+    if port <= 0:
+        port = 443 if protocol == "https" else 80
+
+    if protocol == "https" and port == 80:
+        protocol = "http"
+
+    path = f"/{path.strip('/')}" if path and path.strip("/") else ""
+
+    return {
+        "host": host,
+        "port": port,
+        "protocol": protocol,
+        "path": path,
+    }
+
+
 class XUIClient(BaseVPNClient):
     """
     Клиент для работы с API 3X-UI панели.
@@ -92,16 +135,11 @@ class XUIClient(BaseVPNClient):
             server: Словарь с данными сервера из БД
         """
         self.server = server
-        self.host = server['host']
-        self.port = server['port']
-        self.protocol = server.get('protocol', 'https')
-        # Гарантируем, что путь начинается со слеша, но НЕ заканчивается им
-        # strip('/') убирает слеши и с начала, и с конца
-        path = server.get('web_base_path', '').strip('/')
-        # Теперь добавляем один слеш в начало (если путь не пустой)
-        path = f"/{path}" if path else ""
-        
-        self.base_url = f"{self.protocol}://{self.host}:{self.port}{path}"
+        endpoint = _normalize_panel_endpoint(server)
+        self.host = endpoint["host"]
+        self.port = endpoint["port"]
+        self.protocol = endpoint["protocol"]
+        self.base_url = f"{self.protocol}://{self.host}:{self.port}{endpoint['path']}"
         
         self.session: Optional[aiohttp.ClientSession] = None
         self.is_authenticated = False
@@ -1183,3 +1221,4 @@ class XUIClient(BaseVPNClient):
 # ============================================================================
 # Глобальный кэш клиентов и вспомогательные функции
 # ============================================================================
+

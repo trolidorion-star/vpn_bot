@@ -82,7 +82,7 @@ def get_vpn_key_by_id(key_id: int) -> Optional[Dict[str, Any]]:
             SELECT 
                 vk.*,
                 t.name as tariff_name, t.duration_days, t.price_cents,
-                s.name as server_name, s.host, s.port, s.web_base_path, 
+                s.name as server_name, s.host, s.port, s.web_base_path, s.protocol,
                 s.login, s.password, s.is_active as server_active,
                 u.telegram_id, u.username
             FROM vpn_keys vk

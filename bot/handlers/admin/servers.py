@@ -13,7 +13,6 @@ import logging
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
-import urllib.parse
 
 from config import ADMIN_IDS
 from database.requests import (
@@ -59,6 +58,7 @@ from bot.keyboards.admin import (
 logger = logging.getLogger(__name__)
 
 from bot.utils.text import safe_edit_or_send
+from bot.utils.panel_url import parse_panel_url
 
 router = Router()
 
@@ -389,36 +389,18 @@ async def process_add_step(message: Message, state: FSMContext):
     
     # Парсинг URL
     if param['key'] == 'panel_url':
-        url_str = value
-        if not url_str.startswith(('http://', 'https://')):
-            url_str = 'https://' + url_str
-            
         try:
-            parsed = urllib.parse.urlparse(url_str)
-            protocol = parsed.scheme
-            host = parsed.hostname
-            if not host:
-                raise ValueError("Не удалось определить хост")
-                
-            port = parsed.port
-            if not port:
-                port = 443 if protocol == 'https' else 80
-                
-            path = parsed.path
-            if not path.endswith('/'):
-                path += '/'
-                
-            server_data['protocol'] = protocol
-            server_data['host'] = host
-            server_data['port'] = port
-            server_data['web_base_path'] = path
-            
-            # Сохраняем исходный ввод чисто для отображения на следующих шагах
-            server_data['panel_url'] = url_str
-            
-        except Exception as e:
-            await safe_edit_or_send(message,
-                "❌ Неверный формат ссылки. Убедитесь, что указан хост и по умолчанию подставляется <code>https://</code>.\nПример: <code>123.45.67.89:2053/api/</code>"
+            parsed = parse_panel_url(value)
+            server_data['protocol'] = parsed['protocol']
+            server_data['host'] = parsed['host']
+            server_data['port'] = parsed['port']
+            server_data['web_base_path'] = parsed['web_base_path']
+            server_data['panel_url'] = parsed['panel_url']
+        except Exception:
+            await safe_edit_or_send(
+                message,
+                "❌ Неверный формат ссылки.\n"
+                "Примеры: <code>123.45.67.89:2053/api/</code> или <code>http://123.45.67.89:80/</code>",
             )
             return
     else:
@@ -727,33 +709,17 @@ async def edit_server_value(message: Message, state: FSMContext):
         return
     
     if param['key'] == 'panel_url':
-        url_str = value
-        if not url_str.startswith(('http://', 'https://')):
-            url_str = 'https://' + url_str
-            
         try:
-            parsed = urllib.parse.urlparse(url_str)
-            protocol = parsed.scheme
-            host = parsed.hostname
-            if not host:
-                raise ValueError("Не удалось определить хост")
-                
-            port = parsed.port
-            if not port:
-                port = 443 if protocol == 'https' else 80
-                
-            path = parsed.path
-            if not path.endswith('/'):
-                path += '/'
-                
-            # Сохраняем все 4 параметра в БД
-            update_server_field(server_id, 'protocol', protocol)
-            update_server_field(server_id, 'host', host)
-            update_server_field(server_id, 'port', port)
-            success = update_server_field(server_id, 'web_base_path', path)
-        except Exception as e:
-            await safe_edit_or_send(message,
-                "❌ Неверный формат ссылки. Убедитесь, что указан хост и по умолчанию подставляется <code>https://</code>.\nПример: <code>123.45.67.89:2053/api/</code>"
+            parsed = parse_panel_url(value)
+            update_server_field(server_id, 'protocol', parsed['protocol'])
+            update_server_field(server_id, 'host', parsed['host'])
+            update_server_field(server_id, 'port', parsed['port'])
+            success = update_server_field(server_id, 'web_base_path', parsed['web_base_path'])
+        except Exception:
+            await safe_edit_or_send(
+                message,
+                "❌ Неверный формат ссылки.\n"
+                "Примеры: <code>123.45.67.89:2053/api/</code> или <code>http://123.45.67.89:80/</code>",
             )
             return
     else:

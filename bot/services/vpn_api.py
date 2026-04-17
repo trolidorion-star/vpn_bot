@@ -120,7 +120,7 @@ async def reset_key_traffic_if_active(key_id: int) -> bool:
     key = get_vpn_key_by_id(key_id)
     if not key or not key.get('server_active'):
         return False
-    server_data = {'id': key.get('server_id'), 'name': key.get('server_name'), 'host': key.get('host'), 'port': key.get('port'), 'web_base_path': key.get('web_base_path'), 'login': key.get('login'), 'password': key.get('password')}
+    server_data = {'id': key.get('server_id'), 'name': key.get('server_name'), 'host': key.get('host'), 'port': key.get('port'), 'web_base_path': key.get('web_base_path'), 'protocol': key.get('protocol'), 'login': key.get('login'), 'password': key.get('password')}
     inbound_id = key.get('panel_inbound_id')
     email = key.get('panel_email')
     if not email:
@@ -153,7 +153,7 @@ async def extend_key_on_server(key_id: int, days: int) -> bool:
     key = get_vpn_key_by_id(key_id)
     if not key or not key.get('server_active'):
         return False
-    server_data = {'id': key.get('server_id'), 'name': key.get('server_name'), 'host': key.get('host'), 'port': key.get('port'), 'web_base_path': key.get('web_base_path'), 'login': key.get('login'), 'password': key.get('password')}
+    server_data = {'id': key.get('server_id'), 'name': key.get('server_name'), 'host': key.get('host'), 'port': key.get('port'), 'web_base_path': key.get('web_base_path'), 'protocol': key.get('protocol'), 'login': key.get('login'), 'password': key.get('password')}
     inbound_id = key.get('panel_inbound_id')
     client_uuid = key.get('client_uuid')
     email = key.get('panel_email')
@@ -218,6 +218,7 @@ async def restore_key_traffic_limit(key_id: int) -> bool:
                 'id': key.get('server_id'), 'name': key.get('server_name'),
                 'host': key.get('host'), 'port': key.get('port'),
                 'web_base_path': key.get('web_base_path'),
+                'protocol': key.get('protocol'),
                 'login': key.get('login'), 'password': key.get('password')
             }
             client = get_client_from_server_data(server_data)
@@ -298,6 +299,7 @@ async def push_key_to_panel(key_id: int, reset_traffic: bool = False) -> bool:
             'host': key.get('host'),
             'port': key.get('port'),
             'web_base_path': key.get('web_base_path'),
+            'protocol': key.get('protocol'),
             'login': key.get('login'),
             'password': key.get('password')
         }
