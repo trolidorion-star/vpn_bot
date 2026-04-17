@@ -28,6 +28,8 @@ from bot.services.platega_client import (
 )
 from bot.services.ru_bypass import get_default_ru_exclusions
 from bot.services.split_config_settings import get_split_config_public_base_url
+from bot.services.vpn_api import get_client
+from bot.utils.key_generator import generate_link
 from config import ADMIN_IDS
 from database.connection import get_db
 from database.requests import (
@@ -321,6 +323,26 @@ def _build_key_copy_value(key: Optional[dict[str, Any]]) -> str:
     return ""
 
 
+async def _resolve_key_link_for_user(telegram_id: int) -> str:
+    key = _resolve_main_key(telegram_id)
+    link = _build_key_copy_value(key)
+    if link and not re.fullmatch(r"user_[A-Za-z0-9_\\-]+", link):
+        return link
+
+    if key and key.get("server_id") and key.get("panel_email"):
+        try:
+            client = await get_client(int(key["server_id"]))
+            cfg = await client.get_client_config(str(key["panel_email"]))
+            if cfg:
+                generated = generate_link(cfg)
+                if generated:
+                    return generated
+        except Exception as exc:
+            logger.warning("Failed to generate live key link for telegram_id=%s: %s", telegram_id, exc)
+
+    return link or ""
+
+
 def _admin_ticket_reply_markup(ticket_id: int) -> dict[str, Any]:
     return {
         "inline_keyboard": [
@@ -469,6 +491,16 @@ def get_user_info(session: dict[str, Any] = Depends(_current_session)) -> dict[s
         "ok": True,
         "data": _serialize_user_info(int(session["telegram_id"]), session.get("username")),
     }
+
+
+@app.get("/api/key_link")
+async def get_key_link(session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
+    _ensure_miniapp_enabled()
+    telegram_id = int(session["telegram_id"])
+    link = await _resolve_key_link_for_user(telegram_id)
+    if not link:
+        raise HTTPException(status_code=404, detail="Key link not found")
+    return {"ok": True, "data": {"key_link": link}}
 
 
 @app.get("/api/get_tariffs")

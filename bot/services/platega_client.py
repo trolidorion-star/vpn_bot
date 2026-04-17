@@ -331,9 +331,7 @@ async def create_payment_link(
     resolved_method: Optional[Union[int, str]] = payment_method if payment_method is not None else _payment_method()
     method_candidates = _payment_method_candidates(resolved_method)
 
-    request_id = secrets.token_hex(8)
-    headers = _headers()
-    headers["X-Request-Id"] = request_id
+    base_headers = _headers()
 
     data: Optional[Dict[str, Any]] = None
     final_payload: Optional[Dict[str, Any]] = None
@@ -343,6 +341,9 @@ async def create_payment_link(
 
     async with aiohttp.ClientSession(timeout=timeout) as session:
         for method_candidate in method_candidates:
+            request_id = secrets.token_hex(8)
+            headers = dict(base_headers)
+            headers["X-Request-Id"] = request_id
             payload = _build_payload(
                 amount_rub=amount_rub_normalized,
                 order_id=order_id,

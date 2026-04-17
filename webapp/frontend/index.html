@@ -69,14 +69,42 @@
     .glass {
       backdrop-filter: blur(10px);
       background: linear-gradient(145deg, rgba(17,31,45,0.92), rgba(12,24,37,0.94));
+      background-size: 180% 180%;
+      animation: glassShift 9s ease-in-out infinite;
+    }
+    @keyframes glassShift {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
     }
     .premium-card {
       border: 1px solid rgba(255,255,255,.12);
       box-shadow: var(--panel-shadow);
-      transition: transform .18s ease, border-color .18s ease;
+      transition: transform .22s ease, border-color .22s ease, box-shadow .22s ease;
+    }
+    .premium-card:hover {
+      border-color: rgba(68,179,255,.45);
+      box-shadow: 0 14px 44px rgba(22, 106, 161, .24);
     }
     .premium-card:active {
       transform: scale(.995);
+    }
+    .hero-glow {
+      position: relative;
+      overflow: hidden;
+    }
+    .hero-glow::after {
+      content: "";
+      position: absolute;
+      inset: -40% -10%;
+      background: radial-gradient(circle, rgba(68,179,255,.26) 0%, rgba(68,179,255,0) 65%);
+      animation: heroPulse 3.8s ease-in-out infinite;
+      pointer-events: none;
+    }
+    @keyframes heroPulse {
+      0% { opacity: .2; transform: scale(.95); }
+      50% { opacity: .48; transform: scale(1.05); }
+      100% { opacity: .2; transform: scale(.95); }
     }
     .animate-in {
       animation: appFadeIn .24s ease-out;
@@ -481,6 +509,29 @@
         }
       }
 
+      async function copyMainKey() {
+        if (!token) {
+          showToast('Сессия не готова', 'error');
+          return;
+        }
+        try {
+          const response = await api('/api/key_link', { token });
+          const keyLink = String(response.data?.key_link || '').trim();
+          if (!keyLink) {
+            showToast('Ключ пока недоступен', 'error');
+            return;
+          }
+          await copyText(keyLink, 'Ключ скопирован');
+        } catch (error) {
+          const fallback = String(user?.key || '').trim();
+          if (fallback && !fallback.startsWith('user_')) {
+            await copyText(fallback, 'Ключ скопирован');
+            return;
+          }
+          showToast(error?.message || 'Не удалось получить ссылку ключа', 'error');
+        }
+      }
+
       async function createInvoice(method) {
         if (!selectedTariff || !token) return;
         setBusy(true);
@@ -618,7 +669,7 @@
                 Осталось: <span className="font-semibold text-accent">{fmtCountdown(msLeft)}</span>
               </div>
               <div className="mt-4 grid grid-cols-2 gap-2">
-                <button onClick={impact(() => copyText(user?.key, 'Ключ скопирован'))} disabled={!user?.key} className="rounded-2xl bg-accent px-3 py-3 text-sm font-semibold text-black disabled:opacity-40">Скопировать ключ</button>
+                <button onClick={impact(() => copyMainKey())} disabled={!token} className="rounded-2xl bg-accent px-3 py-3 text-sm font-semibold text-black disabled:opacity-40">Скопировать ключ</button>
                 <button onClick={impact(async () => { await refreshData(token); showToast('Данные обновлены'); }, 'medium')} className="rounded-2xl border border-white/15 px-3 py-3 text-sm">Обновить</button>
               </div>
             </div>
@@ -899,7 +950,7 @@
           </div>
           <Toast item={toast} onClose={() => setToast(null)} />
 
-          <div className="relative z-10 mb-4 rounded-card glass premium-card p-4">
+          <div className="relative z-10 mb-4 rounded-card glass premium-card hero-glow p-4">
             <div className="flex items-center gap-3">
               <img
                 src={LOGO_SRC}
