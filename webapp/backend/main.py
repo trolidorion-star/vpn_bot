@@ -2,6 +2,7 @@
 import hmac
 import json
 import os
+import re
 import secrets
 import time
 from datetime import datetime, timezone
@@ -14,6 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from dotenv import load_dotenv
 
 from bot.services.platega_client import (
     create_payment_link,
@@ -27,6 +29,7 @@ from database.requests import (
     add_key_exclusion_for_user,
     create_or_update_transaction,
     create_pending_order,
+    ensure_user_referral_code,
     get_all_tariffs,
     get_key_details_for_user,
     get_or_create_user,
@@ -37,8 +40,10 @@ from database.requests import (
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = ROOT_DIR / "webapp" / "frontend"
+load_dotenv(ROOT_DIR / ".env")
 BOT_RETURN_URL = os.getenv("BOT_RETURN_URL", "https://t.me/BobrikVPNbot")
 SESSION_TTL_SECONDS = int(os.getenv("MINI_APP_SESSION_TTL", "21600"))
+TELEGRAM_INITDATA_TTL_SECONDS = int(os.getenv("TELEGRAM_INITDATA_TTL", "86400"))
 
 app = FastAPI(title="Bobrik Mini App API", version="1.0.0")
 app.add_middleware(
@@ -68,7 +73,8 @@ class RuBypassRequest(BaseModel):
 
 
 def _bot_token() -> str:
-    token = os.getenv("BOT_TOKEN", "").strip()
+    raw_token = os.getenv("BOT_TOKEN", "")
+    token = re.sub(r"[\u200b-\u200d\u2060\ufeff]", "", raw_token).strip().strip("'\"")
     if token:
         return token
     raise RuntimeError("BOT_TOKEN is required")
@@ -78,9 +84,15 @@ def _verify_telegram_init_data(init_data: str) -> dict[str, Any]:
     if not init_data:
         raise HTTPException(status_code=401, detail="initData is required")
 
-    parsed = dict(parse_qsl(init_data, keep_blank_values=True))
+    normalized_init_data = init_data.strip()
+    if normalized_init_data.startswith("?"):
+        normalized_init_data = normalized_init_data[1:]
+    parsed = dict(parse_qsl(normalized_init_data, keep_blank_values=True))
     received_hash = parsed.pop("hash", None)
     if not received_hash:
+        raise HTTPException(status_code=401, detail="Invalid initData hash")
+    received_hash = received_hash.strip().lower()
+    if len(received_hash) != 64:
         raise HTTPException(status_code=401, detail="Invalid initData hash")
 
     check_data = "\n".join(f"{k}={v}" for k, v in sorted(parsed.items()))
@@ -90,7 +102,7 @@ def _verify_telegram_init_data(init_data: str) -> dict[str, Any]:
         raise HTTPException(status_code=401, detail="Invalid initData hash")
 
     auth_date = int(parsed.get("auth_date", "0") or "0")
-    if auth_date <= 0 or int(time.time()) - auth_date > 24 * 60 * 60:
+    if auth_date <= 0 or int(time.time()) - auth_date > TELEGRAM_INITDATA_TTL_SECONDS:
         raise HTTPException(status_code=401, detail="initData expired")
 
     user_raw = parsed.get("user")
@@ -155,6 +167,21 @@ def _resolve_main_key(telegram_id: int) -> Optional[dict[str, Any]]:
     return active_keys[0] if active_keys else keys[0]
 
 
+def _extract_bot_username() -> str:
+    from urllib.parse import urlparse
+
+    parsed = urlparse(BOT_RETURN_URL)
+    path = (parsed.path or "").strip("/")
+    if path:
+        return path.split("/", 1)[0]
+    return "BobrikVPNbot"
+
+
+def _build_referral_link(user_id: int) -> str:
+    code = ensure_user_referral_code(user_id)
+    return f"https://t.me/{_extract_bot_username()}?start=ref_{code}"
+
+
 def _serialize_user_info(telegram_id: int, username: Optional[str]) -> dict[str, Any]:
     user, _ = get_or_create_user(telegram_id, username)
     key = _resolve_main_key(telegram_id)
@@ -169,6 +196,8 @@ def _serialize_user_info(telegram_id: int, username: Optional[str]) -> dict[str,
         "key": key.get("subscription_url") if key else None,
         "key_id": key.get("id") if key else None,
         "display_name": key.get("display_name") if key else None,
+        "expires_at": key.get("expires_at") if key else None,
+        "referral_link": _build_referral_link(user["id"]),
     }
 
 

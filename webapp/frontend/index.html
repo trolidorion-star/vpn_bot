@@ -28,6 +28,12 @@
   <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    @keyframes fadein {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
 </head>
 <body class="bg-bg text-text min-h-screen">
   <div id="root" class="min-h-screen"></div>
@@ -63,6 +69,23 @@
       );
     }
 
+    function formatCountdown(msLeft) {
+      if (msLeft <= 0) return "00:00:00";
+      const totalSeconds = Math.floor(msLeft / 1000);
+      const h = Math.floor(totalSeconds / 3600);
+      const m = Math.floor((totalSeconds % 3600) / 60);
+      const s = totalSeconds % 60;
+      const parts = [h, m, s].map((n) => String(n).padStart(2, "0"));
+      return parts.join(":");
+    }
+
+    function formatExpiresAt(expiresAtRaw) {
+      if (!expiresAtRaw) return "Не задано";
+      const dt = new Date(expiresAtRaw);
+      if (Number.isNaN(dt.getTime())) return "Не задано";
+      return dt.toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+    }
+
     function App() {
       const [tab, setTab] = useState("home");
       const [token, setToken] = useState("");
@@ -72,6 +95,8 @@
       const [loading, setLoading] = useState(true);
       const [ruBypass, setRuBypass] = useState(false);
       const [busy, setBusy] = useState(false);
+      const [nowMs, setNowMs] = useState(Date.now());
+      const [transitionTick, setTransitionTick] = useState(0);
 
       useEffect(() => {
         (async () => {
@@ -92,6 +117,14 @@
       }, []);
 
       const hasKey = useMemo(() => Boolean(user?.key), [user]);
+      const expiresAtMs = useMemo(() => {
+        if (!user?.expires_at) return 0;
+        const v = new Date(user.expires_at).getTime();
+        return Number.isNaN(v) ? 0 : v;
+      }, [user?.expires_at]);
+      const msLeft = Math.max(0, expiresAtMs - nowMs);
+      const countdown = formatCountdown(msLeft);
+      const subscriptionIsActive = user?.status === "active" && msLeft > 0;
 
       async function refreshUser() {
         if (!token) return;
@@ -147,6 +180,36 @@
         }
       }
 
+      async function copyReferralLink() {
+        if (!user?.referral_link) {
+          alert("Реферальная ссылка недоступна");
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(user.referral_link);
+          if (tg?.showPopup) tg.showPopup({ title: "Готово", message: "Реферальная ссылка скопирована", buttons: [{ type: "ok" }] });
+        } catch (e) {
+          alert("Не удалось скопировать ссылку");
+        }
+      }
+
+      function switchTab(nextTab) {
+        if (nextTab === tab) return;
+        setTransitionTick((v) => v + 1);
+        setTab(nextTab);
+      }
+
+      useEffect(() => {
+        const id = setInterval(() => setNowMs(Date.now()), 1000);
+        return () => clearInterval(id);
+      }, []);
+
+      useEffect(() => {
+        if (!token) return;
+        const id = setInterval(() => refreshUser().catch(() => null), 30000);
+        return () => clearInterval(id);
+      }, [token]);
+
       if (loading) {
         return <div className="p-6 text-center text-muted">Загрузка...</div>;
       }
@@ -159,17 +222,25 @@
           </div>
 
           {tab === "home" && (
-            <section className="space-y-3">
+            <section key={`home-${transitionTick}`} className="space-y-3 animate-[fadein_.25s_ease-out]">
               <div className="rounded-xl2 bg-panel p-4 border border-zinc-800">
                 <div className="flex items-center justify-between">
                   <h2 className="text-lg font-semibold">Ваш доступ</h2>
                   <StatusBadge status={user?.status} />
                 </div>
+                <div className="mt-3 rounded-xl2 border border-zinc-700 bg-zinc-900/40 p-3">
+                  <div className="text-sm text-muted">Статус подписки</div>
+                  <div className={`mt-1 text-base font-semibold ${subscriptionIsActive ? "text-emerald-300" : "text-red-300"}`}>
+                    {subscriptionIsActive ? "Subscription Active" : "Subscription Inactive"}
+                  </div>
+                  <div className="mt-2 text-sm text-muted">Истекает: <span className="text-text">{formatExpiresAt(user?.expires_at)}</span></div>
+                  <div className="mt-1 text-sm text-muted">Таймер: <span className="text-accent font-semibold">{countdown}</span></div>
+                </div>
                 <div className="mt-3 text-muted">Осталось дней: <span className="text-text font-medium">{user?.days_left ?? 0}</span></div>
                 <button
                   onClick={copyKey}
                   disabled={!hasKey}
-                  className="mt-4 w-full rounded-xl2 bg-accent py-3 font-semibold text-black disabled:opacity-40"
+                  className="mt-4 w-full rounded-xl2 bg-accent py-3 font-semibold text-black transition-transform duration-200 hover:scale-[1.01] active:scale-[0.99] disabled:opacity-40"
                 >
                   Скопировать ключ
                 </button>
@@ -178,11 +249,11 @@
           )}
 
           {tab === "shop" && (
-            <section className="space-y-3">
+            <section key={`shop-${transitionTick}`} className="space-y-3 animate-[fadein_.25s_ease-out]">
               {tariffs.map((tariff) => (
                 <button
                   key={tariff.id}
-                  className="w-full rounded-xl2 bg-panel p-4 border border-zinc-800 text-left"
+                  className="w-full rounded-xl2 bg-panel p-4 border border-zinc-800 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-zinc-600"
                   onClick={() => setSelectedTariff(tariff)}
                 >
                   <div className="flex items-center justify-between">
@@ -196,27 +267,39 @@
           )}
 
           {tab === "settings" && (
-            <section className="rounded-xl2 bg-panel p-4 border border-zinc-800">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="font-semibold">RU Bypass</div>
-                  <div className="text-sm text-muted">Добавляет/убирает RU-домены из исключений</div>
+            <section key={`settings-${transitionTick}`} className="space-y-3 animate-[fadein_.25s_ease-out]">
+              <div className="rounded-xl2 bg-panel p-4 border border-zinc-800">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="font-semibold">RU Bypass</div>
+                    <div className="text-sm text-muted">Добавляет/убирает RU-домены из исключений</div>
+                  </div>
+                  <button
+                    onClick={() => toggleRuBypass(!ruBypass)}
+                    disabled={busy}
+                    className={`h-8 w-14 rounded-full transition ${ruBypass ? "bg-accent" : "bg-zinc-700"}`}
+                  >
+                    <span className={`block h-6 w-6 rounded-full bg-white transition ${ruBypass ? "translate-x-7" : "translate-x-1"}`}></span>
+                  </button>
                 </div>
+              </div>
+              <div className="rounded-xl2 bg-panel p-4 border border-zinc-800">
+                <div className="font-semibold">Реферальная программа</div>
+                <div className="mt-1 text-sm text-muted break-all">{user?.referral_link || "Ссылка недоступна"}</div>
                 <button
-                  onClick={() => toggleRuBypass(!ruBypass)}
-                  disabled={busy}
-                  className={`h-8 w-14 rounded-full transition ${ruBypass ? "bg-accent" : "bg-zinc-700"}`}
+                  onClick={copyReferralLink}
+                  className="mt-3 w-full rounded-xl2 border border-zinc-700 bg-zinc-900 py-3 text-sm font-medium transition-all duration-200 hover:border-zinc-500"
                 >
-                  <span className={`block h-6 w-6 rounded-full bg-white transition ${ruBypass ? "translate-x-7" : "translate-x-1"}`}></span>
+                  Copy Link
                 </button>
               </div>
             </section>
           )}
 
           <nav className="fixed bottom-3 left-0 right-0 mx-auto flex w-[calc(100%-24px)] max-w-md justify-between rounded-xl2 bg-panelSoft px-4 py-3 border border-zinc-800">
-            <button className={tab === "home" ? "text-accent" : "text-muted"} onClick={() => setTab("home")}>Главная</button>
-            <button className={tab === "shop" ? "text-accent" : "text-muted"} onClick={() => setTab("shop")}>Магазин</button>
-            <button className={tab === "settings" ? "text-accent" : "text-muted"} onClick={() => setTab("settings")}>Настройки</button>
+            <button className={tab === "home" ? "text-accent transition-colors" : "text-muted transition-colors"} onClick={() => switchTab("home")}>Главная</button>
+            <button className={tab === "shop" ? "text-accent transition-colors" : "text-muted transition-colors"} onClick={() => switchTab("shop")}>Магазин</button>
+            <button className={tab === "settings" ? "text-accent transition-colors" : "text-muted transition-colors"} onClick={() => switchTab("settings")}>Настройки</button>
           </nav>
 
           {selectedTariff && (

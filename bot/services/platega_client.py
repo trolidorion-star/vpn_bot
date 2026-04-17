@@ -100,7 +100,7 @@ def get_enabled_platega_methods() -> list[tuple[str, str, int]]:
     ]
     enabled: list[tuple[str, str, int]] = []
     for code, label, method_id, setting_key in methods:
-        if _db_get_setting(setting_key, "1") == "1":
+        if _to_bool(_db_get_setting(setting_key, "1"), default=True):
             enabled.append((code, label, method_id))
     return enabled
 

@@ -46,6 +46,11 @@ def get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
         row = cursor.fetchone()
         return row['value'] if row else default
 
+
+def _is_enabled_setting(key: str, default: str = '0') -> bool:
+    raw = get_setting(key, default)
+    return str(raw or '').strip().lower() in {'1', 'true', 'yes', 'on', 'y'}
+
 def set_setting(key: str, value: str) -> None:
     """
     Устанавливает значение настройки.
@@ -78,11 +83,11 @@ def delete_setting(key: str) -> bool:
 
 def is_crypto_enabled() -> bool:
     """Проверяет, включены ли крипто-платежи."""
-    return get_setting('crypto_enabled', '0') == '1'
+    return _is_enabled_setting('crypto_enabled', '0')
 
 def is_stars_enabled() -> bool:
     """Проверяет, включены ли Telegram Stars."""
-    return get_setting('stars_enabled', '0') == '1'
+    return _is_enabled_setting('stars_enabled', '0')
 
 def is_crypto_configured() -> bool:
     """
@@ -115,7 +120,7 @@ def set_crypto_integration_mode(mode: str) -> None:
 
 def is_cards_enabled() -> bool:
     """Проверяет, включена ли оплата картами (ЮКасса)."""
-    return get_setting('cards_enabled', '0') == '1'
+    return _is_enabled_setting('cards_enabled', '0')
 
 def is_cards_configured() -> bool:
     """
@@ -131,13 +136,13 @@ def is_cards_configured() -> bool:
 
 def is_yookassa_qr_enabled() -> bool:
     """Проверяет, включена ли QR-оплата через ЮКассу."""
-    return get_setting('yookassa_qr_enabled', '0') == '1'
+    return _is_enabled_setting('yookassa_qr_enabled', '0')
 
 def is_legacy_payments_enabled() -> bool:
     """
     Резервные платежи (USDT / старые карты / QR) включены ли для пользователей.
     """
-    return get_setting('legacy_payments_enabled', '0') == '1'
+    return _is_enabled_setting('legacy_payments_enabled', '0')
 
 def is_yookassa_qr_configured() -> bool:
     """
@@ -165,7 +170,7 @@ def get_yookassa_credentials() -> tuple[str, str]:
 
 def is_trial_enabled() -> bool:
     """Включена ли функция пробной подписки."""
-    return get_setting('trial_enabled', '0') == '1'
+    return _is_enabled_setting('trial_enabled', '0')
 
 def get_trial_tariff_id() -> Optional[int]:
     """

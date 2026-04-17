@@ -1,16 +1,23 @@
-﻿[Unit]
+[Unit]
 Description=Bobrik Mini App FastAPI
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=/root/my-private
 Environment=PYTHONUNBUFFERED=1
-Environment=BOT_TOKEN=replace_me
+EnvironmentFile=-/root/my-private/.env
 ExecStart=/usr/bin/python3 -m uvicorn webapp.backend.main:app --host 0.0.0.0 --port 8090
 Restart=always
-RestartSec=3
+RestartSec=2
+StartLimitIntervalSec=60
+StartLimitBurst=30
+TimeoutStopSec=20
+LimitNOFILE=65535
+StandardOutput=append:/var/log/bobrik.log
+StandardError=append:/var/log/bobrik.log
 
 [Install]
 WantedBy=multi-user.target

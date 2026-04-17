@@ -8,6 +8,7 @@ from aiohttp import web
 
 from bot.services.billing import process_payment_order, process_referral_reward
 from bot.services.platega_client import get_transaction_status
+from bot.services.vpn_api import push_key_to_panel, restore_traffic_limit_in_db
 from database.requests import (
     create_or_update_transaction,
     find_order_by_order_id,
@@ -100,6 +101,17 @@ async def _notify_user(order: dict, text: str) -> None:
         await _bot.send_message(telegram_id, text)
     except Exception as e:
         logger.warning("Unable to notify user %s for order %s: %s", telegram_id, order.get("order_id"), e)
+
+
+async def _sync_key_limit(order: dict) -> None:
+    key_id = int(order.get("vpn_key_id") or 0)
+    if key_id <= 0:
+        return
+    try:
+        restore_traffic_limit_in_db(key_id)
+        await push_key_to_panel(key_id, reset_traffic=True)
+    except Exception as e:
+        logger.error("Failed to sync key %s to panel after payment: %s", key_id, e)
 
 
 async def _resolve_transaction(order_tx: Optional[dict], transaction_id: str) -> Optional[dict]:
@@ -212,9 +224,12 @@ async def _platega_webhook_handler(request: web.Request) -> web.Response:
         if not consume_order_promocode(order_id):
             logger.warning("Promo consume failed for order_id=%s", order_id)
         final_order = updated_order or order
+        await _sync_key_limit(final_order)
         days = final_order.get("period_days") or final_order.get("duration_days") or 30
         amount_kopecks = int(tx.get("amount") or 0) * 100
-        await process_referral_reward(final_order["user_id"], days, amount_kopecks, "cards")
+        payment_method = str((tx_payload.get("method") or "card")).strip().lower()
+        reward_type = "crypto" if payment_method == "crypto" else "cards"
+        await process_referral_reward(final_order["user_id"], days, amount_kopecks, reward_type)
         await _notify_user(final_order, "✅ Оплата прошла успешно. Подписка обновлена.")
         return web.Response(status=200, text="OK")
 
