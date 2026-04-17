@@ -7,11 +7,10 @@ import logging
 from aiogram import Router, F
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery
-from aiogram.types import MenuButtonCommands, MenuButtonWebApp, Message, WebAppInfo
+from aiogram.types import MenuButtonCommands, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest
 
-import config as app_config
 from database.requests import (
     get_all_servers,
     get_business_metrics,
@@ -29,19 +28,7 @@ router = Router()
 
 
 async def _sync_miniapp_menu_button(message: Message) -> None:
-    mini_app_url = (getattr(app_config, "MINI_APP_URL", "") or "").strip()
-    if is_miniapp_enabled() and mini_app_url:
-        try:
-            await message.bot.set_chat_menu_button(
-                menu_button=MenuButtonWebApp(
-                    text=(getattr(app_config, "MINI_APP_SHORT_NAME", "VPN") or "VPN"),
-                    web_app=WebAppInfo(url=mini_app_url),
-                )
-            )
-            return
-        except Exception as exc:
-            logger.warning("Failed to set mini app menu button from admin panel: %s", exc)
-
+    # Keep commands menu button active; Mini App can be opened from bot keyboards.
     try:
         await message.bot.set_chat_menu_button(menu_button=MenuButtonCommands())
     except Exception as exc:

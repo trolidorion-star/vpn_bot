@@ -2,6 +2,7 @@ import logging
 import uuid
 import asyncio
 from datetime import datetime
+import config as app_config
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command, CommandObject, StateFilter
@@ -9,7 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramForbiddenError
 from config import ADMIN_IDS
 from bot.services.buy_key_timer import cancel_buy_key_timer
-from database.requests import get_or_create_user, is_user_banned, get_all_servers, get_setting, is_referral_enabled, get_user_by_referral_code, set_user_referrer
+from database.requests import get_or_create_user, is_user_banned, get_all_servers, get_setting, is_referral_enabled, get_user_by_referral_code, set_user_referrer, is_miniapp_enabled
 from bot.keyboards.user import main_menu_kb
 from bot.states.user_states import RenameKey, ReplaceKey
 from bot.utils.text import escape_html, safe_edit_or_send
@@ -229,7 +230,14 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
     from database.requests import is_trial_enabled, get_trial_tariff_id, has_used_trial
     show_trial = is_trial_enabled() and get_trial_tariff_id() is not None and (not has_used_trial(user_id))
     show_referral = is_referral_enabled()
-    kb = main_menu_kb(is_admin=is_admin, show_trial=show_trial, show_referral=show_referral)
+    mini_app_url = (getattr(app_config, "MINI_APP_URL", "") or "").strip()
+    show_mini_app = bool(mini_app_url and is_miniapp_enabled())
+    kb = main_menu_kb(
+        is_admin=is_admin,
+        show_trial=show_trial,
+        show_referral=show_referral,
+        mini_app_url=mini_app_url if show_mini_app else "",
+    )
     try:
         await safe_edit_or_send(message, text, reply_markup=kb, photo=welcome_photo, force_new=True)
     except TelegramForbiddenError:
@@ -251,7 +259,14 @@ async def callback_start(callback: CallbackQuery, state: FSMContext):
     from database.requests import is_trial_enabled, get_trial_tariff_id, has_used_trial
     show_trial = is_trial_enabled() and get_trial_tariff_id() is not None and (not has_used_trial(user_id))
     show_referral = is_referral_enabled()
-    kb = main_menu_kb(is_admin=is_admin, show_trial=show_trial, show_referral=show_referral)
+    mini_app_url = (getattr(app_config, "MINI_APP_URL", "") or "").strip()
+    show_mini_app = bool(mini_app_url and is_miniapp_enabled())
+    kb = main_menu_kb(
+        is_admin=is_admin,
+        show_trial=show_trial,
+        show_referral=show_referral,
+        mini_app_url=mini_app_url if show_mini_app else "",
+    )
     await safe_edit_or_send(callback.message, text, reply_markup=kb, photo=welcome_photo)
     await callback.answer()
 

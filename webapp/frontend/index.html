@@ -10,18 +10,19 @@
       theme: {
         extend: {
           colors: {
-            bg: 'var(--tg-bg-color, #0b0b0b)',
-            panel: 'var(--tg-secondary-bg-color, #171717)',
-            panelSoft: 'rgba(31,31,31,0.95)',
-            accent: 'var(--tg-link-color, #ffcc00)',
-            text: 'var(--tg-text-color, #f4f4f5)',
-            muted: 'var(--tg-hint-color, #a1a1aa)',
-            fur: '#b78148',
-            wood: '#6a3e1d',
-            danger: '#ef4444',
-            ok: '#10b981'
+            bg: 'var(--tg-bg-color, #071018)',
+            surface: 'var(--tg-secondary-bg-color, #0e1a26)',
+            surfaceSoft: '#132233',
+            text: 'var(--tg-text-color, #e9f2ff)',
+            muted: 'var(--tg-hint-color, #8da4bf)',
+            accent: 'var(--tg-link-color, #44b3ff)',
+            ok: '#21c98a',
+            danger: '#ff6b6b',
+            warning: '#ffb04d'
           },
-          borderRadius: { xl2: '20px' }
+          borderRadius: {
+            card: '22px'
+          }
         }
       }
     };
@@ -32,19 +33,44 @@
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <style>
     :root {
-      --app-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+      --panel-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
     }
-    @keyframes fadein { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    @keyframes pulse { 0%,100% { transform: scale(1); opacity: .9; } 50% { transform: scale(1.06); opacity: 1; } }
-    .ring { animation: spin 1.15s linear infinite; }
-    .body { animation: pulse 1.25s ease-in-out infinite; }
+    html, body {
+      background: radial-gradient(circle at 20% -10%, #194266 0%, #071018 42%), var(--tg-bg-color, #071018);
+      min-height: 100%;
+    }
+    .glass {
+      backdrop-filter: blur(10px);
+      background: linear-gradient(145deg, rgba(17,31,45,0.92), rgba(12,24,37,0.94));
+    }
+    .animate-in {
+      animation: appFadeIn .24s ease-out;
+    }
+    @keyframes appFadeIn {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #21c98a;
+      box-shadow: 0 0 0 rgba(33,201,138,.7);
+      animation: pulse 1.4s infinite;
+    }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(33,201,138,.65); }
+      70% { box-shadow: 0 0 0 8px rgba(33,201,138,0); }
+      100% { box-shadow: 0 0 0 0 rgba(33,201,138,0); }
+    }
   </style>
 </head>
-<body class="bg-bg text-text min-h-screen">
+<body class="text-text">
   <div id="root" class="min-h-screen"></div>
+
   <script type="text/babel">
     const { useEffect, useMemo, useRef, useState } = React;
+
     const tg = window.Telegram?.WebApp;
     if (tg) {
       tg.ready();
@@ -58,13 +84,13 @@
       if (tp.link_color) root.style.setProperty('--tg-link-color', tp.link_color);
     }
 
-    const METHODS = [
-      { code: 'sbp', label: 'СБП' },
-      { code: 'card', label: 'Карта РФ' },
-      { code: 'crypto', label: 'Криптовалюта' }
+    const PAY_METHODS = [
+      { code: 'sbp', title: 'СБП', hint: 'Быстрая оплата' },
+      { code: 'card', title: 'Карта РФ', hint: 'Банковские карты' },
+      { code: 'crypto', title: 'Криптовалюта', hint: 'Международная оплата' },
     ];
 
-    const CACHE_KEY = 'bobrik-miniapp-cache-v5';
+    const CACHE_KEY = 'bobrik-miniapp-cache-v6';
 
     class ApiError extends Error {
       constructor(message, status = 0, payload = null) {
@@ -75,29 +101,11 @@
       }
     }
 
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const now = () => Date.now();
+
     const haptic = (style = 'light') => tg?.HapticFeedback?.impactOccurred?.(style);
     const hapticNotify = (style = 'success') => tg?.HapticFeedback?.notificationOccurred?.(style);
-
-    async function requestJson(path, { method = 'GET', token, body } = {}) {
-      const headers = { 'Content-Type': 'application/json' };
-      if (token) headers.Authorization = `Bearer ${token}`;
-      const res = await fetch(path, {
-        method,
-        headers,
-        body: body ? JSON.stringify(body) : undefined,
-      });
-      const data = await res.json().catch(() => ({}));
-      return { status: res.status, ok: res.ok, data };
-    }
-
-    async function api(path, opts = {}) {
-      const { status, ok, data } = await requestJson(path, opts);
-      if (!ok || data.ok === false) {
-        throw new ApiError(data.detail || data.error || `HTTP ${status}`, status, data);
-      }
-      return data;
-    }
 
     const parseCache = () => {
       try {
@@ -116,6 +124,43 @@
       } catch {}
     };
 
+    async function requestJson(path, { method = 'GET', token, body } = {}) {
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const response = await fetch(path, {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      const data = await response.json().catch(() => ({}));
+      return { ok: response.ok, status: response.status, data };
+    }
+
+    async function api(path, opts = {}) {
+      const { ok, status, data } = await requestJson(path, opts);
+      if (!ok || data.ok === false) {
+        throw new ApiError(data.detail || data.error || `HTTP ${status}`, status, data);
+      }
+      return data;
+    }
+
+    const fmtMoney = (value) => `${(Number(value) || 0).toFixed(2)} ₽`;
+    const fmtDate = (raw) => {
+      if (!raw) return 'Не задано';
+      const dt = new Date(raw);
+      if (Number.isNaN(dt.getTime())) return 'Не задано';
+      return dt.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    };
+
+    const fmtCountdown = (ms) => {
+      if (ms <= 0) return '00:00:00';
+      const total = Math.floor(ms / 1000);
+      const hh = Math.floor(total / 3600);
+      const mm = Math.floor((total % 3600) / 60);
+      const ss = total % 60;
+      return [hh, mm, ss].map((x) => String(x).padStart(2, '0')).join(':');
+    };
+
     const normalizeReferralLink = (raw) => {
       if (!raw) return '';
       try {
@@ -129,51 +174,25 @@
       }
     };
 
-    const fmtExp = (raw) => {
-      if (!raw) return 'Не задано';
-      const dt = new Date(raw);
-      if (Number.isNaN(dt.getTime())) return 'Не задано';
-      return dt.toLocaleString('ru-RU', {
-        day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
-      });
-    };
-
-    const fmtCountdown = (ms) => {
-      if (ms <= 0) return '00:00:00';
-      const t = Math.floor(ms / 1000);
-      const h = Math.floor(t / 3600);
-      const m = Math.floor((t % 3600) / 60);
-      const s = t % 60;
-      return [h, m, s].map((n) => String(n).padStart(2, '0')).join(':');
-    };
-
-    const fmtMoney = (n) => `${(Number(n) || 0).toFixed(2)} ₽`;
-
-    function Splash() {
+    function Toast({ item, onClose }) {
+      if (!item) return null;
+      const kind = item.type === 'error' ? 'border-danger/40 text-red-200' : 'border-ok/40 text-emerald-200';
       return (
-        <div className="min-h-screen bg-gradient-to-b from-bg via-[#121212] to-bg flex flex-col items-center justify-center px-6">
-          <div className="relative mb-6 h-28 w-28">
-            <div className="ring absolute inset-0 rounded-full border-4 border-accent/20 border-t-accent"></div>
-            <div className="body absolute inset-3 rounded-full bg-fur shadow-[0_0_25px_rgba(183,129,72,0.5)]">
-              <div className="absolute left-4 top-5 h-2.5 w-2.5 rounded-full bg-black"></div>
-              <div className="absolute right-4 top-5 h-2.5 w-2.5 rounded-full bg-black"></div>
-              <div className="absolute left-1/2 top-10 h-2 w-8 -translate-x-1/2 rounded-full bg-wood"></div>
-              <div className="absolute left-1/2 bottom-5 h-4 w-10 -translate-x-1/2 rounded-md bg-wood"></div>
-            </div>
-          </div>
-          <div className="text-xl font-semibold tracking-wide">Bobrik VPN</div>
-          <div className="mt-2 text-sm text-muted">Загружаем безопасное соединение...</div>
+        <div className="fixed top-3 left-0 right-0 z-50 px-4">
+          <button className={`mx-auto block w-full max-w-md rounded-2xl border bg-surface/95 px-4 py-3 text-left text-sm ${kind}`} onClick={onClose}>
+            {item.message}
+          </button>
         </div>
       );
     }
 
-    function Toast({ item, onClose }) {
-      if (!item) return null;
-      const tone = item.type === 'error' ? 'border-danger/40 text-red-200' : 'border-ok/40 text-emerald-200';
+    function Loader() {
       return (
-        <div className="fixed top-4 left-0 right-0 z-50 px-4">
-          <div className={`mx-auto max-w-md rounded-xl2 border bg-panel px-4 py-3 text-sm ${tone}`} onClick={onClose}>
-            {item.message}
+        <div className="min-h-screen flex items-center justify-center px-6">
+          <div className="w-full max-w-md rounded-card glass border border-white/10 p-6 text-center" style={{ boxShadow: 'var(--panel-shadow)' }}>
+            <div className="mx-auto mb-4 h-14 w-14 rounded-full border-4 border-accent/25 border-t-accent animate-spin"></div>
+            <div className="text-lg font-semibold">Bobrik VPN</div>
+            <div className="mt-1 text-sm text-muted">Подключаем защищенный кабинет...</div>
           </div>
         </div>
       );
@@ -181,56 +200,59 @@
 
     function Maintenance({ onRetry }) {
       return (
-        <div className="min-h-screen bg-gradient-to-b from-bg via-[#121212] to-bg px-4 py-8">
-          <div className="mx-auto mt-10 max-w-md rounded-xl2 border border-amber-800/40 bg-panel p-5" style={{ boxShadow: 'var(--app-shadow)' }}>
-            <div className="text-lg font-semibold text-amber-300">Maintenance Mode</div>
-            <div className="mt-2 text-sm text-muted">Mini App временно отключен администратором. Попробуйте снова позже.</div>
-            <button onClick={onRetry} className="mt-4 w-full rounded-xl2 bg-accent py-3 font-semibold text-black">Обновить статус</button>
+        <div className="min-h-screen px-4 py-10">
+          <div className="mx-auto max-w-md rounded-card glass border border-warning/30 p-6" style={{ boxShadow: 'var(--panel-shadow)' }}>
+            <h1 className="text-xl font-semibold text-warning">Техническое обслуживание</h1>
+            <p className="mt-2 text-sm text-muted">Mini App временно отключен администратором. Пожалуйста, попробуйте позже.</p>
+            <button className="mt-5 w-full rounded-2xl bg-accent py-3 font-semibold text-black" onClick={onRetry}>Проверить снова</button>
           </div>
         </div>
       );
     }
 
     function App() {
-      const c = parseCache();
-      const [token, setToken] = useState(c?.token || '');
-      const [tab, setTab] = useState(c?.tab || 'profile');
+      const cache = parseCache();
+      const [token, setToken] = useState(cache?.token || '');
+      const [tab, setTab] = useState(cache?.tab || 'dashboard');
       const [user, setUser] = useState(null);
-      const [tariffs, setTariffs] = useState(c?.tariffs || []);
-      const [stats, setStats] = useState(c?.stats || []);
-      const [refData, setRefData] = useState(c?.refData || null);
-      const [supportTicket, setSupportTicket] = useState(c?.supportTicket || null);
-      const [supportMessages, setSupportMessages] = useState(c?.supportMessages || []);
-      const [loading, setLoading] = useState(true);
-      const [authErr, setAuthErr] = useState(null);
-      const [busy, setBusy] = useState(false);
-      const [toast, setToast] = useState(null);
-      const [selectedTariff, setSelectedTariff] = useState(null);
-      const [maintenance, setMaintenance] = useState(false);
-      const [ruBypass, setRuBypass] = useState(false);
+      const [tariffs, setTariffs] = useState(cache?.tariffs || []);
+      const [stats, setStats] = useState(cache?.stats || []);
+      const [refData, setRefData] = useState(cache?.refData || null);
+      const [supportTicket, setSupportTicket] = useState(cache?.supportTicket || null);
+      const [supportMessages, setSupportMessages] = useState(cache?.supportMessages || []);
       const [supportText, setSupportText] = useState('');
-      const [nowMs, setNowMs] = useState(Date.now());
-      const [tick, setTick] = useState(0);
+      const [ruBypass, setRuBypass] = useState(false);
+      const [selectedTariff, setSelectedTariff] = useState(null);
+      const [busy, setBusy] = useState(false);
+      const [loading, setLoading] = useState(true);
+      const [maintenance, setMaintenance] = useState(false);
+      const [authError, setAuthError] = useState(null);
+      const [toast, setToast] = useState(null);
+      const [clock, setClock] = useState(now());
+      const [lastSyncAt, setLastSyncAt] = useState(null);
       const bootRef = useRef(0);
+
+      const expiresAtMs = useMemo(() => {
+        const ts = new Date(user?.expires_at || 0).getTime();
+        return Number.isNaN(ts) ? 0 : ts;
+      }, [user?.expires_at]);
+
+      const msLeft = Math.max(0, expiresAtMs - clock);
+      const isActive = user?.status === 'active' && msLeft > 0;
+      const referralLink = normalizeReferralLink(refData?.referral_link || user?.referral_link || '');
 
       const showToast = (message, type = 'ok') => {
         setToast({ message, type });
         setTimeout(() => setToast(null), 2600);
       };
-      const tap = (fn, style = 'light') => (e) => { haptic(style); fn?.(e); };
 
-      const expiresMs = useMemo(() => {
-        const v = new Date(user?.expires_at || 0).getTime();
-        return Number.isNaN(v) ? 0 : v;
-      }, [user?.expires_at]);
-
-      const msLeft = Math.max(0, expiresMs - nowMs);
-      const countdown = fmtCountdown(msLeft);
-      const subActive = user?.status === 'active' && msLeft > 0;
-      const referralLink = normalizeReferralLink(refData?.referral_link || user?.referral_link || '');
+      const impact = (fn, style = 'light') => (...args) => {
+        haptic(style);
+        fn?.(...args);
+      };
 
       useEffect(() => {
-        const id = setInterval(() => setNowMs(Date.now()), 1000);
+        const id = setInterval(() => setClock(now()), 1000);
         return () => clearInterval(id);
       }, []);
 
@@ -240,63 +262,75 @@
 
       useEffect(() => {
         if (!user?.is_admin && tab === 'admin') {
-          setTab('profile');
+          setTab('dashboard');
         }
       }, [user?.is_admin, tab]);
 
       async function checkAppState() {
-        const res = await requestJson('/api/app_state');
-        if (!res.ok) throw new ApiError('App state unavailable', res.status, res.data);
-        return Boolean(res.data?.data?.miniapp_enabled !== false);
+        const response = await requestJson('/api/app_state');
+        if (!response.ok) throw new ApiError('Failed to load app state', response.status, response.data);
+        return Boolean(response.data?.data?.miniapp_enabled !== false);
       }
 
       async function authWithRetry(initData, retries = 2) {
-        let last = { status: 0, detail: 'Ошибка авторизации' };
+        let last = { status: 0, detail: 'Auth failed' };
         for (let i = 0; i <= retries; i++) {
           try {
-            const r = await requestJson('/api/auth/session', { method: 'POST', body: { initData } });
-            if (r.ok && r.data?.ok !== false && r.data?.token) return { ok: true, payload: r.data };
-            last = { status: r.status, detail: r.data?.detail || `HTTP ${r.status}` };
-            if (r.status === 503) return { ok: false, error: last };
-          } catch (e) {
-            last = { status: 0, detail: e?.message || 'Network error' };
+            const response = await requestJson('/api/auth/session', { method: 'POST', body: { initData } });
+            if (response.ok && response.data?.ok !== false && response.data?.token) {
+              return { ok: true, payload: response.data };
+            }
+            last = { status: response.status, detail: response.data?.detail || `HTTP ${response.status}` };
+            if (response.status === 503) return { ok: false, error: last };
+          } catch (error) {
+            last = { status: 0, detail: error?.message || 'Network error' };
           }
           if (i < retries) await sleep(280 * (i + 1));
         }
         return { ok: false, error: last };
       }
 
-      async function refreshData(sessionToken) {
-        const [u, t, s, r, sup] = await Promise.allSettled([
-          api('/api/get_user_info', { token: sessionToken }),
-          api('/api/get_tariffs', { token: sessionToken }),
-          api('/api/subscription/stats', { token: sessionToken }),
-          api('/api/referrals', { token: sessionToken }),
-          api('/api/support', { token: sessionToken }),
-        ]);
+      async function refreshData(sessionToken, { silent = false } = {}) {
+        try {
+          const [u, t, s, r, sup] = await Promise.allSettled([
+            api('/api/get_user_info', { token: sessionToken }),
+            api('/api/get_tariffs', { token: sessionToken }),
+            api('/api/subscription/stats', { token: sessionToken }),
+            api('/api/referrals', { token: sessionToken }),
+            api('/api/support', { token: sessionToken }),
+          ]);
 
-        if (u.status === 'fulfilled') setUser(u.value.data);
-        if (t.status === 'fulfilled') setTariffs(t.value.data || []);
-        if (s.status === 'fulfilled') setStats(s.value.data || []);
-        if (r.status === 'fulfilled') setRefData(r.value.data || null);
-        if (sup.status === 'fulfilled') {
-          setSupportTicket(sup.value.data?.ticket || null);
-          setSupportMessages(sup.value.data?.messages || []);
-        }
+          if (u.status === 'fulfilled') setUser(u.value.data);
+          if (t.status === 'fulfilled') setTariffs(t.value.data || []);
+          if (s.status === 'fulfilled') setStats(s.value.data || []);
+          if (r.status === 'fulfilled') setRefData(r.value.data || null);
+          if (sup.status === 'fulfilled') {
+            setSupportTicket(sup.value.data?.ticket || null);
+            setSupportMessages(sup.value.data?.messages || []);
+          }
 
-        const rejects = [u, t, s, r, sup].filter((x) => x.status === 'rejected').map((x) => x.reason);
-        if (rejects.some((e) => e?.status === 503)) {
-          setMaintenance(true);
-          return;
+          const failures = [u, t, s, r, sup].filter((x) => x.status === 'rejected').map((x) => x.reason);
+          if (failures.some((err) => err?.status === 503)) {
+            setMaintenance(true);
+            return;
+          }
+
+          setLastSyncAt(now());
+
+          if (failures.length && !silent) {
+            showToast('Часть данных не обновилась', 'error');
+          }
+        } catch (error) {
+          if (!silent) showToast(error?.message || 'Ошибка обновления', 'error');
         }
-        if (rejects.length) showToast('Часть данных не обновилась, используем кэш', 'error');
       }
 
       async function bootstrap() {
-        const bootId = Date.now();
+        const bootId = now();
         bootRef.current = bootId;
         setLoading(true);
-        setAuthErr(null);
+        setAuthError(null);
+
         try {
           const enabled = await checkAppState();
           if (!enabled) {
@@ -308,6 +342,7 @@
           setMaintenance(false);
           const initData = tg?.initData || '';
           const auth = await authWithRetry(initData, 2);
+
           if (bootRef.current !== bootId) return;
 
           if (!auth.ok) {
@@ -316,11 +351,11 @@
               setLoading(false);
               return;
             }
-            const hard = auth.error.status === 401 || auth.error.status === 403;
-            setAuthErr({
+            const hardAuth = auth.error.status === 401 || auth.error.status === 403;
+            setAuthError({
               status: auth.error.status,
-              message: hard
-                ? 'Не удалось подтвердить Telegram сессию. Откройте Mini App заново из бота.'
+              message: hardAuth
+                ? 'Не удалось подтвердить Telegram-сессию. Перезапустите Mini App из бота.'
                 : (auth.error.detail || 'Сервис недоступен')
             });
             setLoading(false);
@@ -329,10 +364,10 @@
 
           setToken(auth.payload.token);
           setUser(auth.payload.user || null);
-          await refreshData(auth.payload.token);
+          await refreshData(auth.payload.token, { silent: true });
           setLoading(false);
-        } catch (e) {
-          setAuthErr({ status: e?.status || 0, message: e?.message || 'Ошибка запуска' });
+        } catch (error) {
+          setAuthError({ status: error?.status || 0, message: error?.message || 'Ошибка запуска приложения' });
           setLoading(false);
         }
       }
@@ -341,21 +376,27 @@
 
       useEffect(() => {
         if (!token) return;
-        const id = setInterval(() => refreshData(token).catch(() => null), 20000);
-        return () => clearInterval(id);
+        const timer = setInterval(() => {
+          if (document.hidden) return;
+          refreshData(token, { silent: true }).catch(() => null);
+        }, 20000);
+        return () => clearInterval(timer);
       }, [token]);
 
       useEffect(() => {
         if (!token || tab !== 'support') return;
-        const id = setInterval(() => refreshData(token).catch(() => null), 7000);
-        return () => clearInterval(id);
+        const timer = setInterval(() => {
+          if (document.hidden) return;
+          refreshData(token, { silent: true }).catch(() => null);
+        }, 8000);
+        return () => clearInterval(timer);
       }, [token, tab]);
 
-      async function copyText(text, msg) {
+      async function copyText(text, okText = 'Скопировано') {
         try {
-          await navigator.clipboard.writeText(text);
+          await navigator.clipboard.writeText(text || '');
           hapticNotify('success');
-          showToast(msg || 'Скопировано');
+          showToast(okText);
         } catch {
           hapticNotify('error');
           showToast('Не удалось скопировать', 'error');
@@ -366,253 +407,324 @@
         if (!selectedTariff || !token) return;
         setBusy(true);
         try {
-          const res = await api('/api/create_invoice', {
+          const response = await api('/api/create_invoice', {
             method: 'POST',
             token,
-            body: { tariff_id: selectedTariff.id, method, key_id: user?.key_id || null }
+            body: {
+              tariff_id: selectedTariff.id,
+              method,
+              key_id: user?.key_id || null,
+            },
           });
           setSelectedTariff(null);
-          tg?.openLink?.(res.data.redirect_url);
-        } catch (e) {
-          if (e.status === 503) {
+          tg?.openLink?.(response.data.redirect_url);
+        } catch (error) {
+          if (error.status === 503) {
             setMaintenance(true);
             return;
           }
-          hapticNotify('error');
-          showToast(e.message || 'Не удалось создать счет', 'error');
+          showToast(error?.message || 'Не удалось создать счет', 'error');
         } finally {
           setBusy(false);
         }
       }
 
-      async function toggleRu(next) {
+      async function toggleRuBypass(next) {
         if (!user?.key_id || !token) {
           showToast('Сначала создайте ключ', 'error');
           return;
         }
+
         setBusy(true);
         try {
-          await api('/api/set_ru_bypass', { method: 'POST', token, body: { key_id: user.key_id, enabled: next } });
+          await api('/api/set_ru_bypass', {
+            method: 'POST',
+            token,
+            body: { key_id: user.key_id, enabled: next },
+          });
           setRuBypass(next);
-          hapticNotify('success');
           showToast(next ? 'RU Bypass включен' : 'RU Bypass выключен');
-        } catch (e) {
-          hapticNotify('error');
-          showToast(e.message || 'Ошибка настройки RU Bypass', 'error');
+        } catch (error) {
+          showToast(error?.message || 'Ошибка настройки RU Bypass', 'error');
         } finally {
           setBusy(false);
         }
       }
 
-      async function sendSupport() {
+      async function sendSupportMessage() {
         const text = (supportText || '').trim();
         if (!text) {
           showToast('Введите сообщение для поддержки', 'error');
           return;
         }
+
         setBusy(true);
         try {
-          const res = await api('/api/support', { method: 'POST', token, body: { message: text } });
+          const response = await api('/api/support', { method: 'POST', token, body: { message: text } });
           setSupportText('');
-          showToast(`Тикет #${res.data.ticket_id} обновлен`);
-          await refreshData(token);
-        } catch (e) {
-          showToast(e.message || 'Ошибка отправки', 'error');
+          showToast(`Тикет #${response.data.ticket_id} обновлен`);
+          await refreshData(token, { silent: true });
+        } catch (error) {
+          showToast(error?.message || 'Ошибка отправки', 'error');
         } finally {
           setBusy(false);
         }
       }
 
-      async function toggleMiniApp(enabled) {
+      async function setMiniAppState(enabled) {
         setBusy(true);
         try {
           await api('/api/admin/miniapp_state', { method: 'POST', token, body: { enabled } });
           showToast(enabled ? 'Mini App включен' : 'Mini App выключен');
-          await refreshData(token);
-        } catch (e) {
-          showToast(e.message || 'Нет прав', 'error');
+          await refreshData(token, { silent: true });
+        } catch (error) {
+          showToast(error?.message || 'Нет доступа', 'error');
         } finally {
           setBusy(false);
         }
       }
 
-      if (loading) return <><Toast item={toast} onClose={() => setToast(null)} /><Splash /></>;
-      if (maintenance) return <><Toast item={toast} onClose={() => setToast(null)} /><Maintenance onRetry={tap(() => bootstrap(), 'medium')} /></>;
-      if (authErr) {
+      const tabs = [
+        { id: 'dashboard', title: 'Главная' },
+        { id: 'plans', title: 'Тарифы' },
+        { id: 'usage', title: 'Статистика' },
+        { id: 'ref', title: 'Рефералы' },
+        { id: 'support', title: 'Поддержка' },
+      ];
+      if (user?.is_admin) tabs.push({ id: 'admin', title: 'Админ' });
+
+      function renderDashboard() {
         return (
-          <div className="min-h-screen bg-gradient-to-b from-bg via-[#121212] to-bg px-4 py-6">
-            <Toast item={toast} onClose={() => setToast(null)} />
-            <div className="mx-auto mt-10 max-w-md rounded-xl2 border border-red-900/40 bg-panel p-5">
-              <div className="text-lg font-semibold text-red-300">Ошибка авторизации</div>
-              <div className="mt-2 text-sm text-muted">{authErr.message}</div>
-              <div className="mt-1 text-xs text-zinc-500">HTTP: {authErr.status || 'n/a'}</div>
-              <button onClick={tap(() => bootstrap(), 'medium')} className="mt-4 w-full rounded-xl2 bg-accent py-3 font-semibold text-black">Повторить</button>
+          <div className="space-y-3 animate-in">
+            <div className="rounded-card glass border border-white/10 p-4" style={{ boxShadow: 'var(--panel-shadow)' }}>
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-muted">Текущая подписка</p>
+                <div className="flex items-center gap-2 text-xs text-muted">
+                  <span className="pulse-dot"></span>
+                  Sync {lastSyncAt ? fmtDate(lastSyncAt) : '...'}
+                </div>
+              </div>
+              <div className="mt-2 flex items-center justify-between">
+                <div>
+                  <div className="text-2xl font-semibold">{fmtMoney(user?.balance_rub)}</div>
+                  <div className="text-xs text-muted mt-1">Истекает: {fmtDate(user?.expires_at)}</div>
+                </div>
+                <div className={`rounded-2xl px-3 py-2 text-xs font-semibold ${isActive ? 'bg-ok/20 text-emerald-200' : 'bg-danger/20 text-red-200'}`}>
+                  {isActive ? 'Активна' : 'Неактивна'}
+                </div>
+              </div>
+              <div className="mt-3 rounded-2xl bg-surfaceSoft/70 px-3 py-2 text-sm">
+                Осталось: <span className="font-semibold text-accent">{fmtCountdown(msLeft)}</span>
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                <button onClick={impact(() => copyText(user?.key, 'Ключ скопирован'))} disabled={!user?.key} className="rounded-2xl bg-accent px-3 py-3 text-sm font-semibold text-black disabled:opacity-40">Скопировать ключ</button>
+                <button onClick={impact(() => refreshData(token), 'medium')} className="rounded-2xl border border-white/15 px-3 py-3 text-sm">Обновить</button>
+              </div>
+            </div>
+
+            <div className="rounded-card glass border border-white/10 p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-semibold">RU Bypass</div>
+                  <div className="text-xs text-muted mt-1">Добавляет RU-исключения в активный ключ</div>
+                </div>
+                <button onClick={impact(() => toggleRuBypass(!ruBypass))} disabled={busy} className={`h-8 w-14 rounded-full transition ${ruBypass ? 'bg-accent' : 'bg-surfaceSoft'}`}>
+                  <span className={`block h-6 w-6 rounded-full bg-white transition ${ruBypass ? 'translate-x-7' : 'translate-x-1'}`}></span>
+                </button>
+              </div>
             </div>
           </div>
         );
       }
 
-      const nav = [
-        { id: 'profile', label: 'Профиль' },
-        { id: 'shop', label: 'Магазин' },
-        { id: 'stats', label: 'Статистика' },
-        { id: 'ref', label: 'Рефералы' },
-        { id: 'support', label: 'Поддержка' },
-      ];
-      if (user?.is_admin) nav.push({ id: 'admin', label: 'Админ' });
-
-      return (
-        <div className="min-h-screen bg-gradient-to-b from-bg via-[#101010] to-bg px-4 pb-24 pt-5">
-          <Toast item={toast} onClose={() => setToast(null)} />
-
-          <div className="mb-4 rounded-xl2 bg-panel p-4 border border-zinc-800" style={{ boxShadow: 'var(--app-shadow)' }}>
-            <div className="text-sm text-muted">Bobrik VPN Mini App</div>
-            <div className="mt-1 text-2xl font-semibold">{fmtMoney(user?.balance_rub)}</div>
-          </div>
-
-          <div className="relative min-h-[500px]">
-            <section className={`space-y-3 transition-all duration-200 ${tab === 'profile' ? 'opacity-100 translate-y-0 relative' : 'opacity-0 translate-y-1 absolute inset-0 pointer-events-none'} animate-[fadein_.25s_ease-out]`} key={`profile-${tick}`}>
-              <div className="rounded-xl2 bg-panel p-4 border border-zinc-800">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-semibold">Подписка</h2>
-                  <span className={`px-3 py-1 rounded-full text-xs font-semibold ${subActive ? 'bg-emerald-700/40 text-emerald-300' : 'bg-red-700/40 text-red-300'}`}>
-                    {subActive ? 'Subscription Active' : 'Subscription Inactive'}
-                  </span>
-                </div>
-                <div className="mt-3 rounded-xl2 border border-zinc-700 bg-zinc-900/40 p-3">
-                  <div className="text-sm text-muted">Истекает: <span className="text-text">{fmtExp(user?.expires_at)}</span></div>
-                  <div className="mt-1 text-sm text-muted">Таймер: <span className="text-accent font-semibold">{countdown}</span></div>
-                  <div className="mt-1 text-sm text-muted">Ключей: <span className="text-text">{user?.active_keys || 0} активных / {user?.keys_total || 0} всего</span></div>
-                </div>
-                <button onClick={tap(() => copyText(user?.key, 'Ключ скопирован'))} disabled={!user?.key} className="mt-4 w-full rounded-xl2 bg-accent py-3 font-semibold text-black disabled:opacity-40">Скопировать ключ</button>
-              </div>
-
-              <div className="rounded-xl2 bg-panel p-4 border border-zinc-800">
+      function renderPlans() {
+        return (
+          <div className="space-y-3 animate-in">
+            {(tariffs || []).map((tariff) => (
+              <button key={tariff.id} onClick={impact(() => setSelectedTariff(tariff), 'medium')} className="w-full rounded-card glass border border-white/10 p-4 text-left">
                 <div className="flex items-center justify-between">
                   <div>
-                    <div className="font-semibold">RU Bypass</div>
-                    <div className="text-sm text-muted">Исключения RU-доменов</div>
+                    <div className="text-lg font-semibold">{tariff.name}</div>
+                    <div className="text-sm text-muted mt-1">{tariff.days} дней доступа</div>
                   </div>
-                  <button onClick={tap(() => toggleRu(!ruBypass))} disabled={busy} className={`h-8 w-14 rounded-full transition ${ruBypass ? 'bg-accent' : 'bg-zinc-700'}`}>
-                    <span className={`block h-6 w-6 rounded-full bg-white transition ${ruBypass ? 'translate-x-7' : 'translate-x-1'}`}></span>
-                  </button>
+                  <div className="rounded-xl bg-accent/15 px-3 py-2 text-accent font-semibold">{tariff.price_rub} ₽</div>
                 </div>
-              </div>
-            </section>
+              </button>
+            ))}
+            {(tariffs || []).length === 0 && <div className="rounded-card glass border border-white/10 p-4 text-sm text-muted">Тарифы пока не загружены.</div>}
+          </div>
+        );
+      }
 
-            <section className={`space-y-3 transition-all duration-200 ${tab === 'shop' ? 'opacity-100 translate-y-0 relative' : 'opacity-0 translate-y-1 absolute inset-0 pointer-events-none'} animate-[fadein_.25s_ease-out]`} key={`shop-${tick}`}>
-              {(tariffs || []).map((t) => (
-                <button key={t.id} className="w-full rounded-xl2 bg-panel p-4 border border-zinc-800 text-left" onClick={tap(() => setSelectedTariff(t))}>
+      function renderUsage() {
+        return (
+          <div className="space-y-3 animate-in">
+            {(stats || []).length === 0 ? (
+              <div className="rounded-card glass border border-white/10 p-4 text-sm text-muted">Ключи пока не найдены.</div>
+            ) : (
+              stats.map((item) => (
+                <div key={item.id} className="rounded-card glass border border-white/10 p-4">
                   <div className="flex items-center justify-between">
-                    <span className="text-lg font-medium">{t.name}</span>
-                    <span className="text-accent font-semibold">{t.price_rub} ₽</span>
+                    <div className="font-semibold">{item.display_name || `Ключ #${item.id}`}</div>
+                    <div className={`text-xs ${item.status === 'active' ? 'text-emerald-300' : 'text-red-300'}`}>{item.status === 'active' ? 'Активен' : 'Истек'}</div>
                   </div>
-                  <div className="mt-1 text-sm text-muted">{t.days} дней</div>
-                </button>
-              ))}
-            </section>
+                  <div className="mt-2 text-sm text-muted">Сервер: <span className="text-text">{item.server_name || '—'}</span></div>
+                  <div className="mt-1 text-sm text-muted">Трафик: <span className="text-text">{item.traffic_used_human} / {item.traffic_limit_human}</span></div>
+                  <div className="mt-1 text-sm text-muted">Осталось: <span className="text-text">{item.traffic_remaining_human}</span></div>
+                </div>
+              ))
+            )}
+          </div>
+        );
+      }
 
-            <section className={`space-y-3 transition-all duration-200 ${tab === 'stats' ? 'opacity-100 translate-y-0 relative' : 'opacity-0 translate-y-1 absolute inset-0 pointer-events-none'} animate-[fadein_.25s_ease-out]`} key={`stats-${tick}`}>
-              {(stats || []).length === 0 ? (
-                <div className="rounded-xl2 bg-panel p-4 border border-zinc-800 text-sm text-muted">Ключи пока не найдены.</div>
+      function renderReferrals() {
+        return (
+          <div className="space-y-3 animate-in">
+            <div className="rounded-card glass border border-white/10 p-4">
+              <div className="font-semibold">Реферальная ссылка</div>
+              <div className="mt-2 rounded-2xl bg-surfaceSoft/70 p-3 text-xs text-muted break-all">{referralLink || 'Ссылка недоступна'}</div>
+              <button onClick={impact(async () => {
+                if (!referralLink) return showToast('Ссылка недоступна', 'error');
+                await copyText(referralLink, 'Реферальная ссылка скопирована');
+              })} className="mt-3 w-full rounded-2xl border border-white/15 px-3 py-3 text-sm">Скопировать ссылку</button>
+              <div className="mt-3 text-sm text-muted">
+                Приглашено: <span className="text-text">{refData?.direct_total || 0}</span>
+                {' '}•{' '}
+                Оплатили: <span className="text-text">{refData?.direct_paid || 0}</span>
+              </div>
+            </div>
+
+            <div className="rounded-card glass border border-white/10 p-4">
+              <div className="font-semibold mb-2">Последние приглашенные</div>
+              {(refData?.direct_invites || []).length === 0 ? (
+                <div className="text-sm text-muted">Пока нет приглашенных пользователей.</div>
               ) : (
-                stats.map((k) => (
-                  <div key={k.id} className="rounded-xl2 bg-panel p-4 border border-zinc-800">
-                    <div className="flex items-center justify-between">
-                      <div className="font-semibold">{k.display_name || `Ключ #${k.id}`}</div>
-                      <div className={`text-xs ${k.status === 'active' ? 'text-emerald-300' : 'text-red-300'}`}>{k.status === 'active' ? 'Активен' : 'Истек'}</div>
-                    </div>
-                    <div className="mt-2 text-sm text-muted">Сервер: <span className="text-text">{k.server_name || '—'}</span></div>
-                    <div className="mt-1 text-sm text-muted">Трафик: <span className="text-text">{k.traffic_used_human} / {k.traffic_limit_human}</span></div>
-                    <div className="mt-1 text-sm text-muted">Осталось: <span className="text-text">{k.traffic_remaining_human}</span></div>
+                (refData.direct_invites || []).slice(0, 12).map((invite) => (
+                  <div key={`${invite.id}-${invite.telegram_id}`} className="border-b border-white/5 py-2 text-sm last:border-0">
+                    <span className="text-text">{invite.username ? `@${invite.username}` : `ID ${invite.telegram_id}`}</span>
+                    <span className="text-muted"> • {invite.last_tariff_name || 'без оплат'}</span>
                   </div>
                 ))
               )}
-            </section>
+            </div>
+          </div>
+        );
+      }
 
-            <section className={`space-y-3 transition-all duration-200 ${tab === 'ref' ? 'opacity-100 translate-y-0 relative' : 'opacity-0 translate-y-1 absolute inset-0 pointer-events-none'} animate-[fadein_.25s_ease-out]`} key={`ref-${tick}`}>
-              <div className="rounded-xl2 bg-panel p-4 border border-zinc-800">
-                <div className="font-semibold">Реферальная ссылка</div>
-                <div className="mt-1 text-sm text-muted break-all">{referralLink || 'Ссылка недоступна'}</div>
-                <button onClick={tap(async () => { if (!referralLink) { showToast('Ссылка недоступна', 'error'); return; } await copyText(referralLink, 'Реферальная ссылка скопирована'); })} className="mt-3 w-full rounded-xl2 border border-zinc-700 bg-zinc-900 py-3 text-sm font-medium">Скопировать реф-ссылку</button>
-                <div className="mt-3 text-sm text-muted">Приглашено: <span className="text-text">{refData?.direct_total || 0}</span> • Оплатили: <span className="text-text">{refData?.direct_paid || 0}</span></div>
+      function renderSupport() {
+        return (
+          <div className="space-y-3 animate-in">
+            <div className="rounded-card glass border border-white/10 p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-semibold">Поддержка</div>
+                  <div className="text-xs text-muted mt-1">{supportTicket?.id ? `Открытый тикет #${supportTicket.id}` : 'Тикет будет создан при первом сообщении'}</div>
+                </div>
+                <button className="rounded-xl border border-white/15 px-3 py-2 text-xs" onClick={impact(() => refreshData(token, { silent: true }))}>Sync</button>
               </div>
-              <div className="rounded-xl2 bg-panel p-4 border border-zinc-800">
-                <div className="font-semibold mb-2">Список приглашенных</div>
-                {(refData?.direct_invites || []).length === 0 ? (
-                  <div className="text-sm text-muted">Пока нет приглашенных пользователей.</div>
+
+              <div className="mt-3 max-h-[300px] overflow-y-auto rounded-2xl border border-white/10 bg-surfaceSoft/60 p-3 space-y-2">
+                {(supportMessages || []).length === 0 ? (
+                  <div className="text-sm text-muted">История сообщений пока пуста.</div>
                 ) : (
-                  (refData.direct_invites || []).slice(0, 10).map((u) => (
-                    <div key={`${u.id}-${u.telegram_id}`} className="text-sm border-b border-zinc-800 py-2 last:border-0">
-                      <span className="text-text">{u.username ? `@${u.username}` : `ID ${u.telegram_id}`}</span>
-                      <span className="text-muted"> · {u.last_tariff_name || 'без оплат'}</span>
-                    </div>
-                  ))
+                  supportMessages.map((message) => {
+                    const isMine = message.sender_role === 'user';
+                    return (
+                      <div key={message.id} className={`rounded-2xl px-3 py-2 text-sm ${isMine ? 'bg-accent/20 border border-accent/30 ml-6' : 'bg-surface border border-white/10 mr-6'}`}>
+                        <div className="mb-1 text-[11px] font-semibold text-muted">{isMine ? 'Вы' : 'Поддержка'}</div>
+                        <div className="whitespace-pre-wrap break-words">{message.text}</div>
+                        <div className="mt-1 text-[10px] text-muted">{fmtDate(message.created_at)}</div>
+                      </div>
+                    );
+                  })
                 )}
               </div>
-            </section>
 
-            <section className={`space-y-3 transition-all duration-200 ${tab === 'support' ? 'opacity-100 translate-y-0 relative' : 'opacity-0 translate-y-1 absolute inset-0 pointer-events-none'} animate-[fadein_.25s_ease-out]`} key={`support-${tick}`}>
-              <div className="rounded-xl2 bg-panel p-4 border border-zinc-800">
-                <div className="font-semibold">Поддержка</div>
-                <div className="mt-1 text-sm text-muted">{supportTicket?.id ? `Открытый тикет #${supportTicket.id}` : 'Открытого тикета пока нет'}</div>
+              <textarea value={supportText} onChange={(e) => setSupportText(e.target.value)} rows="4" maxLength={1500} className="mt-3 w-full rounded-2xl border border-white/10 bg-surfaceSoft/60 p-3 text-sm outline-none" placeholder="Опишите проблему или вопрос" />
+              <button onClick={impact(() => sendSupportMessage(), 'medium')} disabled={busy} className="mt-3 w-full rounded-2xl bg-accent py-3 font-semibold text-black disabled:opacity-50">Отправить в поддержку</button>
+            </div>
+          </div>
+        );
+      }
 
-                <div className="mt-3 max-h-[260px] overflow-y-auto rounded-xl2 border border-zinc-700 bg-zinc-900/50 p-3 space-y-2">
-                  {(supportMessages || []).length === 0 ? (
-                    <div className="text-sm text-muted">История сообщений пока пуста.</div>
-                  ) : (
-                    supportMessages.map((m) => {
-                      const mine = m.sender_role === 'user';
-                      return (
-                        <div key={m.id} className={`rounded-xl2 px-3 py-2 text-sm ${mine ? 'bg-amber-700/30 border border-amber-700/30 ml-6' : 'bg-zinc-800 border border-zinc-700 mr-6'}`}>
-                          <div className="font-semibold text-xs mb-1">{mine ? 'Вы' : 'Поддержка'}</div>
-                          <div className="whitespace-pre-wrap break-words">{m.text}</div>
-                          <div className="mt-1 text-[10px] text-muted">{fmtExp(m.created_at)}</div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-
-                <textarea value={supportText} onChange={(e) => setSupportText(e.target.value)} className="mt-3 w-full rounded-xl2 border border-zinc-700 bg-zinc-900 p-3 text-sm outline-none" rows="4" placeholder="Опишите проблему или вопрос" maxLength={1500} />
-                <button onClick={tap(() => sendSupport(), 'medium')} disabled={busy} className="mt-3 w-full rounded-xl2 bg-accent py-3 font-semibold text-black disabled:opacity-50">Отправить в поддержку</button>
+      function renderAdmin() {
+        return (
+          <div className="space-y-3 animate-in">
+            <div className="rounded-card glass border border-white/10 p-4">
+              <div className="font-semibold">Mini App Master Switch</div>
+              <div className="mt-1 text-xs text-muted">Включайте или отключайте Mini App для всех пользователей.</div>
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                <button onClick={impact(() => setMiniAppState(true), 'medium')} disabled={busy} className="rounded-2xl bg-ok/25 py-3 font-semibold">Enable</button>
+                <button onClick={impact(() => setMiniAppState(false), 'medium')} disabled={busy} className="rounded-2xl bg-danger/25 py-3 font-semibold">Disable</button>
               </div>
-            </section>
+            </div>
+          </div>
+        );
+      }
 
-            {user?.is_admin && (
-              <section className={`space-y-3 transition-all duration-200 ${tab === 'admin' ? 'opacity-100 translate-y-0 relative' : 'opacity-0 translate-y-1 absolute inset-0 pointer-events-none'} animate-[fadein_.25s_ease-out]`} key={`admin-${tick}`}>
-                <div className="rounded-xl2 bg-panel p-4 border border-zinc-800">
-                  <div className="font-semibold">Mini App Master Switch</div>
-                  <div className="mt-1 text-sm text-muted">Управление доступностью Mini App для пользователей.</div>
-                  <div className="mt-4 grid grid-cols-2 gap-2">
-                    <button onClick={tap(() => toggleMiniApp(true), 'medium')} disabled={busy} className="rounded-xl2 bg-emerald-700/50 py-3 font-semibold">Enable</button>
-                    <button onClick={tap(() => toggleMiniApp(false), 'medium')} disabled={busy} className="rounded-xl2 bg-red-700/50 py-3 font-semibold">Disable</button>
-                  </div>
-                </div>
-              </section>
-            )}
+      function renderTabContent() {
+        if (tab === 'dashboard') return renderDashboard();
+        if (tab === 'plans') return renderPlans();
+        if (tab === 'usage') return renderUsage();
+        if (tab === 'ref') return renderReferrals();
+        if (tab === 'support') return renderSupport();
+        if (tab === 'admin' && user?.is_admin) return renderAdmin();
+        return renderDashboard();
+      }
+
+      if (loading) return <><Toast item={toast} onClose={() => setToast(null)} /><Loader /></>;
+      if (maintenance) return <><Toast item={toast} onClose={() => setToast(null)} /><Maintenance onRetry={impact(() => bootstrap(), 'medium')} /></>;
+
+      if (authError) {
+        return (
+          <div className="min-h-screen px-4 py-10">
+            <Toast item={toast} onClose={() => setToast(null)} />
+            <div className="mx-auto max-w-md rounded-card glass border border-danger/30 p-6">
+              <h1 className="text-xl font-semibold text-red-200">Ошибка авторизации</h1>
+              <p className="mt-2 text-sm text-muted">{authError.message}</p>
+              <p className="mt-1 text-xs text-muted">HTTP: {authError.status || 'n/a'}</p>
+              <button onClick={impact(() => bootstrap(), 'medium')} className="mt-5 w-full rounded-2xl bg-accent py-3 font-semibold text-black">Повторить</button>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="min-h-screen px-4 pb-24 pt-5">
+          <Toast item={toast} onClose={() => setToast(null)} />
+
+          <div className="mb-4 rounded-card glass border border-white/10 p-4" style={{ boxShadow: 'var(--panel-shadow)' }}>
+            <div className="text-xs uppercase tracking-wider text-muted">Bobrik VPN Mini App</div>
+            <div className="mt-1 text-2xl font-semibold">{fmtMoney(user?.balance_rub)}</div>
           </div>
 
-          <nav className="fixed bottom-3 left-0 right-0 mx-auto flex w-[calc(100%-24px)] max-w-md justify-between rounded-xl2 bg-panelSoft px-3 py-3 border border-zinc-800 overflow-x-auto gap-3" style={{ backdropFilter: 'blur(8px)' }}>
-            {nav.map((n) => (
-              <button key={n.id} className={`${tab === n.id ? 'text-accent' : 'text-muted'} whitespace-nowrap`} onClick={tap(() => {
-                if (n.id !== tab) {
-                  setTick((v) => v + 1);
-                  setTab(n.id);
-                }
-              })}>{n.label}</button>
+          {renderTabContent()}
+
+          <nav className="fixed bottom-3 left-0 right-0 mx-auto flex w-[calc(100%-20px)] max-w-md gap-2 overflow-x-auto rounded-2xl border border-white/10 px-3 py-3 glass" style={{ boxShadow: 'var(--panel-shadow)' }}>
+            {tabs.map((item) => (
+              <button
+                key={item.id}
+                onClick={impact(() => setTab(item.id), 'light')}
+                className={`whitespace-nowrap rounded-xl px-3 py-2 text-sm ${tab === item.id ? 'bg-accent text-black font-semibold' : 'text-muted'}`}
+              >
+                {item.title}
+              </button>
             ))}
           </nav>
 
           {selectedTariff && (
-            <div className="fixed inset-0 z-20 bg-black/60" onClick={tap(() => setSelectedTariff(null))}>
-              <div className="absolute bottom-0 left-0 right-0 rounded-t-[24px] bg-panel p-4 border-t border-zinc-700" onClick={(e) => e.stopPropagation()}>
-                <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-zinc-600"></div>
+            <div className="fixed inset-0 z-30 bg-black/65" onClick={() => setSelectedTariff(null)}>
+              <div className="absolute bottom-0 left-0 right-0 rounded-t-[26px] glass border-t border-white/10 p-4" onClick={(event) => event.stopPropagation()}>
+                <div className="mx-auto mb-3 h-1.5 w-14 rounded-full bg-white/20"></div>
                 <div className="text-lg font-semibold">{selectedTariff.name}</div>
-                <div className="mb-3 text-sm text-muted">{selectedTariff.days} дней · {selectedTariff.price_rub} ₽</div>
+                <div className="mb-3 text-sm text-muted">{selectedTariff.days} дней • {selectedTariff.price_rub} ₽</div>
                 <div className="space-y-2">
-                  {METHODS.map((m) => (
-                    <button key={m.code} onClick={tap(() => createInvoice(m.code), 'medium')} disabled={busy} className="w-full rounded-xl2 border border-zinc-700 px-4 py-3 text-left">{m.label}</button>
+                  {PAY_METHODS.map((method) => (
+                    <button key={method.code} onClick={impact(() => createInvoice(method.code), 'medium')} disabled={busy} className="w-full rounded-2xl border border-white/10 bg-surfaceSoft/70 px-4 py-3 text-left">
+                      <div className="font-medium">{method.title}</div>
+                      <div className="text-xs text-muted mt-1">{method.hint}</div>
+                    </button>
                   ))}
                 </div>
               </div>
