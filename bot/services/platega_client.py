@@ -25,10 +25,11 @@ DEFAULT_PLATEGA_METHOD_IDS: Dict[str, int] = {
 }
 
 FALLBACK_METHOD_IDS: Dict[str, list[int]] = {
-    # Some merchants still use legacy mapping.
-    "sbp": [2],
-    "card": [11, 10, 14, 15],
-    "crypto": [13, 12],
+    # Keep defaults strict to the documented API contract.
+    # Extra fallback ids can still be supplied via DB/env overrides.
+    "sbp": [],
+    "card": [],
+    "crypto": [],
 }
 
 PLATEGA_METHODS: Dict[str, Dict[str, Any]] = {
@@ -302,8 +303,6 @@ def _dedupe_values(seq: list[Union[int, str, None]]) -> list[Union[int, str, Non
 
 def _method_candidates_for_key(method_key: str) -> list[Union[int, str, None]]:
     method_id = _method_id_for_code(method_key)
-    aliases = list(PLATEGA_METHODS[method_key].get("api_aliases", []))
-    aliases.extend(_extra_aliases_for_code(method_key))
     candidates: list[Union[int, str, None]] = []
 
     candidate_ids: list[int] = []
@@ -317,9 +316,7 @@ def _method_candidates_for_key(method_key: str) -> list[Union[int, str, None]]:
             candidate_ids.append(fallback_id)
 
     for cid in candidate_ids:
-        candidates.extend([cid, str(cid)])
-
-    candidates.extend(aliases)
+        candidates.append(cid)
     return _dedupe_values(candidates)
 
 
@@ -352,6 +349,11 @@ def _normalize_amount_rub(value: Union[int, float, str, Decimal]) -> Decimal:
     return amount.quantize(Decimal("0.01"))
 
 
+def _to_minor_units(amount_rub: Decimal) -> int:
+    """Convert rubles to minor units (kopecks) per Platega docs."""
+    return int((amount_rub * 100).to_integral_value())
+
+
 def _build_payload(
     *,
     amount_rub: Decimal,
@@ -361,22 +363,28 @@ def _build_payload(
     fail_url: str,
     payment_method: Optional[Union[int, str]],
 ) -> Dict[str, Any]:
+    payment_method_normalized: Optional[Union[int, str]] = payment_method
+    if isinstance(payment_method_normalized, str):
+        raw = payment_method_normalized.strip()
+        if raw.isdigit():
+            payment_method_normalized = int(raw)
+
     payload = {
         "description": description,
         "externalId": order_id,
         "payload": order_id,
         "paymentDetails": {
-            "amount": f"{amount_rub:.2f}",
+            "amount": _to_minor_units(amount_rub),
             "currency": "RUB",
         },
         "return": success_url,
         "failedUrl": fail_url,
     }
 
-    if payment_method is not None:
-        payload["paymentMethod"] = payment_method
+    if payment_method_normalized is not None:
+        payload["paymentMethod"] = payment_method_normalized
 
-    method_key = _method_key_from_value(payment_method)
+    method_key = _method_key_from_value(payment_method_normalized)
     if method_key == "crypto":
         payload["balance"] = _intl_balance()
 
@@ -425,62 +433,50 @@ async def create_payment_link(
                 fail_url=fail_url,
                 payment_method=method_candidate,
             )
-            payload_variants: list[Dict[str, Any]] = [payload]
-            # Some Platega deployments validate payload through wrapper object "command".
-            payload_variants.append({"command": payload})
-            # Hybrid variant for strict validators that require both root fields and `command`.
-            payload_variants.append({**payload, "command": payload})
+            final_payload = payload
+            try:
+                async with session.post(url, json=payload, headers=headers) as response:
+                    text = await response.text()
+                    status = response.status
+            except aiohttp.ClientError as exc:
+                logger.error(
+                    "Platega create-payment network error: request_id=%s payload=%s error=%s",
+                    request_id,
+                    payload,
+                    exc,
+                )
+                final_error = f"network error: {exc}"
+                continue
 
-            candidate_done = False
-            for payload_variant in payload_variants:
-                final_payload = payload_variant
-                try:
-                    async with session.post(url, json=payload_variant, headers=headers) as response:
-                        text = await response.text()
-                        status = response.status
-                except aiohttp.ClientError as exc:
-                    logger.error(
-                        "Platega create-payment network error: request_id=%s payload=%s error=%s",
-                        request_id,
-                        payload_variant,
-                        exc,
-                    )
-                    final_error = f"network error: {exc}"
-                    continue
+            if status >= 400:
+                logger.error(
+                    "Platega create-payment error: status=%s request_id=%s payload=%s response=%s",
+                    status,
+                    request_id,
+                    payload,
+                    text,
+                )
+                final_error = f"HTTP {status}"
+                continue
 
-                if status >= 400:
-                    logger.error(
-                        "Platega create-payment error: status=%s request_id=%s payload=%s response=%s",
-                        status,
-                        request_id,
-                        payload_variant,
-                        text,
-                    )
-                    final_error = f"HTTP {status}"
-                    continue
+            try:
+                data = json.loads(text)
+            except Exception:
+                logger.error("Platega create-payment invalid JSON: status=%s body=%s", status, text)
+                final_error = "invalid JSON response"
+                continue
 
-                try:
-                    data = json.loads(text)
-                except Exception:
-                    logger.error("Platega create-payment invalid JSON: status=%s body=%s", status, text)
-                    final_error = "invalid JSON response"
-                    continue
+            if isinstance(data, dict) and data.get("ok") is False:
+                final_error = str(data.get("message") or data.get("detail") or "provider rejected request")
+                logger.error(
+                    "Platega create-payment provider rejection: request_id=%s payload=%s response=%s",
+                    request_id,
+                    payload,
+                    data,
+                )
+                continue
 
-                if isinstance(data, dict) and data.get("ok") is False:
-                    final_error = str(data.get("message") or data.get("detail") or "provider rejected request")
-                    logger.error(
-                        "Platega create-payment provider rejection: request_id=%s payload=%s response=%s",
-                        request_id,
-                        payload_variant,
-                        data,
-                    )
-                    continue
-
-                candidate_done = True
-                break
-
-            if candidate_done:
-                break
+            break
 
     if data is None:
         details = f" (last payload={final_payload})" if final_payload else ""
