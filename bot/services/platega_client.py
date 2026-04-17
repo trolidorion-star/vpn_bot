@@ -428,6 +428,8 @@ async def create_payment_link(
             payload_variants: list[Dict[str, Any]] = [payload]
             # Some Platega deployments validate payload through wrapper object "command".
             payload_variants.append({"command": payload})
+            # Hybrid variant for strict validators that require both root fields and `command`.
+            payload_variants.append({**payload, "command": payload})
 
             candidate_done = False
             for payload_variant in payload_variants:
