@@ -21,6 +21,7 @@ __all__ = [
     'is_cards_configured',
     'is_yookassa_qr_enabled',
     'is_yookassa_qr_configured',
+    'is_legacy_payments_enabled',
     'get_yookassa_credentials',
     'is_trial_enabled',
     'get_trial_tariff_id',
@@ -131,6 +132,12 @@ def is_cards_configured() -> bool:
 def is_yookassa_qr_enabled() -> bool:
     """Проверяет, включена ли QR-оплата через ЮКассу."""
     return get_setting('yookassa_qr_enabled', '0') == '1'
+
+def is_legacy_payments_enabled() -> bool:
+    """
+    Резервные платежи (USDT / старые карты / QR) включены ли для пользователей.
+    """
+    return get_setting('legacy_payments_enabled', '0') == '1'
 
 def is_yookassa_qr_configured() -> bool:
     """

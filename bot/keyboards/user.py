@@ -122,6 +122,10 @@ def buy_key_kb(
     stars_enabled: bool = False,
     cards_enabled: bool = False,
     yookassa_qr_enabled: bool = False,
+    platega_enabled: bool = False,
+    platega_test_mode: bool = False,
+    legacy_enabled: bool | None = None,
+    is_admin: bool = False,
     order_id: str = None,
     show_balance_button: bool = False,
     show_gift_button: bool = True
@@ -140,10 +144,13 @@ def buy_key_kb(
         show_balance_button: Показывать ли кнопку «Использовать баланс»
     """
     builder = InlineKeyboardBuilder()
+    if legacy_enabled is None:
+        from database.requests import is_legacy_payments_enabled
+        legacy_enabled = is_legacy_payments_enabled()
 
     # Кнопки оплаты (показываем только включённые методы)
     # USDT
-    if crypto_configured:
+    if legacy_enabled and crypto_configured:
         if crypto_mode == 'simple':
             cb_data = f"pay_crypto:{order_id}" if order_id else "pay_crypto"
             builder.row(InlineKeyboardButton(text="💰 Оплатить USDT", callback_data=cb_data))
@@ -158,17 +165,26 @@ def buy_key_kb(
         )
 
     # Карты (Telegram Payments) — переход к выбору тарифа
-    if cards_enabled:
+    if legacy_enabled and cards_enabled:
         cb_data = f"pay_cards:{order_id}" if order_id else "pay_cards"
         builder.row(
             InlineKeyboardButton(text="💳 Оплатить картой", callback_data=cb_data)
         )
 
     # QR ЮКасса — переход к выбору тарифа
-    if yookassa_qr_enabled:
+    if legacy_enabled and yookassa_qr_enabled:
         builder.row(
             InlineKeyboardButton(text="📱 QR-оплата (Карта/СБП)", callback_data="pay_qr")
         )
+
+    if platega_enabled:
+        builder.row(InlineKeyboardButton(text="🏦 СБП", callback_data="pay_platega_method:sbp"))
+        builder.row(InlineKeyboardButton(text="💳 Карта РФ", callback_data="pay_platega_method:card"))
+        builder.row(InlineKeyboardButton(text="🪙 Криптовалюта", callback_data="pay_platega_method:crypto"))
+        if is_admin and platega_test_mode:
+            builder.row(
+                InlineKeyboardButton(text="Тестовый Platega (1 RUB)", callback_data="pay_platega_test")
+            )
 
     # Кнопка «Использовать баланс» — только при выполнении всех трёх условий
     # (is_referral_enabled + reward_type='balance' + personal_balance > 0)
@@ -274,7 +290,7 @@ def balance_payment_kb(
     return builder.as_markup()
 
 
-def tariff_select_kb(tariffs: list, back_callback: str = "buy_key", order_id: str = None, is_cards: bool = False, is_crypto: bool = False, is_balance: bool = False, is_qr: bool = False, groups_data: list = None, is_gift: bool = False) -> InlineKeyboardMarkup:
+def tariff_select_kb(tariffs: list, back_callback: str = "buy_key", order_id: str = None, is_cards: bool = False, is_crypto: bool = False, is_balance: bool = False, is_qr: bool = False, is_platega: bool = False, groups_data: list = None, is_gift: bool = False) -> InlineKeyboardMarkup:
     """
     Клавиатура выбора тарифа для оплаты Stars, Картами, Криптой или Балансом.
     
@@ -314,6 +330,13 @@ def tariff_select_kb(tariffs: list, back_callback: str = "buy_key", order_id: st
                 price_display = f"{price_rub} ₽"
                 prefix = "gift_qr_pay" if is_gift else "qr_pay"
                 emoji = '📱'
+            elif is_platega:
+                price_rub = tariff.get('price_rub')
+                if price_rub is None or price_rub <= 0:
+                    continue
+                price_display = f"{price_rub} ₽"
+                prefix = "gift_platega_pay" if is_gift else "platega_pay"
+                emoji = '💳'
             elif is_balance:
                 price_rub = tariff.get('price_rub')
                 if price_rub is None or price_rub <= 1:
@@ -578,7 +601,7 @@ def key_show_kb(key_id: int = None) -> InlineKeyboardMarkup:
     return key_issued_kb()
 
 
-def renew_tariff_select_kb(tariffs: list, key_id: int, order_id: str = None, is_cards: bool = False, is_crypto: bool = False, is_balance: bool = False, is_qr: bool = False) -> InlineKeyboardMarkup:
+def renew_tariff_select_kb(tariffs: list, key_id: int, order_id: str = None, is_cards: bool = False, is_crypto: bool = False, is_balance: bool = False, is_qr: bool = False, is_platega: bool = False) -> InlineKeyboardMarkup:
     """
     Клавиатура выбора тарифа для продления ключа (для Stars, Карт или Баланса).
     
@@ -614,6 +637,13 @@ def renew_tariff_select_kb(tariffs: list, key_id: int, order_id: str = None, is_
             price_display = f"{price_rub} ₽"
             prefix = "renew_pay_qr"
             emoji = '📱'
+        elif is_platega:
+            price_rub = tariff.get('price_rub')
+            if price_rub is None or price_rub <= 0:
+                continue
+            price_display = f"{price_rub} ₽"
+            prefix = "renew_pay_platega"
+            emoji = '💳'
         elif is_balance:
             price_rub = tariff.get('price_rub')
             if price_rub is None or price_rub <= 1:
@@ -656,6 +686,10 @@ def renew_payment_method_kb(
     stars_enabled: bool = False,
     cards_enabled: bool = False,
     yookassa_qr_enabled: bool = False,
+    platega_enabled: bool = False,
+    platega_test_mode: bool = False,
+    legacy_enabled: bool | None = None,
+    is_admin: bool = False,
     show_balance_button: bool = False
 ) -> InlineKeyboardMarkup:
     """
@@ -672,9 +706,12 @@ def renew_payment_method_kb(
         show_balance_button: Показывать ли кнопку «Использовать баланс»
     """
     builder = InlineKeyboardBuilder()
+    if legacy_enabled is None:
+        from database.requests import is_legacy_payments_enabled
+        legacy_enabled = is_legacy_payments_enabled()
 
     # USDT
-    if crypto_configured:
+    if legacy_enabled and crypto_configured:
         if crypto_mode == 'simple':
             builder.row(
                 InlineKeyboardButton(text="💰 Оплатить USDT", callback_data=f"renew_crypto_tariff:{key_id}")
@@ -694,7 +731,7 @@ def renew_payment_method_kb(
         )
 
     # Карты — переход к выбору тарифа
-    if cards_enabled:
+    if legacy_enabled and cards_enabled:
         builder.row(
             InlineKeyboardButton(
                 text="💳 Оплатить картой",
@@ -703,13 +740,25 @@ def renew_payment_method_kb(
         )
 
     # QR ЮКасса— переход к выбору тарифа
-    if yookassa_qr_enabled:
+    if legacy_enabled and yookassa_qr_enabled:
         builder.row(
             InlineKeyboardButton(
                 text="📱 QR-оплата (Карта/СБП)",
                 callback_data=f"renew_qr_tariff:{key_id}"
             )
         )
+
+    if platega_enabled:
+        builder.row(InlineKeyboardButton(text="🏦 СБП", callback_data=f"renew_platega_method:{key_id}:sbp"))
+        builder.row(InlineKeyboardButton(text="💳 Карта РФ", callback_data=f"renew_platega_method:{key_id}:card"))
+        builder.row(InlineKeyboardButton(text="🪙 Криптовалюта", callback_data=f"renew_platega_method:{key_id}:crypto"))
+        if is_admin and platega_test_mode:
+            builder.row(
+                InlineKeyboardButton(
+                    text="Тестовый Platega (1 RUB)",
+                    callback_data="pay_platega_test",
+                )
+            )
 
     # Кнопка «Использовать баланс» — только при выполнении всех трёх условий
     # (is_referral_enabled + reward_type='balance' + personal_balance > 0)

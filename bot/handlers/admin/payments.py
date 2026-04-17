@@ -20,6 +20,7 @@ from database.requests import (
     is_stars_enabled,
     is_cards_enabled,
     is_yookassa_qr_enabled,
+    is_legacy_payments_enabled,
     get_crypto_integration_mode,
     set_crypto_integration_mode
 )
@@ -30,6 +31,11 @@ from bot.states.admin_states import (
     get_total_crypto_params
 )
 from bot.utils.admin import is_admin
+from bot.services.platega_client import (
+    get_enabled_platega_methods,
+    is_platega_ready,
+    is_platega_test_mode,
+)
 from bot.keyboards.admin import (
     payments_menu_kb,
     crypto_setup_kb,
@@ -98,6 +104,13 @@ async def show_payments_menu(callback: CallbackQuery, state: FSMContext):
     crypto = is_crypto_enabled()
     cards = is_cards_enabled()
     qr = is_yookassa_qr_enabled()
+    platega = is_platega_ready()
+    platega_test_mode = is_platega_test_mode()
+    legacy_enabled = is_legacy_payments_enabled()
+    enabled_platega_codes = {code for code, _label, _method_id in get_enabled_platega_methods()}
+    platega_sbp_enabled = "sbp" in enabled_platega_codes
+    platega_card_enabled = "card" in enabled_platega_codes
+    platega_crypto_enabled = "crypto" in enabled_platega_codes
 
     text = (
         "💳 <b>Настройки оплаты</b>\n\n"
@@ -129,11 +142,34 @@ async def show_payments_menu(callback: CallbackQuery, state: FSMContext):
     else:
         text += "⚪ <b>QR-оплата (ЮКасса прямая/СБП)</b>\n"
 
+
+    if platega:
+        text += "ON <b>Platega</b>\n"
+    else:
+        text += "OFF <b>Platega</b>\n"
+
+    if platega_test_mode:
+        text += "ON <b>Platega test mode</b>\n"
+    else:
+        text += "OFF <b>Platega test mode</b>\n"
+    text += f"{'ON' if legacy_enabled else 'OFF'} <b>Legacy reserve payments</b>\n"
     monthly_reset = get_setting('monthly_traffic_reset_enabled', '0') == '1'
 
     await safe_edit_or_send(callback.message, 
         text,
-        reply_markup=payments_menu_kb(stars, crypto, cards, qr, monthly_reset)
+        reply_markup=payments_menu_kb(
+            stars,
+            crypto,
+            cards,
+            qr,
+            monthly_reset,
+            platega,
+            platega_test_mode,
+            legacy_enabled,
+            platega_sbp_enabled,
+            platega_card_enabled,
+            platega_crypto_enabled,
+        )
     )
     await callback.answer()
 
@@ -178,6 +214,90 @@ async def toggle_stars(callback: CallbackQuery, state: FSMContext):
     # Обновляем экран
     await show_payments_menu(callback, state)
 
+
+
+
+# ============================================================================
+# TOGGLE PLATEGA
+# ============================================================================
+
+@router.callback_query(F.data == "admin_payments_toggle_platega")
+async def toggle_platega(callback: CallbackQuery, state: FSMContext):
+    """Enable or disable Platega payment method."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Access denied", show_alert=True)
+        return
+
+    current = get_setting('platega_enabled', '1') == '1'
+    new_value = '0' if current else '1'
+    set_setting('platega_enabled', new_value)
+
+    status = "enabled" if new_value == '1' else "disabled"
+    await callback.answer(f"Platega {status}")
+    await show_payments_menu(callback, state)
+
+
+@router.callback_query(F.data == "admin_payments_toggle_platega_test")
+async def toggle_platega_test_mode(callback: CallbackQuery, state: FSMContext):
+    """Enable or disable Platega test mode."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Access denied", show_alert=True)
+        return
+
+    current = get_setting('platega_test_mode', '0') == '1'
+    new_value = '0' if current else '1'
+    set_setting('platega_test_mode', new_value)
+
+    status = "enabled" if new_value == '1' else "disabled"
+    await callback.answer(f"Platega test mode {status}")
+    await show_payments_menu(callback, state)
+
+
+def _toggle_setting_bool(key: str, default: str = "1") -> str:
+    current = get_setting(key, default) == "1"
+    new_value = "0" if current else "1"
+    set_setting(key, new_value)
+    return new_value
+
+
+@router.callback_query(F.data == "admin_payments_toggle_legacy")
+async def toggle_legacy_payments(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Access denied", show_alert=True)
+        return
+    new_value = _toggle_setting_bool("legacy_payments_enabled", "0")
+    await callback.answer("Legacy reserve ON" if new_value == "1" else "Legacy reserve OFF")
+    await show_payments_menu(callback, state)
+
+
+@router.callback_query(F.data == "admin_payments_toggle_platega_sbp")
+async def toggle_platega_sbp(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Access denied", show_alert=True)
+        return
+    new_value = _toggle_setting_bool("platega_method_sbp_enabled", "1")
+    await callback.answer("Platega SBP ON" if new_value == "1" else "Platega SBP OFF")
+    await show_payments_menu(callback, state)
+
+
+@router.callback_query(F.data == "admin_payments_toggle_platega_card")
+async def toggle_platega_card(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Access denied", show_alert=True)
+        return
+    new_value = _toggle_setting_bool("platega_method_card_enabled", "1")
+    await callback.answer("Platega Card ON" if new_value == "1" else "Platega Card OFF")
+    await show_payments_menu(callback, state)
+
+
+@router.callback_query(F.data == "admin_payments_toggle_platega_crypto")
+async def toggle_platega_crypto(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Access denied", show_alert=True)
+        return
+    new_value = _toggle_setting_bool("platega_method_crypto_enabled", "1")
+    await callback.answer("Platega Crypto/Intl ON" if new_value == "1" else "Platega Crypto/Intl OFF")
+    await show_payments_menu(callback, state)
 
 # ============================================================================
 # TOGGLE CRYPTO

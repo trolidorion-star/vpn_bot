@@ -6,6 +6,7 @@ from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from bot.utils.text import escape_html, safe_edit_or_send
 from config import ADMIN_IDS
+from bot.services.platega_client import get_enabled_platega_methods, is_platega_ready, is_platega_test_mode
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -100,7 +101,7 @@ async def finalize_payment_ui(message: Message, state: FSMContext, text: str, or
 async def renew_invoice_cancel_handler(callback: CallbackQuery):
     """Отмена инвойса и возврат к выбору способа оплаты."""
     from bot.keyboards.user import renew_payment_method_kb
-    from database.requests import get_key_details_for_user, get_all_tariffs, is_crypto_configured, is_stars_enabled, is_cards_enabled, get_user_internal_id, create_pending_order, get_setting, is_yookassa_qr_configured, get_crypto_integration_mode, is_referral_enabled, get_referral_reward_type, get_user_balance
+    from database.requests import get_key_details_for_user, get_all_tariffs, is_crypto_configured, is_stars_enabled, is_cards_enabled, get_user_internal_id, create_pending_order, get_setting, is_yookassa_qr_configured, get_crypto_integration_mode, is_referral_enabled, get_referral_reward_type, get_user_balance, is_legacy_payments_enabled
     from bot.services.billing import build_crypto_payment_url, extract_item_id_from_url
     parts = callback.data.split(':')
     key_id = int(parts[1])
@@ -115,8 +116,13 @@ async def renew_invoice_cancel_handler(callback: CallbackQuery):
     stars_enabled = is_stars_enabled()
     cards_enabled = is_cards_enabled()
     yookassa_qr_enabled = is_yookassa_qr_configured()
+    legacy_enabled = is_legacy_payments_enabled()
     
-    if not crypto_configured and (not stars_enabled) and (not cards_enabled) and (not yookassa_qr_enabled):
+    platega_enabled = is_platega_ready() and bool(get_enabled_platega_methods())
+    platega_test_mode = is_platega_test_mode()
+
+    has_legacy = legacy_enabled and (crypto_configured or cards_enabled or yookassa_qr_enabled)
+    if (not stars_enabled) and (not platega_enabled) and (not has_legacy):
         await safe_edit_or_send(callback.message, '😔 Способы оплаты временно недоступны.', force_new=True)
         return
 
@@ -124,7 +130,7 @@ async def renew_invoice_cancel_handler(callback: CallbackQuery):
     crypto_mode = get_crypto_integration_mode()
     user_id = get_user_internal_id(telegram_id)
     
-    if crypto_configured and user_id:
+    if legacy_enabled and crypto_configured and user_id:
         tariffs = get_all_tariffs(include_hidden=False)
         if tariffs:
             (_, order_id) = create_pending_order(user_id=user_id, tariff_id=tariffs[0]['id'], payment_type='crypto', vpn_key_id=key_id)
@@ -152,8 +158,12 @@ async def renew_invoice_cancel_handler(callback: CallbackQuery):
             stars_enabled=stars_enabled,
             cards_enabled=cards_enabled,
             yookassa_qr_enabled=yookassa_qr_enabled,
+            platega_enabled=platega_enabled,
+            platega_test_mode=platega_test_mode,
+            is_admin=telegram_id in ADMIN_IDS,
             show_balance_button=show_balance_button
         ),
         force_new=True
     )
     await callback.answer()
+

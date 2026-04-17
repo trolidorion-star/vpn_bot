@@ -1,0 +1,1 @@
+﻿"""Bobrik mini app package."""

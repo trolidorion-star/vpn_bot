@@ -22,5 +22,9 @@ class GiftFlow(StatesGroup):
     waiting_for_recipient_name = State()
 
 
+class PromoCodeFlow(StatesGroup):
+    waiting_for_platega_code = State()
+
+
 class KeyExclusions(StatesGroup):
     waiting_for_rule_value = State()

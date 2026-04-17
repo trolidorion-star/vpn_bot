@@ -164,3 +164,42 @@ pytest tests/ -v
 Очень нужна ваша поддержка, даже 100р уже вперед. как говорится с мира по нитке ;)
 💳 **Карты РФ:** https://yoomoney.ru/fundraise/1GJ73GGRJBC.260318
 💰 **USDT (TON/BSC/ARBITRUM):** https://t.me/Ya_SellerBot?start=item-40
+
+## Telegram Mini App (webapp)
+
+Новый модуль расположен в `webapp/`:
+- Backend: `webapp/backend/main.py` (FastAPI)
+- Frontend: `webapp/frontend/index.html` (React + Tailwind)
+
+### Локальный запуск
+
+```bash
+pip install -r requirements.txt
+python3 -m uvicorn webapp.backend.main:app --host 0.0.0.0 --port 8090
+```
+
+API:
+- `POST /api/auth/session`
+- `GET /api/get_user_info`
+- `GET /api/get_tariffs`
+- `POST /api/create_invoice`
+- `POST /api/set_ru_bypass`
+
+Готовые шаблоны деплоя:
+- `deploy/nginx.conf`
+- `deploy/bobrik-miniapp.service`
+
+## Emergency Recovery
+
+Если после правок портов/конфигов пропал доступ к админке и VPN не работает, используйте:
+
+```bash
+cd /root/my-private
+git fetch --all
+git checkout feature/webapp-final
+git pull --ff-only origin feature/webapp-final
+chmod +x deploy/recover_stack.sh
+sudo bash deploy/recover_stack.sh /root/my-private yadreno-vpn
+```
+
+Подробно: `deploy/RECOVERY.md`

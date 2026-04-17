@@ -14,3 +14,5 @@ from database.db_stats import *
 from database.db_groups import *
 from database.db_settings import *
 from database.db_support import *
+from database.db_transactions import *
+from database.db_promocodes import *
