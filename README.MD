@@ -188,3 +188,18 @@ API:
 Готовые шаблоны деплоя:
 - `deploy/nginx.conf`
 - `deploy/bobrik-miniapp.service`
+
+## Emergency Recovery
+
+Если после правок портов/конфигов пропал доступ к админке и VPN не работает, используйте:
+
+```bash
+cd /root/my-private
+git fetch --all
+git checkout feature/webapp-final
+git pull --ff-only origin feature/webapp-final
+chmod +x deploy/recover_stack.sh
+sudo bash deploy/recover_stack.sh /root/my-private yadreno-vpn
+```
+
+Подробно: `deploy/RECOVERY.md`
