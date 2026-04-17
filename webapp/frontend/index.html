@@ -89,6 +89,34 @@
       right: -80px;
       top: 180px;
     }
+    .scene-layer {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      opacity: .34;
+      transition: opacity .3s ease;
+    }
+    .scene-layer.dashboard {
+      background: radial-gradient(45% 35% at 82% 15%, rgba(68,179,255,.35), transparent 70%);
+    }
+    .scene-layer.plans {
+      background: radial-gradient(42% 30% at 20% 10%, rgba(255,176,77,.25), transparent 72%);
+    }
+    .scene-layer.usage {
+      background: radial-gradient(40% 30% at 78% 75%, rgba(33,201,138,.28), transparent 70%);
+    }
+    .scene-layer.ref {
+      background: radial-gradient(40% 30% at 10% 55%, rgba(255,196,107,.24), transparent 72%);
+    }
+    .scene-layer.support {
+      background: radial-gradient(44% 30% at 25% 78%, rgba(160,120,255,.22), transparent 70%);
+    }
+    .scene-layer.diag {
+      background: radial-gradient(48% 35% at 80% 55%, rgba(255,107,107,.22), transparent 75%);
+    }
+    .scene-layer.service {
+      background: radial-gradient(42% 34% at 84% 28%, rgba(110,226,255,.2), transparent 74%);
+    }
     .glass {
       backdrop-filter: blur(10px);
       background: linear-gradient(145deg, rgba(17,31,45,0.92), rgba(12,24,37,0.94));
@@ -232,6 +260,37 @@
       font-family: var(--font-mono);
       letter-spacing: .01em;
     }
+    .tab-motion {
+      animation: tabEnter .23s cubic-bezier(.2,.8,.2,1);
+      will-change: transform, opacity;
+    }
+    @keyframes tabEnter {
+      from { opacity: .01; transform: translateY(10px) scale(.992); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    .skeleton {
+      position: relative;
+      overflow: hidden;
+      background: rgba(255,255,255,.08);
+      border-radius: 12px;
+    }
+    .skeleton::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      transform: translateX(-100%);
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,.16), transparent);
+      animation: sk 1.2s infinite;
+    }
+    @keyframes sk { to { transform: translateX(100%); } }
+    .theme-chip {
+      border: 1px solid rgba(255,255,255,.16);
+      background: rgba(255,255,255,.06);
+      border-radius: 10px;
+      padding: 4px 8px;
+      font-size: 11px;
+      line-height: 1;
+    }
     @media (max-width: 420px) {
       .premium-card { content-visibility: visible; }
       .app-orb.one { width: 210px; height: 210px; }
@@ -274,6 +333,11 @@
     .theme-light .pulse-dot { background: #1f9c73; }
     .theme-light .text-muted { color: #5f7187 !important; }
     .theme-light .text-text { color: #10253a !important; }
+    .theme-light .theme-chip {
+      border-color: rgba(12,32,52,.2);
+      background: rgba(12,32,52,.05);
+      color: #3d556f;
+    }
     .theme-light .border-white\/10,
     .theme-light .border-white\/15 {
       border-color: rgba(12, 32, 52, 0.14) !important;
@@ -319,6 +383,7 @@
     const CACHE_KEY = 'bobrik-miniapp-cache-v8';
     const CACHE_PERSIST_KEY = 'bobrik-miniapp-cache-persist-v8';
     const SUPPORT_SEEN_KEY = 'bobrik-miniapp-support-seen-v1';
+    const SUPPORT_TICKET_SEEN_KEY = 'bobrik-miniapp-support-ticket-seen-v1';
     const PERF_MODE_KEY = 'bobrik-miniapp-performance-mode-v1';
     const REDUCED_MOTION_KEY = 'bobrik-miniapp-reduced-motion-v1';
     const COMPACT_LISTS_KEY = 'bobrik-miniapp-compact-lists-v1';
@@ -359,6 +424,23 @@
     const setSavedValue = (key, value) => {
       try {
         localStorage.setItem(key, String(value ?? ''));
+      } catch {}
+    };
+
+    const getSavedJson = (key, fallback = {}) => {
+      try {
+        const raw = localStorage.getItem(key);
+        if (!raw) return fallback;
+        const parsed = JSON.parse(raw);
+        return parsed && typeof parsed === 'object' ? parsed : fallback;
+      } catch {
+        return fallback;
+      }
+    };
+
+    const setSavedJson = (key, value) => {
+      try {
+        localStorage.setItem(key, JSON.stringify(value || {}));
       } catch {}
     };
 
@@ -578,6 +660,7 @@
       const [supportViewMessages, setSupportViewMessages] = useState([]);
       const [supportText, setSupportText] = useState('');
       const [supportUnread, setSupportUnread] = useState(0);
+      const [supportUnreadByTicket, setSupportUnreadByTicket] = useState({});
       const [ruBypass, setRuBypass] = useState(false);
       const [selectedTariff, setSelectedTariff] = useState(null);
       const [selectedKeyId, setSelectedKeyId] = useState(null);
@@ -597,6 +680,9 @@
       const [themeVariant, setThemeVariant] = useState(getSavedValue(THEME_VARIANT_KEY, 'dark'));
       const [offlineMode, setOfflineMode] = useState(false);
       const [keyFilter, setKeyFilter] = useState('all');
+      const [ticketSeenMap, setTicketSeenMap] = useState(getSavedJson(SUPPORT_TICKET_SEEN_KEY, {}));
+      const [tabContentLoading, setTabContentLoading] = useState(false);
+      const [diagReport, setDiagReport] = useState(null);
       const bootRef = useRef(0);
       const supportScrollRef = useRef(null);
 
@@ -657,6 +743,23 @@
       const impact = (fn, style = 'light') => (...args) => {
         haptic(style);
         fn?.(...args);
+      };
+
+      const changeTab = (nextTab) => {
+        if (!nextTab || nextTab === tab) return;
+        setTabContentLoading(true);
+        setTab(nextTab);
+        setTimeout(() => setTabContentLoading(false), 170);
+      };
+
+      const markTicketSeen = (ticketId) => {
+        const tid = Number(ticketId || 0);
+        if (!tid) return;
+        setTicketSeenMap((prev) => {
+          const next = { ...(prev || {}), [String(tid)]: now() };
+          setSavedJson(SUPPORT_TICKET_SEEN_KEY, next);
+          return next;
+        });
       };
 
       useEffect(() => {
@@ -764,18 +867,43 @@
           if (s.status === 'fulfilled') setStats(s.value.data || []);
           if (r.status === 'fulfilled') setRefData(r.value.data || null);
           if (sup.status === 'fulfilled') {
-            setSupportTicket(sup.value.data?.ticket || null);
+            const supData = sup.value.data || {};
+            const currentTicket = supData?.ticket || null;
+            setSupportTicket(currentTicket);
             const messages = sup.value.data?.messages || [];
             setSupportMessages(messages);
-            setSupportHistory(sup.value.data?.history || []);
-            setSupportClosedTickets(sup.value.data?.closed_tickets || []);
-            setSupportAdminHistory(sup.value.data?.admin_history || []);
-            if (!user?.is_admin) {
+            setSupportHistory(supData?.history || []);
+            setSupportClosedTickets(supData?.closed_tickets || []);
+            setSupportAdminHistory(supData?.admin_history || []);
+            const isAdminNow = Boolean((u.status === 'fulfilled' ? u.value?.data?.is_admin : user?.is_admin));
+            const historyItems = isAdminNow ? (supData?.admin_history || []) : (supData?.closed_tickets || supData?.history || []);
+            const unreadByTicket = {};
+            for (const item of historyItems) {
+              const tid = Number(item?.id || 0);
+              if (!tid) continue;
+              const seenAt = Number((ticketSeenMap || {})[String(tid)] || 0);
+              const updAt = new Date(item?.updated_at || 0).getTime() || 0;
+              if (updAt > seenAt) unreadByTicket[String(tid)] = 1;
+            }
+            if (currentTicket?.id) {
+              const tid = Number(currentTicket.id);
+              const seenAt = Number((ticketSeenMap || {})[String(tid)] || 0);
+              const hasUnreadInOpen = (messages || []).some((m) => {
+                const isIncoming = isAdminNow ? String(m?.sender_role) === 'user' : String(m?.sender_role) === 'admin';
+                const msgAt = new Date(m?.created_at || 0).getTime() || 0;
+                return isIncoming && msgAt > seenAt;
+              });
+              if (hasUnreadInOpen) unreadByTicket[String(tid)] = Math.max(1, Number(unreadByTicket[String(tid)] || 0));
+            }
+            setSupportUnreadByTicket(unreadByTicket);
+            if (!isAdminNow) {
               const seen = Number(localStorage.getItem(SUPPORT_SEEN_KEY) || 0);
               const unread = messages.filter((m) => String(m?.sender_role) === 'admin' && Number(m?.id || 0) > seen).length;
-              setSupportUnread(Math.max(0, unread));
+              setSupportUnread(Math.max(0, unread + Object.keys(unreadByTicket).length));
             } else {
-              setSupportUnread(0);
+              const seen = Number(localStorage.getItem(SUPPORT_SEEN_KEY) || 0);
+              const unread = messages.filter((m) => String(m?.sender_role) === 'user' && Number(m?.id || 0) > seen).length;
+              setSupportUnread(Math.max(0, unread + Object.keys(unreadByTicket).length));
             }
           }
 
@@ -860,6 +988,11 @@
       }
 
       useEffect(() => { bootstrap(); }, []);
+
+      useEffect(() => {
+        if (!token) return;
+        runConnectionDiagnostics().catch(() => null);
+      }, [token, performanceMode, isLowEndDevice]);
 
       useEffect(() => {
         if (!token) return;
@@ -1082,6 +1215,12 @@
           setSupportViewTicket(response.data?.ticket || null);
           setSupportViewMessages(response.data?.messages || []);
           setSupportMode('history');
+          markTicketSeen(ticketId);
+          setSupportUnreadByTicket((prev) => {
+            const next = { ...(prev || {}) };
+            delete next[String(ticketId)];
+            return next;
+          });
         } catch (error) {
           showToast(error?.message || 'Не удалось загрузить тикет', 'error');
         } finally {
@@ -1102,12 +1241,47 @@
         }
       }
 
+      async function runConnectionDiagnostics() {
+        const start = now();
+        let pingMs = null;
+        try {
+          await requestJson('/api/app_state');
+          pingMs = now() - start;
+        } catch {
+          pingMs = null;
+        }
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown';
+        const locale = navigator.language || 'ru-RU';
+        const conn = navigator.connection || {};
+        const netType = conn.effectiveType || 'unknown';
+        const downlink = Number(conn.downlink || 0);
+        const rtt = Number(conn.rtt || 0);
+        const region = tz.includes('/') ? tz.split('/')[1].replaceAll('_', ' ') : tz;
+        const preset = (performanceMode || isLowEndDevice || netType.includes('2g') || netType.includes('3g'))
+          ? 'Эко-профиль: меньше анимаций, стабильность при слабой сети'
+          : 'Стандарт-профиль: максимум плавности и визуальных эффектов';
+        const report = {
+          pingMs,
+          region,
+          locale,
+          timezone: tz,
+          netType,
+          downlink,
+          rtt,
+          preset,
+          checkedAt: now(),
+        };
+        setDiagReport(report);
+        return report;
+      }
+
       const tabs = [
         { id: 'dashboard', title: 'Главная', icon: '🏠' },
         { id: 'plans', title: 'Тарифы', icon: '💳' },
         { id: 'usage', title: 'Ключи', icon: '📈' },
         { id: 'ref', title: 'Рефералы', icon: '👥' },
         { id: 'support', title: 'Поддержка', icon: '💬', badge: supportUnread },
+        { id: 'diag', title: 'Диагностика', icon: '🛰️' },
         { id: 'service', title: 'Сервис', icon: '🧪' },
       ];
       if (user?.is_admin) tabs.push({ id: 'admin', title: 'Админ', icon: '⚙️' });
@@ -1125,8 +1299,15 @@
         if (maxId > 0) {
           localStorage.setItem(SUPPORT_SEEN_KEY, String(maxId));
         }
+        if (supportTicket?.id) markTicketSeen(supportTicket.id);
+        setSupportUnreadByTicket((prev) => {
+          if (!supportTicket?.id) return prev;
+          const next = { ...(prev || {}) };
+          delete next[String(supportTicket.id)];
+          return next;
+        });
         setSupportUnread(0);
-      }, [tab, supportMessages]);
+      }, [tab, supportMessages, supportTicket?.id]);
 
       function renderDashboard() {
         const totalPct = pct(totalTraffic.used, totalTraffic.limit);
@@ -1200,15 +1381,15 @@
             </div>
 
             <div className="grid grid-cols-3 gap-2">
-              <button onClick={impact(() => setTab('plans'))} className="rounded-2xl glass premium-card px-3 py-3 text-left">
+                <button onClick={impact(() => changeTab('plans'))} className="rounded-2xl glass premium-card px-3 py-3 text-left">
                 <div className="text-xs text-muted">Покупка</div>
                 <div className="mt-1 text-sm font-semibold">Тарифы</div>
               </button>
-              <button onClick={impact(() => setTab('usage'))} className="rounded-2xl glass premium-card px-3 py-3 text-left">
+                <button onClick={impact(() => changeTab('usage'))} className="rounded-2xl glass premium-card px-3 py-3 text-left">
                 <div className="text-xs text-muted">Контроль</div>
                 <div className="mt-1 text-sm font-semibold">Ключи</div>
               </button>
-              <button onClick={impact(() => setTab('support'))} className="rounded-2xl glass premium-card px-3 py-3 text-left">
+                <button onClick={impact(() => changeTab('support'))} className="rounded-2xl glass premium-card px-3 py-3 text-left">
                 <div className="text-xs text-muted">Помощь</div>
                 <div className="mt-1 text-sm font-semibold">Поддержка</div>
               </button>
@@ -1305,7 +1486,7 @@
                   <div className="mt-1 text-sm text-muted">До: <span className="text-text">{fmtDate(item.expires_at)}</span></div>
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     <button onClick={impact(() => openKeyDetails(item.id), 'medium')} className="rounded-xl border border-white/15 px-3 py-2 text-xs">Управление</button>
-                    <button onClick={impact(() => copyKeyLinkById(item.id))} className="rounded-xl border border-white/20 bg-gradient-to-r from-cyan-500 to-blue-600 px-3 py-2 text-xs font-semibold text-white shadow-md">Скопировать</button>
+                    <button onClick={impact(() => copyKeyLinkById(item.id))} className="rounded-xl border border-emerald-300/30 bg-emerald-500/20 px-3 py-2 text-xs font-semibold text-emerald-100">Скопировать</button>
                   </div>
                 </div>
               ))
@@ -1350,10 +1531,87 @@
         );
       }
 
+      function renderDiagnostics() {
+        const d = diagReport || {};
+        return (
+          <div className="space-y-3 animate-in">
+            <div className="rounded-card glass premium-card p-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="font-semibold">Диагностика подключения</div>
+                  <div className="text-xs text-muted mt-1 readable">Пинг, регион, сетевой профиль и рекомендации клиента</div>
+                </div>
+                <button
+                  onClick={impact(async () => {
+                    const report = await runConnectionDiagnostics();
+                    showToast(report?.pingMs ? `Пинг: ${report.pingMs} ms` : 'Диагностика обновлена');
+                  }, 'medium')}
+                  className="rounded-xl border border-white/15 px-3 py-2 text-xs"
+                >
+                  Проверить
+                </button>
+              </div>
+              <div className="mt-3 space-y-2">
+                {[
+                  ['Пинг API', d.pingMs ? `${d.pingMs} ms` : 'н/д'],
+                  ['Регион', d.region || 'н/д'],
+                  ['Сеть', d.netType || 'н/д'],
+                  ['RTT', d.rtt ? `${d.rtt} ms` : 'н/д'],
+                  ['Канал', d.downlink ? `${d.downlink} Mbps` : 'н/д'],
+                ].map(([k, v]) => (
+                  <div key={k} className="flex items-center justify-between rounded-xl bg-surfaceSoft/55 px-3 py-2 text-sm">
+                    <span className="text-muted">{k}</span>
+                    <span className="font-medium">{v}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-card glass premium-card p-4">
+              <div className="font-semibold">Рекомендуемый пресет клиента</div>
+              <div className="mt-2 rounded-2xl bg-surfaceSoft/60 px-3 py-2 text-sm readable">
+                {d.preset || 'Запустите диагностику для подбора пресета.'}
+              </div>
+              <button
+                onClick={impact(async () => {
+                  const txt = [
+                    `Диагностика Bobrik:`,
+                    `Ping: ${d.pingMs ? `${d.pingMs} ms` : 'n/a'}`,
+                    `Region: ${d.region || 'n/a'}`,
+                    `Network: ${d.netType || 'n/a'}`,
+                    `Preset: ${d.preset || 'n/a'}`,
+                  ].join('\n');
+                  await copyText(txt, 'Отчет диагностики скопирован');
+                })}
+                className="mt-3 w-full rounded-xl border border-white/15 px-3 py-2 text-sm"
+              >
+                Скопировать отчет
+              </button>
+            </div>
+          </div>
+        );
+      }
+
       function renderSupport() {
         const historyItems = user?.is_admin
           ? (supportAdminHistory || [])
           : (supportClosedTickets || supportHistory || []);
+        const qualityScenarios = [
+          {
+            id: 'slow',
+            title: 'Проблема скорости',
+            template: 'Проблема скорости подключения.\nУстройство: \nПровайдер/сеть (Wi‑Fi/моб.): \nСервер: \nВремя проблемы: ',
+          },
+          {
+            id: 'connect',
+            title: 'Не подключается',
+            template: 'Не удается подключиться к VPN.\nУстройство и ОС: \nКлиент: \nТекст ошибки: \nС какого момента: ',
+          },
+          {
+            id: 'payment',
+            title: 'Ошибка оплаты',
+            template: 'Ошибка оплаты.\nМетод оплаты: \nВремя попытки: \nСумма: \nЧто показывает на экране: ',
+          },
+        ];
         return (
           <div className="space-y-3 animate-in">
             <div className="rounded-card glass border border-white/10 p-4">
@@ -1378,6 +1636,25 @@
                 >
                   Закрытые тикеты
                 </button>
+              </div>
+              <div className="mt-3 rounded-2xl border border-white/10 bg-surfaceSoft/55 p-3">
+                <div className="text-sm font-semibold">Качество сервиса</div>
+                <div className="mt-1 text-[11px] text-muted readable">Быстрые сценарии для бота и поддержки</div>
+                <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  {qualityScenarios.map((scenario) => (
+                    <button
+                      key={scenario.id}
+                      onClick={impact(() => {
+                        setSupportMode('chat');
+                        setSupportText(scenario.template);
+                        showToast('Шаблон подставлен в форму');
+                      })}
+                      className="rounded-xl border border-white/15 bg-surface/55 px-3 py-2 text-left text-xs"
+                    >
+                      {scenario.title}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               {supportMode === 'chat' ? (
@@ -1427,7 +1704,12 @@
                         >
                           <div className="flex items-center justify-between">
                             <div className="font-medium">Тикет #{item.id}</div>
-                            <div className={`text-xs ${item.status === 'open' ? 'text-emerald-300' : 'text-muted'}`}>{item.status === 'open' ? 'Открыт' : 'Закрыт'}</div>
+                            <div className="flex items-center gap-2">
+                              {Number(supportUnreadByTicket?.[String(item.id)] || 0) > 0 && (
+                                <span className="rounded-full bg-danger px-1.5 py-0.5 text-[10px] font-semibold text-white">new</span>
+                              )}
+                              <div className={`text-xs ${item.status === 'open' ? 'text-emerald-300' : 'text-muted'}`}>{item.status === 'open' ? 'Открыт' : 'Закрыт'}</div>
+                            </div>
                           </div>
                           <div className="mt-1 text-[11px] text-muted">Обновлен: {fmtDate(item.updated_at)}</div>
                         </button>
@@ -1550,6 +1832,7 @@
         if (tab === 'usage') return renderUsage();
         if (tab === 'ref') return renderReferrals();
         if (tab === 'support') return renderSupport();
+        if (tab === 'diag') return renderDiagnostics();
         if (tab === 'service') return renderService();
         if (tab === 'admin' && user?.is_admin) return renderAdmin();
         return renderDashboard();
@@ -1577,6 +1860,7 @@
           <div className="app-bg">
             <div className="app-orb one"></div>
             <div className="app-orb two"></div>
+            <div className={`scene-layer ${tab === 'dashboard' ? 'dashboard' : tab === 'plans' ? 'plans' : tab === 'usage' ? 'usage' : tab === 'ref' ? 'ref' : tab === 'support' ? 'support' : tab === 'diag' ? 'diag' : tab === 'service' ? 'service' : 'dashboard'}`}></div>
           </div>
           <Toast item={toast} onClose={() => setToast(null)} />
           {offlineMode && (
@@ -1599,24 +1883,41 @@
                 <div className="mt-1 flex flex-wrap items-center gap-2">
                   <span className="tag">{isActive ? 'Подписка активна' : 'Подписка неактивна'}</span>
                   {(performanceMode || isLowEndDevice) && <span className="tag">Eco mode</span>}
+                  <button
+                    onClick={impact(() => setThemeVariant('dark'))}
+                    className={`theme-chip ${themeVariant === 'dark' ? 'bg-accent text-black border-transparent font-semibold' : ''}`}
+                  >
+                    Dark
+                  </button>
+                  <button
+                    onClick={impact(() => setThemeVariant('light'))}
+                    className={`theme-chip ${themeVariant === 'light' ? 'bg-accent text-black border-transparent font-semibold' : ''}`}
+                  >
+                    Light
+                  </button>
                 </div>
               </div>
             </div>
             <div className="mt-3 grid grid-cols-2 gap-2">
-              <button onClick={impact(() => setTab('plans'))} className="rounded-xl border border-white/15 bg-surfaceSoft/60 px-3 py-2 text-xs">Купить тариф</button>
-              <button onClick={impact(() => setTab('support'))} className="rounded-xl border border-white/15 bg-surfaceSoft/60 px-3 py-2 text-xs">Написать в поддержку</button>
+              <button onClick={impact(() => changeTab('plans'))} className="rounded-xl border border-white/15 bg-surfaceSoft/60 px-3 py-2 text-xs">Купить тариф</button>
+              <button onClick={impact(() => changeTab('support'))} className="rounded-xl border border-white/15 bg-surfaceSoft/60 px-3 py-2 text-xs">Написать в поддержку</button>
             </div>
           </div>
 
-          <div className="relative z-10">
-            {renderTabContent()}
+          <div className="relative z-10 tab-motion">
+            {tabContentLoading ? (
+              <div className="space-y-3">
+                <div className="rounded-card glass border border-white/10 p-4"><div className="skeleton h-5 w-2/5"></div><div className="skeleton mt-3 h-10 w-full"></div><div className="skeleton mt-2 h-10 w-full"></div></div>
+                <div className="rounded-card glass border border-white/10 p-4"><div className="skeleton h-5 w-1/3"></div><div className="skeleton mt-3 h-24 w-full"></div></div>
+              </div>
+            ) : renderTabContent()}
           </div>
 
           <nav className="fixed bottom-3 left-0 right-0 z-20 mx-auto flex w-[calc(100%-20px)] max-w-md gap-2 overflow-x-auto rounded-2xl border border-white/10 px-2.5 py-2.5 glass" style={{ boxShadow: 'var(--panel-shadow)' }}>
             {tabs.map((item) => (
               <button
                 key={item.id}
-                onClick={impact(() => setTab(item.id), 'light')}
+                onClick={impact(() => changeTab(item.id), 'light')}
                 className={`relative whitespace-nowrap rounded-xl px-3 py-2 text-xs sm:text-sm transition ${tab === item.id ? 'bg-accent text-black font-semibold' : 'bg-surfaceSoft/45 text-muted'}`}
               >
                 <span className="mr-1">{item.icon}</span>{item.title}
@@ -1670,14 +1971,14 @@
                     className="mt-2 w-full rounded-xl border border-white/10 bg-surface px-3 py-2 text-sm outline-none"
                     placeholder="Например: iPhone / Рабочий"
                   />
-                  <button onClick={impact(() => saveKeyName(), 'medium')} disabled={busy} className="mt-3 w-full rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 px-3 py-2 text-sm font-semibold text-white disabled:opacity-50">
+                  <button onClick={impact(() => saveKeyName(), 'medium')} disabled={busy} className="mt-3 w-full rounded-xl bg-accent px-3 py-2 text-sm font-semibold text-black disabled:opacity-50">
                     Сохранить название
                   </button>
                 </div>
 
                 <div className="mt-3 grid grid-cols-3 gap-2">
                   <button onClick={impact(() => refreshSelectedKeyDetails(), 'light')} className="rounded-xl border border-white/15 px-3 py-2 text-sm">Обновить</button>
-                  <button onClick={impact(() => copyKeyLinkById(selectedKeyId))} className="rounded-xl border border-white/20 bg-gradient-to-r from-cyan-500 to-blue-600 px-3 py-2 text-sm font-semibold text-white">Скопировать</button>
+                  <button onClick={impact(() => copyKeyLinkById(selectedKeyId))} className="rounded-xl border border-white/15 px-3 py-2 text-sm">Скопировать</button>
                   <button onClick={impact(() => { setSelectedKeyId(null); setSelectedKeyDetails(null); })} className="rounded-xl border border-white/15 px-3 py-2 text-sm">Закрыть</button>
                 </div>
               </div>
