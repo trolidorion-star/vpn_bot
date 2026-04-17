@@ -39,6 +39,8 @@ PLATEGA_METHODS: Dict[str, Dict[str, Any]] = {
     "card": {
         "label": "Карта РФ",
         "api_aliases": [
+            "Card",
+            "CARD",
             "CardRu",
             "CARDRU",
             "card",
@@ -423,52 +425,60 @@ async def create_payment_link(
                 fail_url=fail_url,
                 payment_method=method_candidate,
             )
-            final_payload = payload
+            payload_variants: list[Dict[str, Any]] = [payload]
+            # Some Platega deployments validate payload through wrapper object "command".
+            payload_variants.append({"command": payload})
 
-            try:
-                async with session.post(url, json=payload, headers=headers) as response:
-                    text = await response.text()
-                    status = response.status
-            except aiohttp.ClientError as exc:
-                logger.error(
-                    "Platega create-payment network error: request_id=%s payload=%s error=%s",
-                    request_id,
-                    payload,
-                    exc,
-                )
-                final_error = f"network error: {exc}"
-                continue
+            candidate_done = False
+            for payload_variant in payload_variants:
+                final_payload = payload_variant
+                try:
+                    async with session.post(url, json=payload_variant, headers=headers) as response:
+                        text = await response.text()
+                        status = response.status
+                except aiohttp.ClientError as exc:
+                    logger.error(
+                        "Platega create-payment network error: request_id=%s payload=%s error=%s",
+                        request_id,
+                        payload_variant,
+                        exc,
+                    )
+                    final_error = f"network error: {exc}"
+                    continue
 
-            if status >= 400:
-                logger.error(
-                    "Platega create-payment error: status=%s request_id=%s payload=%s response=%s",
-                    status,
-                    request_id,
-                    payload,
-                    text,
-                )
-                final_error = f"HTTP {status}"
-                continue
+                if status >= 400:
+                    logger.error(
+                        "Platega create-payment error: status=%s request_id=%s payload=%s response=%s",
+                        status,
+                        request_id,
+                        payload_variant,
+                        text,
+                    )
+                    final_error = f"HTTP {status}"
+                    continue
 
-            try:
-                data = json.loads(text)
+                try:
+                    data = json.loads(text)
+                except Exception:
+                    logger.error("Platega create-payment invalid JSON: status=%s body=%s", status, text)
+                    final_error = "invalid JSON response"
+                    continue
 
-            except Exception:
-                logger.error("Platega create-payment invalid JSON: status=%s body=%s", status, text)
-                final_error = "invalid JSON response"
-                continue
+                if isinstance(data, dict) and data.get("ok") is False:
+                    final_error = str(data.get("message") or data.get("detail") or "provider rejected request")
+                    logger.error(
+                        "Platega create-payment provider rejection: request_id=%s payload=%s response=%s",
+                        request_id,
+                        payload_variant,
+                        data,
+                    )
+                    continue
 
-            if isinstance(data, dict) and data.get("ok") is False:
-                final_error = str(data.get("message") or data.get("detail") or "provider rejected request")
-                logger.error(
-                    "Platega create-payment provider rejection: request_id=%s payload=%s response=%s",
-                    request_id,
-                    payload,
-                    data,
-                )
-                continue
+                candidate_done = True
+                break
 
-            break
+            if candidate_done:
+                break
 
     if data is None:
         details = f" (last payload={final_payload})" if final_payload else ""
