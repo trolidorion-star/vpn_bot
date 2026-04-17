@@ -27,7 +27,7 @@ DEFAULT_PLATEGA_METHOD_IDS: Dict[str, int] = {
 FALLBACK_METHOD_IDS: Dict[str, list[int]] = {
     # Some merchants still use legacy mapping.
     "sbp": [2],
-    "card": [11, 10],
+    "card": [11, 10, 14, 15],
     "crypto": [13, 12],
 }
 
@@ -38,7 +38,24 @@ PLATEGA_METHODS: Dict[str, Dict[str, Any]] = {
     },
     "card": {
         "label": "Карта РФ",
-        "api_aliases": ["CardRu", "CARDRU", "card", "CARD", "bank_card", "bankCard"],
+        "api_aliases": [
+            "CardRu",
+            "CARDRU",
+            "card",
+            "CARD",
+            "card_ru",
+            "CARD_RU",
+            "cards",
+            "CARDS",
+            "bank_card",
+            "bankCard",
+            "bankcard",
+            "BANKCARD",
+            "bank_cards",
+            "BANK_CARDS",
+            "RussianCard",
+            "RUSSIAN_CARD",
+        ],
     },
     "crypto": {
         "label": "Криптовалюта",
@@ -132,6 +149,50 @@ def _method_id_for_code(code: str) -> Optional[int]:
     except Exception:
         logger.warning("Invalid Platega method id for %s: %r", normalized, raw)
         return int(DEFAULT_PLATEGA_METHOD_IDS[normalized])
+
+
+def _extra_fallback_ids_for_code(code: str) -> list[int]:
+    normalized = (code or "").strip().lower()
+    if normalized not in PLATEGA_METHODS:
+        return []
+
+    raw = _db_get_setting(f"platega_method_{normalized}_fallback_ids", None)
+    if raw is None or not str(raw).strip():
+        raw = os.getenv(f"PLATEGA_METHOD_{normalized.upper()}_FALLBACK_IDS", "")
+
+    if not raw:
+        return []
+
+    out: list[int] = []
+    for chunk in str(raw).replace(";", ",").split(","):
+        val = str(chunk).strip()
+        if not val:
+            continue
+        try:
+            out.append(int(val))
+        except Exception:
+            logger.warning("Invalid Platega fallback id for %s: %r", normalized, val)
+    return out
+
+
+def _extra_aliases_for_code(code: str) -> list[str]:
+    normalized = (code or "").strip().lower()
+    if normalized not in PLATEGA_METHODS:
+        return []
+
+    raw = _db_get_setting(f"platega_method_{normalized}_aliases", None)
+    if raw is None or not str(raw).strip():
+        raw = os.getenv(f"PLATEGA_METHOD_{normalized.upper()}_ALIASES", "")
+
+    if not raw:
+        return []
+
+    out: list[str] = []
+    for chunk in str(raw).replace(";", ",").split(","):
+        alias = str(chunk).strip()
+        if alias:
+            out.append(alias)
+    return out
 
 
 def get_platega_payment_method_id(code: str) -> Optional[int]:
@@ -240,12 +301,16 @@ def _dedupe_values(seq: list[Union[int, str, None]]) -> list[Union[int, str, Non
 def _method_candidates_for_key(method_key: str) -> list[Union[int, str, None]]:
     method_id = _method_id_for_code(method_key)
     aliases = list(PLATEGA_METHODS[method_key].get("api_aliases", []))
+    aliases.extend(_extra_aliases_for_code(method_key))
     candidates: list[Union[int, str, None]] = []
 
     candidate_ids: list[int] = []
     if method_id is not None:
         candidate_ids.append(method_id)
     for fallback_id in FALLBACK_METHOD_IDS.get(method_key, []):
+        if fallback_id not in candidate_ids:
+            candidate_ids.append(fallback_id)
+    for fallback_id in _extra_fallback_ids_for_code(method_key):
         if fallback_id not in candidate_ids:
             candidate_ids.append(fallback_id)
 
@@ -324,12 +389,18 @@ async def create_payment_link(
     success_url: str,
     fail_url: str,
     payment_method: Optional[Union[int, str]] = None,
+    method_code_hint: Optional[str] = None,
 ) -> Dict[str, Any]:
     amount_rub_normalized = _normalize_amount_rub(amount_rub)
 
     url = f"{_base_url()}/transaction/process"
     resolved_method: Optional[Union[int, str]] = payment_method if payment_method is not None else _payment_method()
-    method_candidates = _payment_method_candidates(resolved_method)
+
+    hint_key = (method_code_hint or "").strip().lower()
+    if hint_key in PLATEGA_METHODS:
+        method_candidates = _method_candidates_for_key(hint_key)
+    else:
+        method_candidates = _payment_method_candidates(resolved_method)
 
     base_headers = _headers()
 

@@ -59,6 +59,7 @@ from database.requests import (
     is_miniapp_enabled,
     is_referral_enabled,
     set_miniapp_enabled,
+    update_key_custom_name,
     update_transaction_status,
 )
 
@@ -125,6 +126,10 @@ class AdminMiniAppToggleRequest(BaseModel):
 
 class SupportTicketRequest(BaseModel):
     message: str
+
+
+class RenameKeyRequest(BaseModel):
+    name: str
 
 
 def _bot_token() -> str:
@@ -343,6 +348,29 @@ async def _resolve_key_link_for_user(telegram_id: int) -> str:
     return link or ""
 
 
+async def _resolve_key_link_for_key(telegram_id: int, key_id: int) -> str:
+    key = get_key_details_for_user(key_id, telegram_id)
+    if not key:
+        raise HTTPException(status_code=404, detail="Key not found")
+
+    link = _build_key_copy_value(key)
+    if link and not re.fullmatch(r"user_[A-Za-z0-9_\\-]+", link):
+        return link
+
+    if key.get("server_id") and key.get("panel_email"):
+        try:
+            client = await get_client(int(key["server_id"]))
+            cfg = await client.get_client_config(str(key["panel_email"]))
+            if cfg:
+                generated = generate_link(cfg)
+                if generated:
+                    return generated
+        except Exception as exc:
+            logger.warning("Failed to generate key link for key_id=%s telegram_id=%s: %s", key_id, telegram_id, exc)
+
+    return link or ""
+
+
 def _admin_ticket_reply_markup(ticket_id: int) -> dict[str, Any]:
     return {
         "inline_keyboard": [
@@ -503,6 +531,72 @@ async def get_key_link(session: dict[str, Any] = Depends(_current_session)) -> d
     return {"ok": True, "data": {"key_link": link}}
 
 
+@app.get("/api/keys")
+def list_keys(session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
+    _ensure_miniapp_enabled()
+    telegram_id = int(session["telegram_id"])
+    keys = get_user_keys_for_display(telegram_id)
+    data = []
+    for item in keys:
+        traffic_used = int(item.get("traffic_used") or 0)
+        traffic_limit = int(item.get("traffic_limit") or 0)
+        remaining = max(0, traffic_limit - traffic_used) if traffic_limit > 0 else 0
+        data.append(
+            {
+                "id": int(item["id"]),
+                "display_name": item.get("display_name"),
+                "custom_name": item.get("custom_name"),
+                "server_name": item.get("server_name"),
+                "server_id": item.get("server_id"),
+                "is_active": bool(item.get("is_active")),
+                "expires_at": item.get("expires_at"),
+                "traffic_used_bytes": traffic_used,
+                "traffic_limit_bytes": traffic_limit,
+                "traffic_remaining_bytes": remaining if traffic_limit > 0 else None,
+                "traffic_used_human": _format_bytes(traffic_used),
+                "traffic_limit_human": "Unlimited" if traffic_limit <= 0 else _format_bytes(traffic_limit),
+                "traffic_remaining_human": "Unlimited" if traffic_limit <= 0 else _format_bytes(remaining),
+            }
+        )
+    return {"ok": True, "data": data}
+
+
+@app.get("/api/keys/{key_id}")
+async def get_key_details_api(key_id: int, session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
+    _ensure_miniapp_enabled()
+    telegram_id = int(session["telegram_id"])
+    key = get_key_details_for_user(key_id, telegram_id)
+    if not key:
+        raise HTTPException(status_code=404, detail="Key not found")
+    key_link = await _resolve_key_link_for_key(telegram_id, key_id)
+    return {"ok": True, "data": {"key": key, "key_link": key_link}}
+
+
+@app.get("/api/keys/{key_id}/link")
+async def get_key_link_by_id(key_id: int, session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
+    _ensure_miniapp_enabled()
+    telegram_id = int(session["telegram_id"])
+    link = await _resolve_key_link_for_key(telegram_id, key_id)
+    if not link:
+        raise HTTPException(status_code=404, detail="Key link not found")
+    return {"ok": True, "data": {"key_link": link}}
+
+
+@app.post("/api/keys/{key_id}/rename")
+def rename_key(key_id: int, payload: RenameKeyRequest, session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
+    _ensure_miniapp_enabled()
+    telegram_id = int(session["telegram_id"])
+    new_name = (payload.name or "").strip()
+    if len(new_name) > 30:
+        raise HTTPException(status_code=400, detail="Name must be 30 characters or less")
+
+    success = update_key_custom_name(key_id, telegram_id, new_name)
+    if not success:
+        raise HTTPException(status_code=404, detail="Key not found or rename failed")
+    key = get_key_details_for_user(key_id, telegram_id)
+    return {"ok": True, "data": {"key": key}}
+
+
 @app.get("/api/get_tariffs")
 def get_tariffs(session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
     _ensure_miniapp_enabled()
@@ -584,6 +678,7 @@ async def create_invoice(payload: InvoiceRequest, session: dict[str, Any] = Depe
             success_url=BOT_RETURN_URL,
             fail_url=BOT_RETURN_URL,
             payment_method=platega_method,
+            method_code_hint=method_code,
         )
     except Exception as exc:
         update_transaction_status(

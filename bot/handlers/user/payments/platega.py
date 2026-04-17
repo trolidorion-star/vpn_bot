@@ -100,6 +100,7 @@ async def _rerender_checkout_from_state(target_message, telegram_id: int, state:
         back_callback=_back_callback(mode, key_id),
         payment_method=payment_method,
         payment_method_label=_platega_method_label(method_code),
+        method_code_hint=method_code,
         force_new=force_new,
     )
     return True
@@ -132,6 +133,7 @@ async def _render_checkout(
     back_callback: str,
     payment_method: int | None,
     payment_method_label: str,
+    method_code_hint: str | None = None,
     force_new: bool = False,
 ):
     final_amount, discount_amount, promo_code = _promo_meta(order_id, base_amount_rub)
@@ -160,6 +162,7 @@ async def _render_checkout(
             success_url=BOT_RETURN_URL,
             fail_url=BOT_RETURN_URL,
             payment_method=payment_method,
+            method_code_hint=method_code_hint,
         )
     except Exception as e:
         logger.error("Platega create-link error: order_id=%s err=%s", order_id, e)
@@ -320,6 +323,7 @@ async def pay_platega_create_link(callback: CallbackQuery, state: FSMContext):
         back_callback="buy_key",
         payment_method=payment_method,
         payment_method_label=_platega_method_label(method_code),
+        method_code_hint=method_code,
     )
     await callback.answer()
 
@@ -453,6 +457,7 @@ async def renew_platega_create_link(callback: CallbackQuery, state: FSMContext):
         back_callback=f"key_renew:{key_id}",
         payment_method=payment_method,
         payment_method_label=_platega_method_label(method_code),
+        method_code_hint=method_code,
     )
     await callback.answer()
 

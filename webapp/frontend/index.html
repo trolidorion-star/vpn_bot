@@ -126,6 +126,20 @@
       70% { box-shadow: 0 0 0 8px rgba(33,201,138,0); }
       100% { box-shadow: 0 0 0 0 rgba(33,201,138,0); }
     }
+    .modal-sheet {
+      animation: sheetIn .22s ease-out;
+    }
+    @keyframes sheetIn {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .card-rise {
+      animation: cardRise .28s ease-out;
+    }
+    @keyframes cardRise {
+      from { opacity: .7; transform: translateY(8px) scale(.985); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
   </style>
 </head>
 <body class="text-text">
@@ -154,7 +168,14 @@
     ];
 
     const LOGO_SRC = './assets/logo-bobrik.jpg';
-    const CACHE_KEY = 'bobrik-miniapp-cache-v6';
+    const CACHE_KEY = 'bobrik-miniapp-cache-v7';
+    const SUPPORT_SEEN_KEY = 'bobrik-miniapp-support-seen-v1';
+    const SUPPORT_QUICK_ISSUES = [
+      'Проблема с подключением',
+      'Не обновляется подписка после оплаты',
+      'Нужна помощь с настройкой клиента',
+      'Не работает ключ на устройстве',
+    ];
 
     class ApiError extends Error {
       constructor(message, status = 0, payload = null) {
@@ -254,7 +275,15 @@
       const kind = item.type === 'error' ? 'border-danger/40 text-red-200' : 'border-ok/40 text-emerald-200';
       return (
         <div className="fixed top-3 left-0 right-0 z-50 px-4">
-          <button className={`mx-auto block w-full max-w-md rounded-2xl border bg-surface/95 px-4 py-3 text-left text-sm ${kind}`} onClick={onClose}>
+          <button
+            className={`mx-auto block w-full max-w-md rounded-2xl border px-4 py-3 text-left text-sm ${kind}`}
+            style={{
+              background: 'linear-gradient(180deg, rgba(9,18,31,0.78), rgba(6,13,24,0.72))',
+              backdropFilter: 'blur(14px) saturate(140%)',
+              boxShadow: '0 8px 28px rgba(0,0,0,.36)',
+            }}
+            onClick={onClose}
+          >
             {item.message}
           </button>
         </div>
@@ -290,6 +319,7 @@
       const [token, setToken] = useState(cache?.token || '');
       const [tab, setTab] = useState(cache?.tab || 'dashboard');
       const [user, setUser] = useState(null);
+      const [keys, setKeys] = useState(cache?.keys || []);
       const [tariffs, setTariffs] = useState(cache?.tariffs || []);
       const [stats, setStats] = useState(cache?.stats || []);
       const [refData, setRefData] = useState(cache?.refData || null);
@@ -302,8 +332,12 @@
       const [supportViewTicket, setSupportViewTicket] = useState(null);
       const [supportViewMessages, setSupportViewMessages] = useState([]);
       const [supportText, setSupportText] = useState('');
+      const [supportUnread, setSupportUnread] = useState(0);
       const [ruBypass, setRuBypass] = useState(false);
       const [selectedTariff, setSelectedTariff] = useState(null);
+      const [selectedKeyId, setSelectedKeyId] = useState(null);
+      const [selectedKeyDetails, setSelectedKeyDetails] = useState(null);
+      const [keyNameDraft, setKeyNameDraft] = useState('');
       const [busy, setBusy] = useState(false);
       const [loading, setLoading] = useState(true);
       const [maintenance, setMaintenance] = useState(false);
@@ -352,6 +386,7 @@
         saveCache({
           token,
           tab,
+          keys,
           tariffs,
           stats,
           refData,
@@ -361,7 +396,7 @@
           supportClosedTickets,
           supportAdminHistory,
         });
-      }, [token, tab, tariffs, stats, refData, supportTicket, supportMessages, supportHistory, supportClosedTickets, supportAdminHistory]);
+      }, [token, tab, keys, tariffs, stats, refData, supportTicket, supportMessages, supportHistory, supportClosedTickets, supportAdminHistory]);
 
       useEffect(() => {
         if (!user?.is_admin && tab === 'admin') {
@@ -395,8 +430,9 @@
 
       async function refreshData(sessionToken, { silent = false } = {}) {
         try {
-          const [u, t, s, r, sup] = await Promise.allSettled([
+          const [u, k, t, s, r, sup] = await Promise.allSettled([
             api('/api/get_user_info', { token: sessionToken }),
+            api('/api/keys', { token: sessionToken }),
             api('/api/get_tariffs', { token: sessionToken }),
             api('/api/subscription/stats', { token: sessionToken }),
             api('/api/referrals', { token: sessionToken }),
@@ -404,18 +440,27 @@
           ]);
 
           if (u.status === 'fulfilled') setUser(u.value.data);
+          if (k.status === 'fulfilled') setKeys(k.value.data || []);
           if (t.status === 'fulfilled') setTariffs(t.value.data || []);
           if (s.status === 'fulfilled') setStats(s.value.data || []);
           if (r.status === 'fulfilled') setRefData(r.value.data || null);
           if (sup.status === 'fulfilled') {
             setSupportTicket(sup.value.data?.ticket || null);
-            setSupportMessages(sup.value.data?.messages || []);
+            const messages = sup.value.data?.messages || [];
+            setSupportMessages(messages);
             setSupportHistory(sup.value.data?.history || []);
             setSupportClosedTickets(sup.value.data?.closed_tickets || []);
             setSupportAdminHistory(sup.value.data?.admin_history || []);
+            if (!user?.is_admin) {
+              const seen = Number(localStorage.getItem(SUPPORT_SEEN_KEY) || 0);
+              const unread = messages.filter((m) => String(m?.sender_role) === 'admin' && Number(m?.id || 0) > seen).length;
+              setSupportUnread(Math.max(0, unread));
+            } else {
+              setSupportUnread(0);
+            }
           }
 
-          const failures = [u, t, s, r, sup].filter((x) => x.status === 'rejected').map((x) => x.reason);
+          const failures = [u, k, t, s, r, sup].filter((x) => x.status === 'rejected').map((x) => x.reason);
           if (failures.some((err) => err?.status === 503)) {
             setMaintenance(true);
             return;
@@ -532,6 +577,59 @@
         }
       }
 
+      async function copyKeyLinkById(keyId) {
+        if (!token || !keyId) return;
+        try {
+          const response = await api(`/api/keys/${keyId}/link`, { token });
+          const keyLink = String(response.data?.key_link || '').trim();
+          if (!keyLink) {
+            showToast('Ссылка ключа недоступна', 'error');
+            return;
+          }
+          await copyText(keyLink, 'Ссылка ключа скопирована');
+        } catch (error) {
+          showToast(error?.message || 'Ошибка копирования ссылки ключа', 'error');
+        }
+      }
+
+      async function openKeyDetails(keyId) {
+        if (!token || !keyId) return;
+        setBusy(true);
+        try {
+          const response = await api(`/api/keys/${keyId}`, { token });
+          const keyData = response.data?.key || null;
+          setSelectedKeyId(keyId);
+          setSelectedKeyDetails({
+            ...(keyData || {}),
+            key_link: response.data?.key_link || '',
+          });
+          setKeyNameDraft(String(keyData?.custom_name || keyData?.display_name || '').trim());
+        } catch (error) {
+          showToast(error?.message || 'Не удалось загрузить ключ', 'error');
+        } finally {
+          setBusy(false);
+        }
+      }
+
+      async function saveKeyName() {
+        if (!token || !selectedKeyId) return;
+        setBusy(true);
+        try {
+          const response = await api(`/api/keys/${selectedKeyId}/rename`, {
+            method: 'POST',
+            token,
+            body: { name: keyNameDraft || '' },
+          });
+          setSelectedKeyDetails((prev) => ({ ...(prev || {}), ...(response.data?.key || {}) }));
+          showToast('Название ключа обновлено');
+          await refreshData(token, { silent: true });
+        } catch (error) {
+          showToast(error?.message || 'Не удалось переименовать ключ', 'error');
+        } finally {
+          setBusy(false);
+        }
+      }
+
       async function createInvoice(method) {
         if (!selectedTariff || !token) return;
         setBusy(true);
@@ -634,7 +732,8 @@
         { id: 'plans', title: 'Тарифы', icon: '💳' },
         { id: 'usage', title: 'Ключи', icon: '📈' },
         { id: 'ref', title: 'Рефералы', icon: '👥' },
-        { id: 'support', title: 'Поддержка', icon: '💬' },
+        { id: 'support', title: 'Поддержка', icon: '💬', badge: supportUnread },
+        { id: 'service', title: 'Сервис', icon: '🧪' },
       ];
       if (user?.is_admin) tabs.push({ id: 'admin', title: 'Админ', icon: '⚙️' });
 
@@ -644,6 +743,15 @@
         if (!pane) return;
         pane.scrollTop = pane.scrollHeight;
       }, [tab, supportMode, supportMessages, supportViewMessages]);
+
+      useEffect(() => {
+        if (tab !== 'support') return;
+        const maxId = Math.max(0, ...(supportMessages || []).map((m) => Number(m?.id || 0)));
+        if (maxId > 0) {
+          localStorage.setItem(SUPPORT_SEEN_KEY, String(maxId));
+        }
+        setSupportUnread(0);
+      }, [tab, supportMessages]);
 
       function renderDashboard() {
         return (
@@ -750,18 +858,23 @@
       function renderUsage() {
         return (
           <div className="space-y-3 animate-in">
-            {(stats || []).length === 0 ? (
+            {(keys || []).length === 0 ? (
               <div className="rounded-card glass border border-white/10 p-4 text-sm text-muted">Ключи пока не найдены.</div>
             ) : (
-              stats.map((item) => (
-                <div key={item.id} className="rounded-card glass border border-white/10 p-4">
+              keys.map((item) => (
+                <div key={item.id} className="rounded-card glass border border-white/10 p-4 card-rise">
                   <div className="flex items-center justify-between">
                     <div className="font-semibold">{item.display_name || `Ключ #${item.id}`}</div>
-                    <div className={`text-xs ${item.status === 'active' ? 'text-emerald-300' : 'text-red-300'}`}>{item.status === 'active' ? 'Активен' : 'Истек'}</div>
+                    <div className={`text-xs ${item.is_active ? 'text-emerald-300' : 'text-red-300'}`}>{item.is_active ? 'Активен' : 'Истек'}</div>
                   </div>
                   <div className="mt-2 text-sm text-muted">Сервер: <span className="text-text">{item.server_name || '—'}</span></div>
                   <div className="mt-1 text-sm text-muted">Трафик: <span className="text-text">{item.traffic_used_human} / {item.traffic_limit_human}</span></div>
                   <div className="mt-1 text-sm text-muted">Осталось: <span className="text-text">{item.traffic_remaining_human}</span></div>
+                  <div className="mt-1 text-sm text-muted">До: <span className="text-text">{fmtDate(item.expires_at)}</span></div>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <button onClick={impact(() => openKeyDetails(item.id), 'medium')} className="rounded-xl border border-white/15 px-3 py-2 text-xs">Управление</button>
+                    <button onClick={impact(() => copyKeyLinkById(item.id))} className="rounded-xl bg-accent/85 px-3 py-2 text-xs font-semibold text-black">Скопировать</button>
+                  </div>
                 </div>
               ))
             )}
@@ -852,6 +965,17 @@
                     )}
                   </div>
 
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {SUPPORT_QUICK_ISSUES.map((issue) => (
+                      <button
+                        key={issue}
+                        onClick={impact(() => setSupportText((prev) => prev ? `${prev}\n${issue}` : `${issue}: `))}
+                        className="rounded-xl border border-white/15 bg-surfaceSoft/50 px-3 py-1.5 text-xs text-muted transition hover:border-accent/45 hover:text-text"
+                      >
+                        {issue}
+                      </button>
+                    ))}
+                  </div>
                   <textarea value={supportText} onChange={(e) => setSupportText(e.target.value)} rows="4" maxLength={1500} className="mt-3 w-full rounded-2xl border border-white/10 bg-surfaceSoft/60 p-3 text-sm outline-none" placeholder="Опишите проблему или вопрос" />
                   <button onClick={impact(() => sendSupportMessage(), 'medium')} disabled={busy} className="mt-3 w-full rounded-2xl bg-accent py-3 font-semibold text-black disabled:opacity-50">Отправить в поддержку</button>
                 </>
@@ -915,12 +1039,43 @@
         );
       }
 
+      function renderService() {
+        const lines = [
+          ['Сессия', token ? 'Активна' : 'Нет'],
+          ['Mini App', user?.miniapp_enabled === false ? 'Отключен' : 'Включен'],
+          ['Пользователь', user?.username ? `@${user.username}` : `ID ${user?.telegram_id || '—'}`],
+          ['Ключей', `${keys?.length || 0}`],
+          ['Тарифов', `${tariffs?.length || 0}`],
+          ['Последний sync', lastSyncAt ? fmtDate(lastSyncAt) : '—'],
+        ];
+        return (
+          <div className="space-y-3 animate-in">
+            <div className="rounded-card glass border border-white/10 p-4">
+              <div className="font-semibold">Диагностика Mini App</div>
+              <div className="mt-3 space-y-2">
+                {lines.map(([k, v]) => (
+                  <div key={k} className="flex items-center justify-between rounded-xl bg-surfaceSoft/55 px-3 py-2 text-sm">
+                    <span className="text-muted">{k}</span>
+                    <span className="font-medium">{v}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button onClick={impact(async () => { await refreshData(token); showToast('Данные обновлены'); }, 'medium')} className="rounded-xl border border-white/15 px-3 py-2 text-sm">Обновить всё</button>
+                <button onClick={impact(async () => copyText(String(user?.telegram_id || ''), 'ID скопирован'))} className="rounded-xl border border-white/15 px-3 py-2 text-sm">Скопировать ID</button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
       function renderTabContent() {
         if (tab === 'dashboard') return renderDashboard();
         if (tab === 'plans') return renderPlans();
         if (tab === 'usage') return renderUsage();
         if (tab === 'ref') return renderReferrals();
         if (tab === 'support') return renderSupport();
+        if (tab === 'service') return renderService();
         if (tab === 'admin' && user?.is_admin) return renderAdmin();
         return renderDashboard();
       }
@@ -978,16 +1133,21 @@
               <button
                 key={item.id}
                 onClick={impact(() => setTab(item.id), 'light')}
-                className={`whitespace-nowrap rounded-xl px-3 py-2 text-sm transition ${tab === item.id ? 'bg-accent text-black font-semibold' : 'bg-surfaceSoft/45 text-muted'}`}
+                className={`relative whitespace-nowrap rounded-xl px-3 py-2 text-sm transition ${tab === item.id ? 'bg-accent text-black font-semibold' : 'bg-surfaceSoft/45 text-muted'}`}
               >
                 <span className="mr-1">{item.icon}</span>{item.title}
+                {Number(item.badge || 0) > 0 && tab !== item.id && (
+                  <span className="absolute -right-1 -top-1 min-w-[18px] rounded-full bg-danger px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
+                    {item.badge > 99 ? '99+' : item.badge}
+                  </span>
+                )}
               </button>
             ))}
           </nav>
 
           {selectedTariff && (
             <div className="fixed inset-0 z-30 bg-black/65" onClick={() => setSelectedTariff(null)}>
-              <div className="absolute bottom-0 left-0 right-0 rounded-t-[26px] glass border-t border-white/10 p-4" onClick={(event) => event.stopPropagation()}>
+              <div className="absolute bottom-0 left-0 right-0 rounded-t-[26px] glass border-t border-white/10 p-4 modal-sheet" onClick={(event) => event.stopPropagation()}>
                 <div className="mx-auto mb-3 h-1.5 w-14 rounded-full bg-white/20"></div>
                 <div className="text-lg font-semibold">{selectedTariff.name}</div>
                 <div className="mb-3 text-sm text-muted">{selectedTariff.days} дней • {selectedTariff.price_rub} ₽</div>
@@ -1001,6 +1161,37 @@
                       <div className="text-xs text-muted mt-1">{method.hint}</div>
                     </button>
                   ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {selectedKeyId && (
+            <div className="fixed inset-0 z-30 bg-black/65" onClick={() => { setSelectedKeyId(null); setSelectedKeyDetails(null); }}>
+              <div className="absolute bottom-0 left-0 right-0 rounded-t-[26px] glass border-t border-white/10 p-4 modal-sheet" onClick={(event) => event.stopPropagation()}>
+                <div className="mx-auto mb-3 h-1.5 w-14 rounded-full bg-white/20"></div>
+                <div className="text-lg font-semibold">{selectedKeyDetails?.display_name || `Ключ #${selectedKeyId}`}</div>
+                <div className="mt-1 text-xs text-muted">Сервер: {selectedKeyDetails?.server_name || '—'}</div>
+                <div className="mt-1 text-xs text-muted">Статус: {selectedKeyDetails?.is_active ? 'Активен' : 'Истек'}</div>
+                <div className="mt-1 text-xs text-muted">Истекает: {fmtDate(selectedKeyDetails?.expires_at)}</div>
+
+                <div className="mt-4 rounded-2xl border border-white/10 bg-surfaceSoft/60 p-3">
+                  <div className="text-xs text-muted">Название ключа</div>
+                  <input
+                    value={keyNameDraft}
+                    onChange={(event) => setKeyNameDraft(event.target.value)}
+                    maxLength={30}
+                    className="mt-2 w-full rounded-xl border border-white/10 bg-surface px-3 py-2 text-sm outline-none"
+                    placeholder="Например: iPhone / Рабочий"
+                  />
+                  <button onClick={impact(() => saveKeyName(), 'medium')} disabled={busy} className="mt-3 w-full rounded-xl bg-accent px-3 py-2 text-sm font-semibold text-black disabled:opacity-50">
+                    Сохранить название
+                  </button>
+                </div>
+
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <button onClick={impact(() => copyKeyLinkById(selectedKeyId))} className="rounded-xl border border-white/15 px-3 py-2 text-sm">Скопировать ссылку</button>
+                  <button onClick={impact(() => { setSelectedKeyId(null); setSelectedKeyDetails(null); })} className="rounded-xl border border-white/15 px-3 py-2 text-sm">Закрыть</button>
                 </div>
               </div>
             </div>
