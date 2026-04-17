@@ -39,9 +39,44 @@
       background: radial-gradient(circle at 20% -10%, #194266 0%, #071018 42%), var(--tg-bg-color, #071018);
       min-height: 100%;
     }
+    .app-bg {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      overflow: hidden;
+    }
+    .app-orb {
+      position: absolute;
+      border-radius: 999px;
+      filter: blur(42px);
+      opacity: .33;
+    }
+    .app-orb.one {
+      width: 260px;
+      height: 260px;
+      background: #1a77bd;
+      top: -80px;
+      left: -70px;
+    }
+    .app-orb.two {
+      width: 220px;
+      height: 220px;
+      background: #2ba87d;
+      right: -80px;
+      top: 180px;
+    }
     .glass {
       backdrop-filter: blur(10px);
       background: linear-gradient(145deg, rgba(17,31,45,0.92), rgba(12,24,37,0.94));
+    }
+    .premium-card {
+      border: 1px solid rgba(255,255,255,.12);
+      box-shadow: var(--panel-shadow);
+      transition: transform .18s ease, border-color .18s ease;
+    }
+    .premium-card:active {
+      transform: scale(.995);
     }
     .animate-in {
       animation: appFadeIn .24s ease-out;
@@ -85,9 +120,9 @@
     }
 
     const PAY_METHODS = [
-      { code: 'sbp', title: 'СБП', hint: 'Быстрая оплата' },
-      { code: 'card', title: 'Карта РФ', hint: 'Банковские карты' },
-      { code: 'crypto', title: 'Криптовалюта', hint: 'Международная оплата' },
+      { code: 'sbp', title: 'СБП', hint: 'Мгновенно', icon: '⚡' },
+      { code: 'card', title: 'Карта РФ', hint: 'Банковские карты', icon: '💳' },
+      { code: 'crypto', title: 'Криптовалюта', hint: 'USDT и крипто-методы', icon: '🪙' },
     ];
 
     const LOGO_SRC = './assets/logo-bobrik.jpg';
@@ -508,7 +543,7 @@
       function renderDashboard() {
         return (
           <div className="space-y-3 animate-in">
-            <div className="rounded-card glass border border-white/10 p-4" style={{ boxShadow: 'var(--panel-shadow)' }}>
+            <div className="rounded-card glass premium-card p-4">
               <div className="flex items-center justify-between">
                 <p className="text-sm text-muted">Текущая подписка</p>
                 <div className="flex items-center gap-2 text-xs text-muted">
@@ -534,7 +569,22 @@
               </div>
             </div>
 
-            <div className="rounded-card glass border border-white/10 p-4">
+            <div className="grid grid-cols-3 gap-2">
+              <button onClick={impact(() => setTab('plans'))} className="rounded-2xl glass premium-card px-3 py-3 text-left">
+                <div className="text-xs text-muted">Покупка</div>
+                <div className="mt-1 text-sm font-semibold">Тарифы</div>
+              </button>
+              <button onClick={impact(() => setTab('usage'))} className="rounded-2xl glass premium-card px-3 py-3 text-left">
+                <div className="text-xs text-muted">Контроль</div>
+                <div className="mt-1 text-sm font-semibold">Ключи</div>
+              </button>
+              <button onClick={impact(() => setTab('support'))} className="rounded-2xl glass premium-card px-3 py-3 text-left">
+                <div className="text-xs text-muted">Помощь</div>
+                <div className="mt-1 text-sm font-semibold">Поддержка</div>
+              </button>
+            </div>
+
+            <div className="rounded-card glass premium-card p-4">
               <div className="flex items-center justify-between">
                 <div>
                   <div className="font-semibold">RU Bypass</div>
@@ -553,7 +603,7 @@
         return (
           <div className="space-y-3 animate-in">
             {(tariffs || []).map((tariff) => (
-              <button key={tariff.id} onClick={impact(() => setSelectedTariff(tariff), 'medium')} className="w-full rounded-card glass border border-white/10 p-4 text-left">
+              <button key={tariff.id} onClick={impact(() => setSelectedTariff(tariff), 'medium')} className="w-full rounded-card glass premium-card p-4 text-left">
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-lg font-semibold">{tariff.name}</div>
@@ -561,9 +611,10 @@
                   </div>
                   <div className="rounded-xl bg-accent/15 px-3 py-2 text-accent font-semibold">{tariff.price_rub} ₽</div>
                 </div>
+                <div className="mt-3 text-xs text-muted">Нажмите, чтобы выбрать способ оплаты</div>
               </button>
             ))}
-            {(tariffs || []).length === 0 && <div className="rounded-card glass border border-white/10 p-4 text-sm text-muted">Тарифы пока не загружены.</div>}
+            {(tariffs || []).length === 0 && <div className="rounded-card glass premium-card p-4 text-sm text-muted">Тарифы пока не загружены.</div>}
           </div>
         );
       }
@@ -703,10 +754,14 @@
       }
 
       return (
-        <div className="min-h-screen px-4 pb-24 pt-5">
+        <div className="relative min-h-screen px-4 pb-24 pt-5">
+          <div className="app-bg">
+            <div className="app-orb one"></div>
+            <div className="app-orb two"></div>
+          </div>
           <Toast item={toast} onClose={() => setToast(null)} />
 
-          <div className="mb-4 rounded-card glass border border-white/10 p-4" style={{ boxShadow: 'var(--panel-shadow)' }}>
+          <div className="relative z-10 mb-4 rounded-card glass premium-card p-4">
             <div className="flex items-center gap-3">
               <img
                 src={LOGO_SRC}
@@ -720,19 +775,21 @@
               </div>
             </div>
             <div className="mt-3 grid grid-cols-2 gap-2">
-              <button onClick={impact(() => setTab('plans'))} className="rounded-xl border border-white/15 px-3 py-2 text-xs">Купить тариф</button>
-              <button onClick={impact(() => setTab('support'))} className="rounded-xl border border-white/15 px-3 py-2 text-xs">Написать в поддержку</button>
+              <button onClick={impact(() => setTab('plans'))} className="rounded-xl border border-white/15 bg-surfaceSoft/60 px-3 py-2 text-xs">Купить тариф</button>
+              <button onClick={impact(() => setTab('support'))} className="rounded-xl border border-white/15 bg-surfaceSoft/60 px-3 py-2 text-xs">Написать в поддержку</button>
             </div>
           </div>
 
-          {renderTabContent()}
+          <div className="relative z-10">
+            {renderTabContent()}
+          </div>
 
-          <nav className="fixed bottom-3 left-0 right-0 mx-auto flex w-[calc(100%-20px)] max-w-md gap-2 overflow-x-auto rounded-2xl border border-white/10 px-3 py-3 glass" style={{ boxShadow: 'var(--panel-shadow)' }}>
+          <nav className="fixed bottom-3 left-0 right-0 z-20 mx-auto flex w-[calc(100%-20px)] max-w-md gap-2 overflow-x-auto rounded-2xl border border-white/10 px-3 py-3 glass" style={{ boxShadow: 'var(--panel-shadow)' }}>
             {tabs.map((item) => (
               <button
                 key={item.id}
                 onClick={impact(() => setTab(item.id), 'light')}
-                className={`whitespace-nowrap rounded-xl px-3 py-2 text-sm ${tab === item.id ? 'bg-accent text-black font-semibold' : 'text-muted'}`}
+                className={`whitespace-nowrap rounded-xl px-3 py-2 text-sm transition ${tab === item.id ? 'bg-accent text-black font-semibold' : 'bg-surfaceSoft/45 text-muted'}`}
               >
                 <span className="mr-1">{item.icon}</span>{item.title}
               </button>
@@ -747,8 +804,11 @@
                 <div className="mb-3 text-sm text-muted">{selectedTariff.days} дней • {selectedTariff.price_rub} ₽</div>
                 <div className="space-y-2">
                   {PAY_METHODS.map((method) => (
-                    <button key={method.code} onClick={impact(() => createInvoice(method.code), 'medium')} disabled={busy} className="w-full rounded-2xl border border-white/10 bg-surfaceSoft/70 px-4 py-3 text-left">
-                      <div className="font-medium">{method.title}</div>
+                    <button key={method.code} onClick={impact(() => createInvoice(method.code), 'medium')} disabled={busy} className="w-full rounded-2xl border border-white/10 bg-surfaceSoft/70 px-4 py-3 text-left transition hover:border-accent/50">
+                      <div className="flex items-center justify-between">
+                        <div className="font-medium">{method.title}</div>
+                        <div className="text-lg">{method.icon}</div>
+                      </div>
                       <div className="text-xs text-muted mt-1">{method.hint}</div>
                     </button>
                   ))}

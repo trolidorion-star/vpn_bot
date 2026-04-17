@@ -18,8 +18,10 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_PLATEGA_METHOD_IDS: Dict[str, int] = {
     "sbp": 2,
-    "card": 10,
-    "crypto": 12,
+    # Per Platega integration docs:
+    # card acquiring = 11, crypto payments = 13.
+    "card": 11,
+    "crypto": 13,
 }
 
 PLATEGA_METHODS: Dict[str, Dict[str, Any]] = {
@@ -243,15 +245,15 @@ def _method_candidates_for_key(method_key: str) -> list[Union[int, str, None]]:
 def _payment_method_candidates(value: Optional[Union[int, str]]) -> list[Union[int, str, None]]:
     method_key = _method_key_from_value(value)
     if method_key:
-        candidates = _method_candidates_for_key(method_key)
-
-        fallback_key = _method_key_from_value(_payment_method())
-        if fallback_key and fallback_key != method_key:
-            candidates.extend(_method_candidates_for_key(fallback_key))
-
-        return _dedupe_values(candidates)
+        # IMPORTANT:
+        # If user explicitly selected a payment method, do not silently fallback
+        # to another method (e.g., SBP), otherwise card/crypto choice is lost.
+        return _method_candidates_for_key(method_key)
 
     if value is None:
+        default_key = _method_key_from_value(_payment_method())
+        if default_key:
+            return _method_candidates_for_key(default_key)
         return [None]
 
     return [value]
