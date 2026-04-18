@@ -23,6 +23,7 @@ from dotenv import dotenv_values, load_dotenv
 from bot.services.platega_client import (
     create_payment_link,
     get_platega_payment_method_id,
+    get_transaction_status,
     is_platega_method_enabled,
     is_platega_ready,
 )
@@ -71,7 +72,9 @@ from database.requests import (
     set_miniapp_enabled,
     update_key_custom_name,
     update_transaction_status,
+    consume_order_promocode,
 )
+from bot.services.billing import process_payment_order
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = ROOT_DIR / "webapp" / "frontend"
@@ -551,6 +554,55 @@ def _serialize_user_info(telegram_id: int, username: Optional[str]) -> dict[str,
     }
 
 
+async def _reconcile_pending_platega_orders_for_user(telegram_id: int, max_items: int = 3) -> int:
+    """
+    Safety net for missed webhooks:
+    checks recent pending Platega orders for user and finalizes confirmed ones.
+    """
+    reconciled = 0
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT p.order_id, t.payment_id
+            FROM payments p
+            JOIN users u ON u.id = p.user_id
+            LEFT JOIN transactions t ON t.order_id = p.order_id
+            WHERE u.telegram_id = ?
+              AND p.payment_type = 'platega'
+              AND p.status = 'pending'
+              AND COALESCE(t.payment_id, '') <> ''
+            ORDER BY p.id DESC
+            LIMIT ?
+            """,
+            (telegram_id, max_items),
+        ).fetchall()
+
+    for row in rows:
+        order_id = str(row["order_id"])
+        payment_id = str(row["payment_id"])
+        try:
+            status_payload = await get_transaction_status(payment_id)
+        except Exception as exc:
+            logger.warning("MiniApp reconcile: status request failed order=%s payment_id=%s err=%s", order_id, payment_id, exc)
+            continue
+
+        status = str(status_payload.get("status") or "").strip().upper()
+        if status in {"CONFIRMED", "SUCCESS", "PAID"}:
+            success, _text, _order = await process_payment_order(order_id)
+            if success:
+                update_transaction_status(order_id=order_id, status="SUCCESS", payment_id=payment_id, payload=status_payload)
+                consume_order_promocode(order_id)
+                reconciled += 1
+            else:
+                logger.warning("MiniApp reconcile: process_payment_order failed for %s", order_id)
+        elif status in {"CANCELED", "CHARGEBACK", "CHARGEBACKED"}:
+            update_transaction_status(order_id=order_id, status="FAILED", payment_id=payment_id, payload=status_payload)
+        else:
+            update_transaction_status(order_id=order_id, status="PENDING", payment_id=payment_id, payload=status_payload)
+
+    return reconciled
+
+
 def _remove_ru_defaults_for_key(telegram_id: int, key_id: int) -> None:
     defaults = {(item["rule_type"], item["rule_value"]) for item in get_default_ru_exclusions()}
     if not defaults:
@@ -596,10 +648,17 @@ def auth_session(payload: SessionRequest) -> dict[str, Any]:
 
 
 @app.get("/api/get_user_info")
-def get_user_info(session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
+async def get_user_info(session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
+    telegram_id = int(session["telegram_id"])
+    try:
+        reconciled = await _reconcile_pending_platega_orders_for_user(telegram_id)
+        if reconciled:
+            logger.info("MiniApp reconcile: finalized pending Platega orders for telegram_id=%s count=%s", telegram_id, reconciled)
+    except Exception as exc:
+        logger.warning("MiniApp reconcile failed for telegram_id=%s: %s", telegram_id, exc)
     return {
         "ok": True,
-        "data": _serialize_user_info(int(session["telegram_id"]), session.get("username")),
+        "data": _serialize_user_info(telegram_id, session.get("username")),
     }
 
 
