@@ -392,24 +392,6 @@
       background: rgba(12, 32, 52, 0.03);
       color: #10253a;
     }
-    @media (min-width: 900px) {
-      .desktop-grid-2 {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 12px;
-      }
-      .desktop-grid-3 {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 12px;
-      }
-      .desktop-modal {
-        left: 50% !important;
-        right: auto !important;
-        width: min(560px, calc(100% - 20px)) !important;
-        transform: translateX(-50%);
-      }
-    }
   </style>
 </head>
 <body class="text-text">
@@ -745,6 +727,7 @@
       const [showQualityPresets, setShowQualityPresets] = useState(false);
       const [promoCodeDraft, setPromoCodeDraft] = useState('');
       const [promoCodeApplied, setPromoCodeApplied] = useState('');
+      const [activePromo, setActivePromo] = useState(null);
       const [giftMode, setGiftMode] = useState(false);
       const [giftRecipientName, setGiftRecipientName] = useState('');
       const [giftComment, setGiftComment] = useState('');
@@ -933,13 +916,14 @@
 
       async function refreshData(sessionToken, { silent = false } = {}) {
         try {
-          const [u, k, t, s, r, sup] = await Promise.allSettled([
+          const [u, k, t, s, r, sup, promo] = await Promise.allSettled([
             api('/api/get_user_info', { token: sessionToken }),
             api('/api/keys', { token: sessionToken }),
             api('/api/get_tariffs', { token: sessionToken }),
             api('/api/subscription/stats', { token: sessionToken }),
             api('/api/referrals', { token: sessionToken }),
             api('/api/support', { token: sessionToken }),
+            api('/api/promocode_state', { token: sessionToken }),
           ]);
 
           if (u.status === 'fulfilled') setUser(u.value.data);
@@ -988,7 +972,25 @@
             }
           }
 
-          const failures = [u, k, t, s, r, sup].filter((x) => x.status === 'rejected').map((x) => x.reason);
+          if (promo.status === 'fulfilled') {
+            const promoData = promo.value.data || {};
+            const active = promoData.active || null;
+            const globalPromo = promoData.global || null;
+            setActivePromo(active || null);
+            if (!promoCodeApplied && active?.code) {
+              setPromoCodeApplied(String(active.code || '').trim().toUpperCase());
+            }
+            if (!promoCodeDraft && active?.code) {
+              setPromoCodeDraft(String(active.code || '').trim().toUpperCase());
+            }
+            if (!active?.code && globalPromo?.active && globalPromo?.code && !promoCodeApplied) {
+              const gCode = String(globalPromo.code || '').trim().toUpperCase();
+              setPromoCodeApplied(gCode);
+              if (!promoCodeDraft) setPromoCodeDraft(gCode);
+            }
+          }
+
+          const failures = [u, k, t, s, r, sup, promo].filter((x) => x.status === 'rejected').map((x) => x.reason);
           if (failures.some((err) => err?.status === 503)) {
             setMaintenance(true);
             return;
@@ -1230,6 +1232,7 @@
               tariff_id: selectedTariff.id,
               method,
               key_id: user?.key_id || null,
+              promo_code: String((promoCodeApplied || activePromo?.code || '')).trim() || null,
             },
           });
           setSelectedTariff(null);
@@ -1546,6 +1549,13 @@
       }
 
       function renderPlans() {
+        const activePromoCode = String(activePromo?.code || promoCodeApplied || '').trim().toUpperCase();
+        const activePromoScope = String(activePromo?.scope || '').toUpperCase();
+        const promoScopeLabel = activePromoScope === 'PERSONAL'
+          ? 'Персональный'
+          : activePromoScope === 'HIDDEN'
+            ? 'Скрытый'
+            : 'Общий';
         const promoPreviewText = promoCodeApplied
           ? `Промокод «${promoCodeApplied}» добавлен. Если код валиден на сервере, скидка применится при оплате.`
           : 'Добавьте промокод перед оплатой: он будет учтен, если активен в системе.';
@@ -1554,6 +1564,12 @@
             <div className="rounded-card glass premium-card p-4">
               <div className="font-semibold">Скидки и промокод</div>
               <div className="mt-1 text-xs text-muted readable">{promoPreviewText}</div>
+              {activePromoCode && (
+                <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-accent/35 bg-accent/10 px-3 py-1 text-xs text-accent">
+                  <span>{promoScopeLabel}</span>
+                  <span className="mono">{activePromoCode}</span>
+                </div>
+              )}
               <div className="mt-3 flex flex-col gap-2 sm:flex-row">
                 <input
                   value={promoCodeDraft}
@@ -1573,6 +1589,18 @@
                   Применить
                 </button>
               </div>
+              {activePromoCode && (
+                <button
+                  onClick={impact(() => {
+                    setPromoCodeDraft(activePromoCode);
+                    setPromoCodeApplied(activePromoCode);
+                    showToast(`Покупка с промокодом ${activePromoCode}`);
+                  }, 'light')}
+                  className="mt-2 rounded-xl border border-accent/40 bg-accent/10 px-3 py-2 text-xs text-accent"
+                >
+                  Купить по промокоду
+                </button>
+              )}
               <div className="mt-3 flex flex-wrap gap-2">
                 <span className="tag">🎁 Купить в подарок</span>
                 <span className="tag">⚡ Быстрая оплата</span>
@@ -2057,7 +2085,7 @@
       }
 
       return (
-        <div className="relative mx-auto min-h-screen w-full max-w-[1100px] px-3 pb-24 pt-5 sm:px-4 lg:px-6">
+        <div className="relative mx-auto min-h-screen w-full max-w-[520px] px-3 pb-24 pt-5 sm:px-4">
           <div className="app-bg">
             <div className="app-orb one"></div>
             <div className="app-orb two"></div>
@@ -2114,7 +2142,7 @@
             ) : renderTabContent()}
           </div>
 
-          <nav className="fixed bottom-3 left-0 right-0 z-20 mx-auto flex w-[calc(100%-20px)] max-w-[1100px] items-center gap-2 rounded-2xl border border-white/10 px-2.5 py-2.5 glass" style={{ boxShadow: 'var(--panel-shadow)' }}>
+          <nav className="fixed bottom-3 left-0 right-0 z-20 mx-auto flex w-[calc(100%-20px)] max-w-[520px] items-center gap-2 rounded-2xl border border-white/10 px-2.5 py-2.5 glass" style={{ boxShadow: 'var(--panel-shadow)' }}>
             <div className="flex min-w-0 w-full gap-2 overflow-x-auto">
             {primaryTabs.map((item) => (
               <button
@@ -2199,7 +2227,11 @@
                         Применить
                       </button>
                     </div>
-                    {promoCodeApplied && <div className="mt-1 text-[11px] text-muted">Активный промокод: {promoCodeApplied}</div>}
+                    {(promoCodeApplied || activePromo?.code) && (
+                      <div className="mt-1 text-[11px] text-muted">
+                        Активный промокод: {String(promoCodeApplied || activePromo?.code || '').trim().toUpperCase()}
+                      </div>
+                    )}
                   </div>
                   <div className="mt-3 rounded-xl border border-white/10 bg-surface/40 p-2.5">
                     <div className="flex items-center justify-between gap-2">

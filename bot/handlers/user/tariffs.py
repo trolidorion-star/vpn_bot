@@ -20,7 +20,6 @@ from bot.keyboards.user import main_menu_kb
 from bot.services.buy_key_timer import (
     build_buy_key_text,
     cancel_buy_key_timer,
-    start_buy_key_timer,
 )
 from bot.services.platega_client import get_enabled_platega_methods, is_platega_ready, is_platega_test_mode
 from bot.states.user_states import RenameKey, ReplaceKey
@@ -147,9 +146,6 @@ async def buy_key_handler(callback: CallbackQuery):
 
     # Обновляем таймер только для текущего экрана «Купить ключ».
     # Как только пользователь уходит в flow оплаты, таймер отменяется в платежных хендлерах.
-    if sale.get("active") and sent_message:
-        start_buy_key_timer(callback.from_user.id, sent_message, prepayment_text, kb)
-    else:
-        cancel_buy_key_timer(callback.from_user.id)
+    cancel_buy_key_timer(callback.from_user.id)
 
     await callback.answer()

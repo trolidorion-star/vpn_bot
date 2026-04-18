@@ -20,6 +20,7 @@ from bot.states.user_states import PromoCodeFlow
 from bot.utils.text import escape_html, safe_edit_or_send
 from database.requests import (
     apply_promocode_to_order,
+    clear_user_active_promocode,
     clear_promocode_from_order,
     create_or_update_transaction,
     create_pending_order,
@@ -500,6 +501,7 @@ async def platega_promo_clear(callback: CallbackQuery, state: FSMContext):
         return
 
     clear_promocode_from_order(order_id)
+    clear_user_active_promocode(callback.from_user.id)
     if not await _rerender_checkout_from_state(callback.message, callback.from_user.id, state):
         await safe_edit_or_send(callback.message, "Нет активного заказа. Начните оплату заново.")
     await callback.answer("Промокод удален")
@@ -530,7 +532,13 @@ async def platega_promo_message(message: Message, state: FSMContext):
         return
 
     amount_rub = int(float(tariff.get("price_rub") or 0))
-    ok, payload, err = apply_promocode_to_order(order_id, user_id, code, amount_rub)
+    ok, payload, err = apply_promocode_to_order(
+        order_id,
+        user_id,
+        code,
+        amount_rub,
+        telegram_id=message.from_user.id,
+    )
     if not ok or not payload:
         await message.answer(f"❌ {err}")
         return

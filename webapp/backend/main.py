@@ -26,6 +26,7 @@ from bot.services.platega_client import (
     is_platega_method_enabled,
     is_platega_ready,
 )
+from bot.services.flash_sale import get_flash_sale_state
 from bot.services.ru_bypass import get_default_ru_exclusions
 from bot.services.split_config_settings import get_split_config_public_base_url
 from bot.services.vpn_api import get_client
@@ -33,11 +34,15 @@ from bot.utils.key_generator import generate_link
 from config import ADMIN_IDS
 from database.connection import get_db
 from database.requests import (
+    apply_promocode_to_order,
     add_key_exclusion_for_user,
     add_ticket_message,
     count_direct_paid_referrals,
     count_direct_referrals,
+    clear_user_active_promocode,
     create_support_ticket,
+    get_user_active_promocode,
+    get_promocode,
     create_or_update_transaction,
     create_pending_order,
     ensure_user_referral_code,
@@ -58,6 +63,7 @@ from database.requests import (
     get_user_keys_for_display,
     is_miniapp_enabled,
     is_referral_enabled,
+    set_user_active_promocode,
     set_miniapp_enabled,
     update_key_custom_name,
     update_transaction_status,
@@ -113,6 +119,7 @@ class InvoiceRequest(BaseModel):
     tariff_id: int
     method: str
     key_id: Optional[int] = None
+    promo_code: Optional[str] = None
 
 
 class RuBypassRequest(BaseModel):
@@ -304,6 +311,48 @@ def _extract_bot_username() -> str:
 def _build_referral_link(user_id: int) -> str:
     code = ensure_user_referral_code(user_id)
     return f"https://t.me/{_extract_bot_username()}?start=ref{code}"
+
+
+def _serialize_promocode_state(telegram_id: int) -> Dict[str, Any]:
+    sale = get_flash_sale_state()
+    global_code = str(sale.get("promo_code") or "").strip().upper()
+    global_discount_pct = 0
+    if sale.get("active"):
+        base_price = int(sale.get("base_price_rub") or 0)
+        sale_price = int(sale.get("sale_price_rub") or 0)
+        if base_price > 0 and sale_price > 0 and sale_price < base_price:
+            global_discount_pct = int(round(((base_price - sale_price) / base_price) * 100))
+
+    active_user = get_user_active_promocode(telegram_id) or {}
+    user_code = str(active_user.get("promo_code") or "").strip().upper()
+    promo = get_promocode(user_code) if user_code else None
+    if promo and int(promo.get("is_active") or 0) != 1:
+        promo = None
+        user_code = ""
+
+    result: Dict[str, Any] = {
+        "global": {
+            "active": bool(sale.get("active") and global_code),
+            "code": global_code if sale.get("active") else "",
+            "discount_percent": global_discount_pct,
+            "remaining_seconds": int(sale.get("remaining_seconds") or 0),
+        },
+        "active": None,
+    }
+
+    if user_code:
+        result["active"] = {
+            "code": user_code,
+            "scope": str((promo or {}).get("visibility") or active_user.get("visibility") or "HIDDEN").upper(),
+            "source": str(active_user.get("source") or "manual"),
+        }
+    elif result["global"]["active"]:
+        result["active"] = {
+            "code": global_code,
+            "scope": "PUBLIC",
+            "source": "flash_sale",
+        }
+    return result
 
 
 def _build_key_copy_value(key: Optional[dict[str, Any]]) -> str:
@@ -521,6 +570,13 @@ def get_user_info(session: dict[str, Any] = Depends(_current_session)) -> dict[s
     }
 
 
+@app.get("/api/promocode_state")
+def promocode_state(session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
+    _ensure_miniapp_enabled()
+    telegram_id = int(session["telegram_id"])
+    return {"ok": True, "data": _serialize_promocode_state(telegram_id)}
+
+
 @app.get("/api/key_link")
 async def get_key_link(session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
     _ensure_miniapp_enabled()
@@ -655,10 +711,42 @@ async def create_invoice(payload: InvoiceRequest, session: dict[str, Any] = Depe
         vpn_key_id=vpn_key_id,
     )
 
+    selected_promo = str(payload.promo_code or "").strip().upper()
+    promo_selected_explicitly = bool(selected_promo)
+    if not selected_promo:
+        active_user = get_user_active_promocode(telegram_id) or {}
+        selected_promo = str(active_user.get("promo_code") or "").strip().upper()
+    if not selected_promo:
+        sale = get_flash_sale_state()
+        if sale.get("active"):
+            selected_promo = str(sale.get("promo_code") or "").strip().upper()
+
+    final_price_rub = price_rub
+    discount_rub = 0
+    applied_promo_code: Optional[str] = None
+    if selected_promo:
+        promo_ok, promo_payload, promo_err = apply_promocode_to_order(
+            order_id,
+            user["id"],
+            selected_promo,
+            price_rub,
+            telegram_id=telegram_id,
+        )
+        if promo_ok and promo_payload:
+            final_price_rub = int(promo_payload.get("final_amount") or price_rub)
+            discount_rub = int(promo_payload.get("discount_amount") or 0)
+            applied_promo_code = str(promo_payload.get("code") or "").strip().upper() or None
+            if applied_promo_code:
+                set_user_active_promocode(telegram_id, applied_promo_code, source="miniapp")
+        elif promo_selected_explicitly:
+            raise HTTPException(status_code=400, detail=promo_err or "Promo code is invalid")
+        else:
+            clear_user_active_promocode(telegram_id)
+
     create_or_update_transaction(
         order_id=order_id,
         user_id=user["id"],
-        amount=price_rub,
+        amount=final_price_rub,
         currency="RUB",
         status="PENDING",
         payload={
@@ -666,13 +754,16 @@ async def create_invoice(payload: InvoiceRequest, session: dict[str, Any] = Depe
             "method": method_code,
             "tariff_name": tariff.get("name"),
             "key_id": vpn_key_id,
+            "base_amount_rub": price_rub,
+            "discount_amount_rub": discount_rub,
+            "promo_code": applied_promo_code,
         },
     )
 
     platega_method = get_platega_payment_method_id(method_code)
     try:
         result = await create_payment_link(
-            amount_rub=price_rub,
+            amount_rub=final_price_rub,
             order_id=order_id,
             description=f"Оплата тарифа {tariff.get('name')}",
             success_url=BOT_RETURN_URL,
@@ -698,7 +789,7 @@ async def create_invoice(payload: InvoiceRequest, session: dict[str, Any] = Depe
     create_or_update_transaction(
         order_id=order_id,
         user_id=user["id"],
-        amount=price_rub,
+        amount=final_price_rub,
         currency="RUB",
         payment_id=result["transaction_id"],
         status="PENDING",
@@ -707,6 +798,9 @@ async def create_invoice(payload: InvoiceRequest, session: dict[str, Any] = Depe
             "method": method_code,
             "tariff_name": tariff.get("name"),
             "key_id": vpn_key_id,
+            "base_amount_rub": price_rub,
+            "discount_amount_rub": discount_rub,
+            "promo_code": applied_promo_code,
             "provider": result.get("raw"),
         },
     )
@@ -717,6 +811,10 @@ async def create_invoice(payload: InvoiceRequest, session: dict[str, Any] = Depe
             "order_id": order_id,
             "redirect_url": result["redirect_url"],
             "transaction_id": result["transaction_id"],
+            "amount_rub": final_price_rub,
+            "base_amount_rub": price_rub,
+            "discount_amount_rub": discount_rub,
+            "promo_code": applied_promo_code,
         },
     }
 

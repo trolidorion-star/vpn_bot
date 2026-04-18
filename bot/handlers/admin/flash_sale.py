@@ -1,4 +1,4 @@
-import datetime
+﻿import datetime
 import logging
 
 from aiogram import F, Router
@@ -10,7 +10,7 @@ from bot.states.admin_states import AdminStates
 from bot.utils.admin import is_admin
 from bot.utils.text import get_message_text_for_storage, safe_edit_or_send
 from bot.services.flash_sale import format_remaining_hms, get_flash_sale_state
-from database.requests import set_setting
+from database.requests import create_or_update_promocode, set_setting
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -30,7 +30,7 @@ def _format_flash_sale_text() -> str:
         f"Акционная цена: <b>{state['sale_price_rub']} ₽</b>\n"
         f"Длительность цикла: <b>{state['duration_hours']} ч</b>\n"
         f"Автоперезапуск: <b>{'ВКЛ' if state['auto_restart'] else 'ВЫКЛ'}</b>\n\n"
-        "Настройте параметры акции и таймера:"
+        "Также можно создать скрытый или персональный промокод."
     )
 
 
@@ -129,6 +129,34 @@ async def edit_flash_sale_promo(callback: CallbackQuery, state: FSMContext):
     await _start_edit(callback, state, "flash_sale_promo_code", "🎫 <b>Промокод акции</b>", "Введите новый промокод (до 32 символов):")
 
 
+@router.callback_query(F.data == "admin_flash_sale_create_hidden")
+async def create_hidden_promocode(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+    await _start_edit(
+        callback,
+        state,
+        "promo_create_hidden",
+        "🕶 <b>Скрытый промокод</b>",
+        "Формат: <code>CODE DISCOUNT%</code>\nПример: <code>VIP30 30%</code>",
+    )
+
+
+@router.callback_query(F.data == "admin_flash_sale_create_personal")
+async def create_personal_promocode(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+    await _start_edit(
+        callback,
+        state,
+        "promo_create_personal",
+        "👤 <b>Персональный промокод</b>",
+        "Формат: <code>TELEGRAM_ID CODE DISCOUNT%</code>\nПример: <code>6989943466 PRIVATE25 25%</code>",
+    )
+
+
 @router.message(AdminStates.flash_sale_edit)
 async def save_flash_sale_field(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
@@ -156,13 +184,46 @@ async def save_flash_sale_field(message: Message, state: FSMContext):
             if not value:
                 raise ValueError()
             set_setting(field, value[:32])
+        elif field == "promo_create_hidden":
+            parts = value.split()
+            if len(parts) < 2:
+                raise ValueError()
+            code = parts[0].strip().upper()
+            discount = int(parts[1].strip().replace("%", ""))
+            if not code or discount < 1 or discount > 100:
+                raise ValueError()
+            create_or_update_promocode(
+                code=code,
+                discount_type="PERCENT",
+                discount_value=discount,
+                min_amount=1,
+                is_active=True,
+                visibility="HIDDEN",
+            )
+        elif field == "promo_create_personal":
+            parts = value.split()
+            if len(parts) < 3:
+                raise ValueError()
+            telegram_id = int(parts[0].strip())
+            code = parts[1].strip().upper()
+            discount = int(parts[2].strip().replace("%", ""))
+            if telegram_id <= 0 or not code or discount < 1 or discount > 100:
+                raise ValueError()
+            create_or_update_promocode(
+                code=code,
+                discount_type="PERCENT",
+                discount_value=discount,
+                min_amount=1,
+                is_active=True,
+                visibility="PERSONAL",
+                target_telegram_id=telegram_id,
+            )
         else:
             raise ValueError()
     except ValueError:
         await safe_edit_or_send(message, "❌ Некорректное значение. Повторите ввод.")
         return
 
-    # Если акция уже включена и мы изменили цену/длительность, запускаем цикл заново.
     if field in {"flash_sale_price_rub", "flash_sale_base_price_rub", "flash_sale_duration_hours"}:
         current = get_flash_sale_state()
         if current["enabled"]:

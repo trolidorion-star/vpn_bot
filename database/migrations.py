@@ -28,7 +28,7 @@ def _add_column(conn: sqlite3.Connection, table: str, column_def: str) -> None:
 
 
 # Текущая версия схемы БД
-LATEST_VERSION = 29
+LATEST_VERSION = 30
 
 
 def get_current_version() -> int:
@@ -1812,6 +1812,36 @@ def migration_29(conn: sqlite3.Connection) -> None:
     logger.info("Migration v29 applied")
 
 
+def migration_30(conn: sqlite3.Connection) -> None:
+    """
+    Migration v30:
+    - Adds promo visibility model (PUBLIC/HIDDEN/PERSONAL).
+    - Adds target_telegram_id for personal promo codes.
+    - Adds user_active_promocodes for cross-surface promo sync (bot <-> mini app).
+    """
+    logger.info("Applying migration v30 (promo visibility + user promo state)...")
+
+    _add_column(conn, "promo_codes", "visibility TEXT NOT NULL DEFAULT 'PUBLIC'")
+    _add_column(conn, "promo_codes", "target_telegram_id INTEGER")
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_active_promocodes (
+            telegram_id INTEGER PRIMARY KEY,
+            promo_code TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'manual',
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_promo_codes_visibility ON promo_codes(visibility)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_promo_codes_target ON promo_codes(target_telegram_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_user_active_promocodes_code ON user_active_promocodes(promo_code)")
+
+    logger.info("Migration v30 applied")
+
+
 MIGRATIONS = {
     1: migration_1,
     2: migration_2,
@@ -1842,6 +1872,7 @@ MIGRATIONS = {
     27: migration_27,
     28: migration_28,
     29: migration_29,
+    30: migration_30,
 }
 
 

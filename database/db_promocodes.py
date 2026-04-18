@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 from typing import Any, Dict, Optional, Tuple
 
 from .connection import get_db
@@ -14,6 +14,9 @@ __all__ = [
     "clear_promocode_from_order",
     "get_order_promocode",
     "consume_order_promocode",
+    "set_user_active_promocode",
+    "get_user_active_promocode",
+    "clear_user_active_promocode",
 ]
 
 
@@ -40,6 +43,17 @@ def ensure_promocode_tables() -> None:
             )
             """
         )
+
+        # Backward-compatible schema upgrades.
+        try:
+            conn.execute("ALTER TABLE promo_codes ADD COLUMN visibility TEXT NOT NULL DEFAULT 'PUBLIC'")
+        except Exception:
+            pass
+        try:
+            conn.execute("ALTER TABLE promo_codes ADD COLUMN target_telegram_id INTEGER")
+        except Exception:
+            pass
+
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS payment_promocodes (
@@ -56,10 +70,25 @@ def ensure_promocode_tables() -> None:
             )
             """
         )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS user_active_promocodes (
+                telegram_id INTEGER PRIMARY KEY,
+                promo_code TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'manual',
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
         conn.execute("CREATE INDEX IF NOT EXISTS idx_promo_codes_code ON promo_codes(code)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_promo_codes_visibility ON promo_codes(visibility)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_promo_codes_target ON promo_codes(target_telegram_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_payment_promocodes_order_id ON payment_promocodes(order_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_payment_promocodes_user_id ON payment_promocodes(user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_payment_promocodes_promo_code ON payment_promocodes(promo_code)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_user_active_promocodes_code ON user_active_promocodes(promo_code)")
 
 
 def create_or_update_promocode(
@@ -72,20 +101,30 @@ def create_or_update_promocode(
     is_active: bool = True,
     valid_from: Optional[str] = None,
     valid_to: Optional[str] = None,
+    visibility: str = "PUBLIC",
+    target_telegram_id: Optional[int] = None,
 ) -> bool:
     ensure_promocode_tables()
     norm_code = _normalize_code(code)
     kind = (discount_type or "PERCENT").strip().upper()
+    scope = (visibility or "PUBLIC").strip().upper()
+
     if kind not in {"PERCENT", "FIXED"}:
         raise ValueError("discount_type must be PERCENT or FIXED")
+    if scope not in {"PUBLIC", "HIDDEN", "PERSONAL"}:
+        raise ValueError("visibility must be PUBLIC, HIDDEN or PERSONAL")
+
+    target_id = int(target_telegram_id) if target_telegram_id is not None else None
+    if scope == "PERSONAL" and (target_id is None or target_id <= 0):
+        raise ValueError("PERSONAL promo requires target_telegram_id")
 
     with get_db() as conn:
         conn.execute(
             """
             INSERT INTO promo_codes (
-                code, discount_type, discount_value, min_amount, max_usages, is_active, valid_from, valid_to
+                code, discount_type, discount_value, min_amount, max_usages, is_active, valid_from, valid_to, visibility, target_telegram_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(code) DO UPDATE SET
                 discount_type = excluded.discount_type,
                 discount_value = excluded.discount_value,
@@ -93,7 +132,9 @@ def create_or_update_promocode(
                 max_usages = excluded.max_usages,
                 is_active = excluded.is_active,
                 valid_from = excluded.valid_from,
-                valid_to = excluded.valid_to
+                valid_to = excluded.valid_to,
+                visibility = excluded.visibility,
+                target_telegram_id = excluded.target_telegram_id
             """,
             (
                 norm_code,
@@ -104,6 +145,8 @@ def create_or_update_promocode(
                 1 if is_active else 0,
                 valid_from,
                 valid_to,
+                scope,
+                target_id,
             ),
         )
     return True
@@ -133,7 +176,12 @@ def _calculate_discount(amount_rub: int, promo: Dict[str, Any]) -> Tuple[int, in
     return discount, final_amount
 
 
-def validate_promocode_amount(code: str, amount_rub: int) -> Tuple[bool, Optional[Dict[str, Any]], str]:
+def validate_promocode_amount(
+    code: str,
+    amount_rub: int,
+    *,
+    telegram_id: Optional[int] = None,
+) -> Tuple[bool, Optional[Dict[str, Any]], str]:
     ensure_promocode_tables()
     promo = get_promocode(code)
     if not promo:
@@ -141,6 +189,14 @@ def validate_promocode_amount(code: str, amount_rub: int) -> Tuple[bool, Optiona
 
     if int(promo.get("is_active") or 0) != 1:
         return False, None, "Промокод неактивен"
+
+    visibility = str(promo.get("visibility") or "PUBLIC").upper()
+    target_telegram_id = promo.get("target_telegram_id")
+    if visibility == "PERSONAL":
+        if not telegram_id or int(telegram_id) <= 0:
+            return False, None, "Промокод доступен только конкретному пользователю"
+        if int(target_telegram_id or 0) != int(telegram_id):
+            return False, None, "Промокод не предназначен для вас"
 
     with get_db() as conn:
         row = conn.execute(
@@ -168,13 +224,22 @@ def validate_promocode_amount(code: str, amount_rub: int) -> Tuple[bool, Optiona
         "discount_amount": discount_amount,
         "final_amount": final_amount,
         "original_amount": int(amount_rub),
+        "visibility": visibility,
+        "target_telegram_id": int(target_telegram_id) if target_telegram_id is not None else None,
     }
     return True, payload, ""
 
 
-def apply_promocode_to_order(order_id: str, user_id: int, code: str, amount_rub: int) -> Tuple[bool, Optional[Dict[str, Any]], str]:
+def apply_promocode_to_order(
+    order_id: str,
+    user_id: int,
+    code: str,
+    amount_rub: int,
+    *,
+    telegram_id: Optional[int] = None,
+) -> Tuple[bool, Optional[Dict[str, Any]], str]:
     ensure_promocode_tables()
-    ok, payload, err = validate_promocode_amount(code, amount_rub)
+    ok, payload, err = validate_promocode_amount(code, amount_rub, telegram_id=telegram_id)
     if not ok or payload is None:
         return False, None, err
 
@@ -202,7 +267,54 @@ def apply_promocode_to_order(order_id: str, user_id: int, code: str, amount_rub:
                 payload["final_amount"],
             ),
         )
+
+    if telegram_id is not None:
+        set_user_active_promocode(int(telegram_id), payload["code"], source="order")
+
     return True, payload, ""
+
+
+def set_user_active_promocode(telegram_id: int, code: str, source: str = "manual") -> bool:
+    ensure_promocode_tables()
+    norm_code = _normalize_code(code)
+    if not norm_code:
+        return False
+    with get_db() as conn:
+        conn.execute(
+            """
+            INSERT INTO user_active_promocodes (telegram_id, promo_code, source, updated_at)
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(telegram_id) DO UPDATE SET
+                promo_code = excluded.promo_code,
+                source = excluded.source,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (int(telegram_id), norm_code, str(source or "manual")),
+        )
+    return True
+
+
+def get_user_active_promocode(telegram_id: int) -> Optional[Dict[str, Any]]:
+    ensure_promocode_tables()
+    with get_db() as conn:
+        row = conn.execute(
+            """
+            SELECT u.telegram_id, u.promo_code, u.source, u.updated_at, p.visibility, p.target_telegram_id
+            FROM user_active_promocodes u
+            LEFT JOIN promo_codes p ON p.code = u.promo_code
+            WHERE u.telegram_id = ?
+            LIMIT 1
+            """,
+            (int(telegram_id),),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def clear_user_active_promocode(telegram_id: int) -> bool:
+    ensure_promocode_tables()
+    with get_db() as conn:
+        cursor = conn.execute("DELETE FROM user_active_promocodes WHERE telegram_id = ?", (int(telegram_id),))
+        return cursor.rowcount > 0
 
 
 def clear_promocode_from_order(order_id: str) -> bool:
