@@ -29,6 +29,9 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
+SUCCESS_STATUSES = {"CONFIRMED", "SUCCESS", "PAID", "SUCCEEDED", "COMPLETED", "APPROVED"}
+FAILED_STATUSES = {"CANCELED", "CHARGEBACK", "CHARGEBACKED", "FAILED", "DECLINED", "EXPIRED"}
+
 _runner: Optional[web.AppRunner] = None
 _site: Optional[web.TCPSite] = None
 _bot = None
@@ -226,11 +229,11 @@ async def _platega_webhook_handler(request: web.Request) -> web.Response:
     if not order:
         # Admin test payments are intentionally not linked to subscription orders.
         if tx_payload.get("kind") == "admin_test_platega":
-            if status == "CONFIRMED":
+            if status in SUCCESS_STATUSES:
                 update_transaction_status(order_id=order_id, status="SUCCESS", payment_id=transaction_id, payload=payload)
                 await _notify_user({"user_id": tx["user_id"]}, "✅ Тестовый платеж Platega подтвержден.")
                 return web.Response(status=200, text="OK")
-            if status in {"CANCELED", "CHARGEBACK", "CHARGEBACKED"}:
+            if status in FAILED_STATUSES:
                 update_transaction_status(order_id=order_id, status="FAILED", payment_id=transaction_id, payload=payload)
                 return web.Response(status=200, text="OK")
             update_transaction_status(order_id=order_id, status="PENDING", payment_id=transaction_id, payload=payload)
@@ -240,7 +243,7 @@ async def _platega_webhook_handler(request: web.Request) -> web.Response:
         return web.Response(status=404, text="Order not found")
 
 
-    if status in {"CONFIRMED", "SUCCESS", "PAID"}:
+    if status in SUCCESS_STATUSES:
         if tx.get("status") == "SUCCESS" or is_order_already_paid(order_id):
             update_transaction_status(order_id=order_id, status="SUCCESS", payment_id=transaction_id, payload=payload)
             return web.Response(status=200, text="OK")
@@ -263,7 +266,7 @@ async def _platega_webhook_handler(request: web.Request) -> web.Response:
         await _notify_user(final_order, "✅ Оплата прошла успешно. Подписка обновлена.")
         return web.Response(status=200, text="OK")
 
-    if status in {"CANCELED", "CHARGEBACK", "CHARGEBACKED"}:
+    if status in FAILED_STATUSES:
         if tx.get("status") != "SUCCESS":
             update_transaction_status(order_id=order_id, status="FAILED", payment_id=transaction_id, payload=payload)
         return web.Response(status=200, text="OK")

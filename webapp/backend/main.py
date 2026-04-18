@@ -89,6 +89,9 @@ BOT_TOKEN_ENV_FILES = (
 )
 logger = logging.getLogger(__name__)
 
+PLATEGA_SUCCESS_STATUSES = {"CONFIRMED", "SUCCESS", "PAID", "SUCCEEDED", "COMPLETED", "APPROVED"}
+PLATEGA_FAILED_STATUSES = {"CANCELED", "CHARGEBACK", "CHARGEBACKED", "FAILED", "DECLINED", "EXPIRED"}
+
 app = FastAPI(title="Bobrik Mini App API", version="1.0.0")
 app.add_middleware(
     CORSMiddleware,
@@ -587,7 +590,7 @@ async def _reconcile_pending_platega_orders_for_user(telegram_id: int, max_items
             continue
 
         status = str(status_payload.get("status") or "").strip().upper()
-        if status in {"CONFIRMED", "SUCCESS", "PAID"}:
+        if status in PLATEGA_SUCCESS_STATUSES:
             success, _text, _order = await process_payment_order(order_id)
             if success:
                 update_transaction_status(order_id=order_id, status="SUCCESS", payment_id=payment_id, payload=status_payload)
@@ -595,10 +598,16 @@ async def _reconcile_pending_platega_orders_for_user(telegram_id: int, max_items
                 reconciled += 1
             else:
                 logger.warning("MiniApp reconcile: process_payment_order failed for %s", order_id)
-        elif status in {"CANCELED", "CHARGEBACK", "CHARGEBACKED"}:
+        elif status in PLATEGA_FAILED_STATUSES:
             update_transaction_status(order_id=order_id, status="FAILED", payment_id=payment_id, payload=status_payload)
         else:
             update_transaction_status(order_id=order_id, status="PENDING", payment_id=payment_id, payload=status_payload)
+            logger.info(
+                "MiniApp reconcile: non-final status order=%s payment_id=%s status=%s",
+                order_id,
+                payment_id,
+                status or "<empty>",
+            )
 
     return reconciled
 

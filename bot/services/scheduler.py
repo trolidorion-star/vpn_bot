@@ -35,6 +35,9 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 logger = logging.getLogger(__name__)
 
+PLATEGA_SUCCESS_STATUSES = {"CONFIRMED", "SUCCESS", "PAID", "SUCCEEDED", "COMPLETED", "APPROVED"}
+PLATEGA_FAILED_STATUSES = {"CANCELED", "CHARGEBACK", "CHARGEBACKED", "FAILED", "DECLINED", "EXPIRED"}
+
 # Путь к базе данных бота
 BOT_DB_PATH = os.path.join(os.path.dirname(__file__), '..', '..', 'database', 'vpn_bot.db')
 
@@ -558,7 +561,7 @@ async def reconcile_pending_platega_payments(bot: Bot, limit: int = 20) -> int:
             continue
 
         status = str(status_payload.get("status") or "").strip().upper()
-        if status in {"CONFIRMED", "SUCCESS", "PAID"}:
+        if status in PLATEGA_SUCCESS_STATUSES:
             already_paid = is_order_already_paid(order_id)
             success, text, _order = await process_payment_order(order_id)
             if success:
@@ -592,7 +595,7 @@ async def reconcile_pending_platega_payments(bot: Bot, limit: int = 20) -> int:
                         )
             else:
                 logger.warning("Platega reconcile: process_payment_order failed for order=%s", order_id)
-        elif status in {"CANCELED", "CHARGEBACK", "CHARGEBACKED"}:
+        elif status in PLATEGA_FAILED_STATUSES:
             update_transaction_status(
                 order_id=order_id,
                 status="FAILED",
@@ -605,6 +608,12 @@ async def reconcile_pending_platega_payments(bot: Bot, limit: int = 20) -> int:
                 status="PENDING",
                 payment_id=payment_id,
                 payload=status_payload,
+            )
+            logger.info(
+                "Platega reconcile: non-final status order=%s payment_id=%s status=%s",
+                order_id,
+                payment_id,
+                status or "<empty>",
             )
 
     return reconciled

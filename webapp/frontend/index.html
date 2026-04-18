@@ -1423,7 +1423,9 @@
             body: {
               tariff_id: selectedTariff.id,
               method,
-              key_id: user?.key_id || null,
+              // Renew only when user explicitly opened a concrete key card.
+              // Regular tariff purchase from catalog should create a new key.
+              key_id: selectedKeyId || null,
               promo_code: String(promoCodeApplied || '').trim() || null,
               use_promo: Boolean(checkoutUsePromo),
             },
