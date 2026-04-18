@@ -749,12 +749,14 @@
       const [ticketSeenMap, setTicketSeenMap] = useState(getSavedJson(SUPPORT_TICKET_SEEN_KEY, {}));
       const [tabContentLoading, setTabContentLoading] = useState(false);
       const [diagReport, setDiagReport] = useState(null);
+      const [showSectionsMenu, setShowSectionsMenu] = useState(false);
       const [showQualityPresets, setShowQualityPresets] = useState(false);
       const [promoCodeDraft, setPromoCodeDraft] = useState('');
       const [promoCodeApplied, setPromoCodeApplied] = useState('');
       const [activePromo, setActivePromo] = useState(null);
       const [promoGlobal, setPromoGlobal] = useState(null);
       const [selectedUsageKey, setSelectedUsageKey] = useState('all');
+      const [checkoutUsePromo, setCheckoutUsePromo] = useState(true);
       const [giftMode, setGiftMode] = useState(false);
       const [giftRecipientName, setGiftRecipientName] = useState('');
       const [giftComment, setGiftComment] = useState('');
@@ -767,6 +769,13 @@
       }, [user?.expires_at]);
 
       const msLeft = Math.max(0, expiresAtMs - clock);
+      const promoGlobalSecondsLive = useMemo(() => {
+        const base = Number(promoGlobal?.remaining_seconds || 0);
+        if (!promoGlobal?.active || base <= 0) return 0;
+        if (!lastSyncAt) return base;
+        const elapsed = Math.max(0, Math.floor((clock - lastSyncAt) / 1000));
+        return Math.max(0, base - elapsed);
+      }, [promoGlobal, lastSyncAt, clock]);
       const isActive = user?.status === 'active' && msLeft > 0;
       const referralLink = normalizeReferralLink(refData?.referral_link || user?.referral_link || '');
       const usagePoints = useMemo(() => {
@@ -790,6 +799,32 @@
               return { x: idx, y, used, limit, label: `${hh}:${mm}`, pct };
             });
           }
+
+          const selectedKey = (keys || []).find((item) => Number(item?.id || 0) === selectedKeyId);
+          if (selectedKey) {
+            const used = Number(selectedKey?.traffic_used_bytes || 0);
+            const limit = Number(selectedKey?.traffic_limit_bytes || 0);
+            const ratioByLimit = limit > 0 ? Math.max(0, Math.min(1, used / limit)) : 0;
+            const ratioByUsed = used > 0 ? 1 : 0;
+            const ratio = ratioByLimit > 0 ? ratioByLimit : ratioByUsed;
+            const pct = Math.round(ratio * 100);
+            const synthetic = Array.from({ length: 8 }, (_, idx) => {
+              const back = 7 - idx;
+              const fade = Math.max(0.2, 1 - (back * 0.1));
+              const y = Math.max(0, Math.min(1, ratio * fade));
+              return {
+                x: idx,
+                y,
+                used: Math.round(used * fade),
+                limit,
+                label: back === 0 ? 'Сейчас' : `-${back}ч`,
+                pct: Math.round(y * 100),
+              };
+            });
+            return synthetic;
+          }
+
+          return [];
         }
 
         const fromStatsRaw = (stats || []).slice(0, 8).map((item, idx) => {
@@ -861,6 +896,7 @@
       const changeTab = (nextTab) => {
         if (!nextTab || nextTab === tab) return;
         setTabContentLoading(true);
+        setShowSectionsMenu(false);
         setTab(nextTab);
         setTimeout(() => setTabContentLoading(false), 170);
       };
@@ -1282,6 +1318,7 @@
               method,
               key_id: user?.key_id || null,
               promo_code: String(promoCodeApplied || '').trim() || null,
+              use_promo: Boolean(checkoutUsePromo),
             },
           });
           setSelectedTariff(null);
@@ -1431,6 +1468,9 @@
         { id: 'service', title: 'Сервис', icon: '🧪' },
       ];
       if (user?.is_admin) tabs.push({ id: 'admin', title: 'Админ', icon: '⚙️' });
+      const primaryTabIds = ['dashboard', 'plans', 'usage', 'support'];
+      const primaryTabs = tabs.filter((item) => primaryTabIds.includes(item.id));
+      const extraTabs = tabs.filter((item) => !primaryTabIds.includes(item.id));
 
       useEffect(() => {
         if (tab !== 'support') return;
@@ -1438,6 +1478,11 @@
         if (!pane) return;
         pane.scrollTop = pane.scrollHeight;
       }, [tab, supportMode, supportMessages, supportViewMessages]);
+
+      useEffect(() => {
+        if (!selectedTariff) return;
+        setCheckoutUsePromo(true);
+      }, [selectedTariff?.id]);
 
       useEffect(() => {
         if (tab !== 'support') return;
@@ -1622,7 +1667,7 @@
         const promoScopeLabel = activePromoScope === 'HIDDEN'
             ? 'Скрытый'
             : 'Общий';
-        const globalPromoTimer = Number(promoGlobal?.remaining_seconds || 0);
+        const globalPromoTimer = promoGlobalSecondsLive;
         const promoPreviewText = promoCodeApplied
           ? `Промокод «${promoCodeApplied}» добавлен. Если код валиден на сервере, скидка применится при оплате.`
           : 'Добавьте промокод перед оплатой: он будет учтен, если активен в системе.';
@@ -1654,39 +1699,41 @@
                   onClick={impact(() => {
                     const code = String(promoCodeDraft || '').trim();
                     setPromoCodeApplied(code);
+                    setCheckoutUsePromo(Boolean(code));
                     showToast(code ? 'Промокод добавлен к оплате' : 'Промокод очищен');
                   }, 'light')}
-                  className="rounded-xl border border-white/15 px-3 py-2 text-sm sm:min-w-[140px]"
+                  className="rounded-xl border border-white/15 px-3 py-2 text-sm sm:min-w-[140px] hover:border-accent/45 transition"
                 >
                   Применить
                 </button>
               </div>
-              <button
-                onClick={impact(() => {
-                  setPromoCodeApplied('');
-                  setPromoCodeDraft('');
-                  showToast('Покупка будет без промокода');
-                }, 'light')}
-                className="mt-2 rounded-xl border border-white/15 px-3 py-2 text-xs text-muted"
-              >
-                Купить без промокода
-              </button>
-              {activePromoCode && (
+              <div className="mt-2 flex items-center gap-2">
                 <button
                   onClick={impact(() => {
-                    setPromoCodeDraft(activePromoCode);
-                    setPromoCodeApplied(activePromoCode);
-                    showToast(`Покупка с промокодом ${activePromoCode}`);
+                    setCheckoutUsePromo(false);
+                    showToast('Покупка будет без промокода');
                   }, 'light')}
-                  className="mt-2 rounded-xl border border-accent/40 bg-accent/10 px-3 py-2 text-xs text-accent"
+                  className={`rounded-xl px-3 py-2 text-xs transition ${!checkoutUsePromo ? 'bg-surfaceSoft border border-white/20 text-text' : 'border border-white/15 text-muted hover:border-white/25'}`}
+                >
+                  Купить без промокода
+                </button>
+                <button
+                  onClick={impact(() => {
+                    const code = String(activePromoCode || promoCodeDraft || promoCodeApplied || '').trim().toUpperCase();
+                    if (code) {
+                      setPromoCodeDraft(code);
+                      setPromoCodeApplied(code);
+                    }
+                    setCheckoutUsePromo(true);
+                    showToast(code ? `Покупка с промокодом ${code}` : 'Включен режим покупки с промокодом');
+                  }, 'light')}
+                  className={`rounded-xl px-3 py-2 text-xs transition ${checkoutUsePromo ? 'bg-accent/18 border border-accent/40 text-accent' : 'border border-white/15 text-muted hover:border-accent/35'}`}
                 >
                   Купить по промокоду
                 </button>
-              )}
-              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
-                <span className="tag text-center">🎁 Купить в подарок</span>
-                <span className="tag text-center">⚡ Быстрая оплата</span>
-                <span className="tag text-center">🛡️ Безопасный checkout</span>
+              </div>
+              <div className="mt-2 text-[11px] text-muted">
+                Режим оплаты: {checkoutUsePromo ? 'с промокодом' : 'без промокода'}
               </div>
             </div>
             <div className="grid grid-cols-1 gap-3">
@@ -1695,8 +1742,17 @@
                 {(() => {
                   const isLifetime = String(tariff?.name || '').toLowerCase().includes('навсегда') || Number(tariff?.days || 0) >= 666;
                   const daysLabel = isLifetime ? '∞' : `${tariff.days} дней доступа`;
-                  const oldPrice = Number(tariff?.old_price_rub || tariff?.old_price || 0);
-                  const newPrice = Number(tariff?.price_rub || 0);
+                  const oldPriceRaw = Number(tariff?.old_price_rub || tariff?.old_price || 0);
+                  const basePrice = Number(tariff?.price_rub || 0);
+                  const promoDiscountPct = (promoGlobal?.active && Number(promoGlobal?.discount_percent || 0) > 0)
+                    ? Math.min(95, Math.max(1, Number(promoGlobal?.discount_percent || 0)))
+                    : 0;
+                  const hasBuiltInSale = oldPriceRaw > basePrice && oldPriceRaw > 0;
+                  const promoDiscountedPrice = promoDiscountPct > 0
+                    ? Math.max(1, Math.round(basePrice * (100 - promoDiscountPct) / 100))
+                    : basePrice;
+                  const oldPrice = hasBuiltInSale ? oldPriceRaw : (promoDiscountPct > 0 ? basePrice : 0);
+                  const newPrice = hasBuiltInSale ? basePrice : promoDiscountedPrice;
                   const computedDiscount = oldPrice > newPrice && oldPrice > 0
                     ? Math.round(((oldPrice - newPrice) / oldPrice) * 100)
                     : 0;
@@ -1720,6 +1776,7 @@
                       <div className="mt-3 flex items-center gap-2">
                         {isLifetime ? <span className="tag">Выгодно</span> : (idx === 0 && <span className="tag">Популярный</span>)}
                         {discountPercent > 0 && <span className="tag">Скидка {discountPercent}%</span>}
+                        {promoDiscountPct > 0 && <span className="tag">По акции</span>}
                         <span className="tag">{perDayLabel}</span>
                       </div>
                       <div className="mt-3 text-xs text-muted readable">Нажмите, чтобы выбрать способ оплаты</div>
@@ -2226,7 +2283,7 @@
 
           <nav className="fixed bottom-3 left-0 right-0 z-20 mx-auto flex w-[calc(100%-20px)] max-w-[520px] items-center gap-2 rounded-2xl border border-white/10 px-2.5 py-2.5 glass" style={{ boxShadow: 'var(--panel-shadow)' }}>
             <div className="flex min-w-0 w-full gap-2 overflow-x-auto overflow-y-visible">
-            {tabs.map((item) => (
+            {primaryTabs.map((item) => (
               <button
                 key={item.id}
                 onClick={impact(() => changeTab(item.id), 'light')}
@@ -2234,7 +2291,7 @@
               >
                 <span className="mr-1">{item.icon}</span>{item.title}
                 {Number(item.badge || 0) > 0 && tab !== item.id && (
-                  <span className="absolute -right-1 -top-1 min-w-[18px] rounded-full bg-danger px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
+                  <span className="absolute right-0 top-0 translate-x-1/3 -translate-y-1/3 min-w-[18px] rounded-full bg-danger px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
                     {item.badge > 99 ? '99+' : item.badge}
                   </span>
                 )}
@@ -2243,17 +2300,67 @@
             </div>
           </nav>
 
+          {extraTabs.length > 0 && (
+            <button
+              onClick={impact(() => setShowSectionsMenu((v) => !v), 'light')}
+              className={`fixed bottom-20 right-4 z-30 h-11 min-w-[44px] rounded-full border border-white/15 px-3 text-sm glass ${extraTabs.some((t) => t.id === tab) || showSectionsMenu ? 'text-accent' : 'text-muted'}`}
+              title="Разделы"
+            >
+              ⋮
+            </button>
+          )}
+
+          {showSectionsMenu && (
+            <div className="fixed inset-0 z-30 bg-black/50" onClick={() => setShowSectionsMenu(false)}>
+              <div className="absolute bottom-0 left-0 right-0 rounded-t-[24px] glass border-t border-white/10 p-4 modal-sheet" onClick={(event) => event.stopPropagation()}>
+                <div className="mx-auto mb-3 h-1.5 w-14 rounded-full bg-white/20"></div>
+                <div className="mb-2 text-sm font-semibold">Разделы</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {extraTabs.map((item) => (
+                    <button
+                      key={item.id}
+                      onClick={impact(() => changeTab(item.id), 'light')}
+                      className={`relative rounded-xl px-3 py-3 text-left text-sm ${tab === item.id ? 'bg-accent text-black font-semibold' : 'border border-white/15 bg-surfaceSoft/45 text-text'}`}
+                    >
+                      <span className="mr-1">{item.icon}</span>{item.title}
+                      {Number(item.badge || 0) > 0 && tab !== item.id && (
+                        <span className="absolute right-2 top-2 min-w-[18px] rounded-full bg-danger px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
+                          {item.badge > 99 ? '99+' : item.badge}
+                        </span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
           {selectedTariff && (
             <div className="fixed inset-0 z-30 bg-black/65" onClick={() => setSelectedTariff(null)}>
               <div className="absolute bottom-0 left-0 right-0 rounded-t-[26px] glass border-t border-white/10 p-4 modal-sheet desktop-modal" onClick={(event) => event.stopPropagation()}>
                 <div className="mx-auto mb-3 h-1.5 w-14 rounded-full bg-white/20"></div>
                 <div className="text-lg font-semibold">{selectedTariff.name}</div>
                 <div className="mb-3 text-sm text-muted">
-                  {(String(selectedTariff?.name || '').toLowerCase().includes('навсегда') || Number(selectedTariff?.days || 0) >= 666) ? '∞' : `${selectedTariff.days} дней`} • {selectedTariff.price_rub} ₽
+                  {(() => {
+                    const daysLabel = (String(selectedTariff?.name || '').toLowerCase().includes('навсегда') || Number(selectedTariff?.days || 0) >= 666)
+                      ? '∞'
+                      : `${selectedTariff.days} дней`;
+                    const basePrice = Number(selectedTariff?.price_rub || 0);
+                    const discountPct = (promoGlobal?.active && checkoutUsePromo)
+                      ? Number(promoGlobal?.discount_percent || 0)
+                      : 0;
+                    const finalPrice = discountPct > 0
+                      ? Math.max(1, Math.round(basePrice * (100 - discountPct) / 100))
+                      : basePrice;
+                    if (discountPct > 0 && finalPrice < basePrice) {
+                      return <span>{daysLabel} • <s>{basePrice} ₽</s> <span className="text-accent font-semibold">{finalPrice} ₽</span></span>;
+                    }
+                    return <span>{daysLabel} • {basePrice} ₽</span>;
+                  })()}
                 </div>
                 {promoGlobal?.active && promoGlobal?.code && (
                   <div className="mb-3 text-xs text-muted">
-                    Промо-таймер акции: <span className="mono text-text">{fmtCountdown(Number(promoGlobal?.remaining_seconds || 0) * 1000)}</span>
+                    Промо-таймер акции: <span className="mono text-text">{fmtCountdown(promoGlobalSecondsLive * 1000)}</span>
                   </div>
                 )}
                 <div className="rounded-2xl border border-white/10 bg-surfaceSoft/55 p-3">
@@ -2272,6 +2379,7 @@
                         onClick={impact(() => {
                           const code = String(promoCodeDraft || '').trim();
                           setPromoCodeApplied(code);
+                          setCheckoutUsePromo(Boolean(code));
                           showToast(code ? `Промокод ${code} добавлен` : 'Промокод очищен');
                         }, 'light')}
                         className="rounded-xl border border-white/15 px-3 py-2 text-xs"
@@ -2284,16 +2392,31 @@
                         Активный промокод: {String(promoCodeApplied || activePromo?.code || '').trim().toUpperCase()}
                       </div>
                     )}
-                    <button
-                      onClick={impact(() => {
-                        setPromoCodeDraft('');
-                        setPromoCodeApplied('');
-                        showToast('Покупка будет без промокода');
-                      }, 'light')}
-                      className="mt-2 rounded-xl border border-white/15 px-3 py-2 text-xs text-muted"
-                    >
-                      Купить без промокода
-                    </button>
+                    <div className="mt-2 flex items-center gap-2">
+                      <button
+                        onClick={impact(() => {
+                          setCheckoutUsePromo(false);
+                          showToast('Покупка будет без промокода');
+                        }, 'light')}
+                        className={`rounded-xl px-3 py-2 text-xs transition ${!checkoutUsePromo ? 'bg-surfaceSoft border border-white/20 text-text' : 'border border-white/15 text-muted'}`}
+                      >
+                        Купить без промокода
+                      </button>
+                      <button
+                        onClick={impact(() => {
+                          const code = String(activePromo?.code || promoCodeDraft || promoCodeApplied || '').trim().toUpperCase();
+                          if (code) {
+                            setPromoCodeDraft(code);
+                            setPromoCodeApplied(code);
+                          }
+                          setCheckoutUsePromo(true);
+                          showToast(code ? `Режим с промокодом ${code}` : 'Включен режим с промокодом');
+                        }, 'light')}
+                        className={`rounded-xl px-3 py-2 text-xs transition ${checkoutUsePromo ? 'bg-accent/18 border border-accent/40 text-accent' : 'border border-white/15 text-muted'}`}
+                      >
+                        Купить по промокоду
+                      </button>
+                    </div>
                   </div>
                   <div className="mt-3 rounded-xl border border-white/10 bg-surface/40 p-2.5">
                     <div className="flex items-center justify-between gap-2">

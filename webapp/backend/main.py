@@ -120,6 +120,7 @@ class InvoiceRequest(BaseModel):
     method: str
     key_id: Optional[int] = None
     promo_code: Optional[str] = None
+    use_promo: bool = True
 
 
 class RuBypassRequest(BaseModel):
@@ -711,15 +712,18 @@ async def create_invoice(payload: InvoiceRequest, session: dict[str, Any] = Depe
         vpn_key_id=vpn_key_id,
     )
 
-    selected_promo = str(payload.promo_code or "").strip().upper()
-    promo_selected_explicitly = bool(selected_promo)
-    if not selected_promo:
-        active_user = get_user_active_promocode(telegram_id) or {}
-        selected_promo = str(active_user.get("promo_code") or "").strip().upper()
-    if not selected_promo:
-        sale = get_flash_sale_state()
-        if sale.get("active"):
-            selected_promo = str(sale.get("promo_code") or "").strip().upper()
+    selected_promo = ""
+    promo_selected_explicitly = False
+    if payload.use_promo:
+        selected_promo = str(payload.promo_code or "").strip().upper()
+        promo_selected_explicitly = bool(selected_promo)
+        if not selected_promo:
+            active_user = get_user_active_promocode(telegram_id) or {}
+            selected_promo = str(active_user.get("promo_code") or "").strip().upper()
+        if not selected_promo:
+            sale = get_flash_sale_state()
+            if sale.get("active"):
+                selected_promo = str(sale.get("promo_code") or "").strip().upper()
 
     final_price_rub = price_rub
     discount_rub = 0
