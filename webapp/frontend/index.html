@@ -118,10 +118,14 @@
       background: radial-gradient(42% 34% at 84% 28%, rgba(110,226,255,.2), transparent 74%);
     }
     .glass {
+      -webkit-backdrop-filter: blur(10px);
       backdrop-filter: blur(10px);
       background: linear-gradient(145deg, rgba(17,31,45,0.92), rgba(12,24,37,0.94));
       background-size: 180% 180%;
       border: 1px solid rgba(255, 255, 255, 0.12);
+      transform: translateZ(0);
+      backface-visibility: hidden;
+      will-change: transform, opacity;
     }
     @keyframes glassShift {
       0% { background-position: 0% 50%; }
@@ -133,6 +137,9 @@
       transition: transform .22s ease, border-color .22s ease, box-shadow .22s ease;
       will-change: transform;
       content-visibility: visible;
+      transform: translateZ(0);
+      backface-visibility: hidden;
+      contain: paint;
     }
     .premium-card:hover {
       border-color: rgba(68,179,255,.45);
@@ -180,6 +187,8 @@
     }
     .modal-sheet {
       animation: sheetIn .22s ease-out;
+      transform: translateZ(0);
+      backface-visibility: hidden;
     }
     @keyframes sheetIn {
       from { opacity: 0; transform: translateY(20px); }
@@ -1000,11 +1009,19 @@
       };
 
       useEffect(() => {
-        const fastTick = Boolean(selectedTariff) || tab === 'home' || tab === 'plans' || Boolean(promoGlobal?.active);
-        const intervalMs = fastTick ? 1000 : 5000;
-        const id = setInterval(() => setClock(now()), intervalMs);
+        const needsSecondTick = Boolean(selectedTariff) || Boolean(promoGlobal?.active);
+        const intervalMs = needsSecondTick ? 1000 : 15000;
+        const id = setInterval(() => {
+          setClock((prev) => {
+            const next = now();
+            if (!needsSecondTick && Math.floor(prev / 1000) === Math.floor(next / 1000)) {
+              return prev;
+            }
+            return next;
+          });
+        }, intervalMs);
         return () => clearInterval(id);
-      }, [tab, selectedTariff, promoGlobal?.active]);
+      }, [selectedTariff, promoGlobal?.active]);
 
       useEffect(() => {
         const onChange = () => setIsLowEndDevice(detectLowEndDevice());
