@@ -1,7 +1,7 @@
 import datetime
 from typing import Any, Dict, List
 
-from database.requests import get_setting, set_setting
+from database.requests import create_or_update_promocode, get_setting, set_setting
 
 
 def _utc_now() -> datetime.datetime:
@@ -72,7 +72,7 @@ def get_flash_sale_state() -> Dict[str, Any]:
         if active and end_at is not None:
             remaining_seconds = max(0, int((end_at - now).total_seconds()))
 
-    return {
+    state = {
         "enabled": enabled,
         "active": active,
         "sale_price_rub": max(1, sale_price_rub),
@@ -84,6 +84,28 @@ def get_flash_sale_state() -> Dict[str, Any]:
         "end_at": end_at,
         "remaining_seconds": remaining_seconds,
     }
+
+    code = str(state.get("promo_code") or "").strip().upper()
+    base_price = int(state.get("base_price_rub") or 0)
+    sale_price = int(state.get("sale_price_rub") or 0)
+    if code:
+        discount_percent = 0
+        if base_price > 0 and sale_price > 0 and sale_price < base_price:
+            discount_percent = round(((base_price - sale_price) / base_price) * 100)
+        discount_percent = max(1, min(95, int(discount_percent or 0)))
+        try:
+            create_or_update_promocode(
+                code=code,
+                discount_type="PERCENT",
+                discount_value=discount_percent,
+                min_amount=1,
+                is_active=bool(state.get("enabled")),
+                visibility="PUBLIC",
+            )
+        except Exception:
+            pass
+
+    return state
 
 
 def format_remaining_hms(seconds: int) -> str:

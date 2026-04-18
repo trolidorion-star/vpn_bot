@@ -349,9 +349,9 @@ def _normalize_amount_rub(value: Union[int, float, str, Decimal]) -> Decimal:
     return amount.quantize(Decimal("0.01"))
 
 
-def _to_minor_units(amount_rub: Decimal) -> int:
-    """Convert rubles to minor units (kopecks) per Platega docs."""
-    return int((amount_rub * 100).to_integral_value())
+def _to_api_amount(amount_rub: Decimal) -> str:
+    """Return normalized amount string in RUB units (e.g. '289.00')."""
+    return format(amount_rub, ".2f")
 
 
 def _build_payload(
@@ -374,7 +374,7 @@ def _build_payload(
         "externalId": order_id,
         "payload": order_id,
         "paymentDetails": {
-            "amount": _to_minor_units(amount_rub),
+            "amount": _to_api_amount(amount_rub),
             "currency": "RUB",
         },
         "return": success_url,

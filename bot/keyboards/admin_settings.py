@@ -31,7 +31,6 @@ def flash_sale_menu_kb(enabled: bool, auto_restart: bool) -> InlineKeyboardMarku
     builder.row(InlineKeyboardButton(text="⏱ Длительность (часы)", callback_data="admin_flash_sale_edit_duration"))
     builder.row(InlineKeyboardButton(text="🎫 Промокод", callback_data="admin_flash_sale_edit_promo"))
     builder.row(InlineKeyboardButton(text="🙈 Скрытый промокод", callback_data="admin_flash_sale_create_hidden"))
-    builder.row(InlineKeyboardButton(text="🎯 Персональный промокод", callback_data="admin_flash_sale_create_personal"))
     builder.row(InlineKeyboardButton(text="♻️ Перезапустить таймер", callback_data="admin_flash_sale_restart"))
     builder.row(back_button("admin_bot_settings"), home_button())
     return builder.as_markup()

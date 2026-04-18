@@ -422,6 +422,7 @@
     const LOGO_SRC = './assets/logo-bobrik.jpg';
     const CACHE_KEY = 'bobrik-miniapp-cache-v8';
     const CACHE_PERSIST_KEY = 'bobrik-miniapp-cache-persist-v8';
+    const USAGE_HISTORY_KEY = 'bobrik-miniapp-usage-history-v1';
     const SUPPORT_SEEN_KEY = 'bobrik-miniapp-support-seen-v1';
     const SUPPORT_TICKET_SEEN_KEY = 'bobrik-miniapp-support-ticket-seen-v1';
     const PERF_MODE_KEY = 'bobrik-miniapp-performance-mode-v1';
@@ -482,6 +483,31 @@
       try {
         localStorage.setItem(key, JSON.stringify(value || {}));
       } catch {}
+    };
+
+    const readUsageHistory = () => getSavedJson(USAGE_HISTORY_KEY, {});
+
+    const appendUsageHistory = (items = []) => {
+      if (!Array.isArray(items) || items.length === 0) return;
+      const nowTs = Date.now();
+      const oneWeekMs = 7 * 24 * 60 * 60 * 1000;
+      const history = readUsageHistory();
+      for (const item of items) {
+        const keyId = Number(item?.id || 0);
+        if (!keyId) continue;
+        const used = Number(item?.traffic_used_bytes || 0);
+        const limit = Number(item?.traffic_limit_bytes || 0);
+        if (!Number.isFinite(used) || used < 0) continue;
+        const bucket = Array.isArray(history[String(keyId)]) ? history[String(keyId)] : [];
+        const prev = bucket[bucket.length - 1];
+        if (!prev || Math.abs(Number(prev.used || 0) - used) > 1024 * 64 || (nowTs - Number(prev.ts || 0)) > 1000 * 60 * 3) {
+          bucket.push({ ts: nowTs, used, limit });
+        }
+        history[String(keyId)] = bucket
+          .filter((row) => (nowTs - Number(row.ts || 0)) <= oneWeekMs)
+          .slice(-96);
+      }
+      setSavedJson(USAGE_HISTORY_KEY, history);
     };
 
     const detectLowEndDevice = () => {
@@ -723,11 +749,12 @@
       const [ticketSeenMap, setTicketSeenMap] = useState(getSavedJson(SUPPORT_TICKET_SEEN_KEY, {}));
       const [tabContentLoading, setTabContentLoading] = useState(false);
       const [diagReport, setDiagReport] = useState(null);
-      const [showSectionsMenu, setShowSectionsMenu] = useState(false);
       const [showQualityPresets, setShowQualityPresets] = useState(false);
       const [promoCodeDraft, setPromoCodeDraft] = useState('');
       const [promoCodeApplied, setPromoCodeApplied] = useState('');
       const [activePromo, setActivePromo] = useState(null);
+      const [promoGlobal, setPromoGlobal] = useState(null);
+      const [selectedUsageKey, setSelectedUsageKey] = useState('all');
       const [giftMode, setGiftMode] = useState(false);
       const [giftRecipientName, setGiftRecipientName] = useState('');
       const [giftComment, setGiftComment] = useState('');
@@ -743,30 +770,53 @@
       const isActive = user?.status === 'active' && msLeft > 0;
       const referralLink = normalizeReferralLink(refData?.referral_link || user?.referral_link || '');
       const usagePoints = useMemo(() => {
+        const selectedKeyId = Number(selectedUsageKey || 0);
+        if (selectedUsageKey !== 'all' && selectedKeyId > 0) {
+          const history = readUsageHistory();
+          const pointsRaw = Array.isArray(history[String(selectedKeyId)]) ? history[String(selectedKeyId)] : [];
+          const sliced = pointsRaw.slice(-12);
+          if (sliced.length >= 2) {
+            const maxUsed = Math.max(...sliced.map((p) => Number(p?.used || 0)), 0);
+            return sliced.map((p, idx) => {
+              const used = Number(p?.used || 0);
+              const limit = Number(p?.limit || 0);
+              const ratioByLimit = limit > 0 ? Math.max(0, Math.min(1, used / limit)) : 0;
+              const ratioByUsed = maxUsed > 0 ? Math.max(0, Math.min(1, used / maxUsed)) : 0;
+              const y = ratioByLimit > 0 ? ratioByLimit : ratioByUsed;
+              const pct = Math.round(y * 100);
+              const dt = new Date(Number(p?.ts || 0));
+              const hh = String(dt.getHours()).padStart(2, '0');
+              const mm = String(dt.getMinutes()).padStart(2, '0');
+              return { x: idx, y, used, limit, label: `${hh}:${mm}`, pct };
+            });
+          }
+        }
+
         const fromStatsRaw = (stats || []).slice(0, 8).map((item, idx) => {
           const used = Number(item?.traffic_used_bytes || item?.used_bytes || 0);
           const limit = Number(item?.traffic_limit_bytes || item?.limit_bytes || 0);
           const ratio = limit > 0 ? Math.max(0, Math.min(1, used / limit)) : 0;
           const label = String(item?.display_name || item?.key_name || `Ключ ${idx + 1}`);
-          return { x: idx, y: ratio, used, limit, label, pct: Math.round(ratio * 100) };
+          return { x: idx, y: ratio, used, limit, label };
         }).filter((x) => Number.isFinite(x.y));
         const fromKeysRaw = (keys || []).slice(0, 8).map((item, idx) => {
           const used = Number(item?.traffic_used_bytes || 0);
           const limit = Number(item?.traffic_limit_bytes || 0);
           const ratio = limit > 0 ? Math.max(0, Math.min(1, used / limit)) : 0;
           const label = String(item?.display_name || `Ключ ${idx + 1}`);
-          return { x: idx, y: ratio, used, limit, label, pct: Math.round(ratio * 100) };
+          return { x: idx, y: ratio, used, limit, label };
         }).filter((x) => Number.isFinite(x.y));
+
         const base = (fromStatsRaw.length >= 2 ? fromStatsRaw : fromKeysRaw);
         if (!base.length) return [];
-        const maxRatio = Math.max(...base.map((p) => p.y || 0));
-        if (maxRatio >= 0.02) return base.map((p) => ({ ...p, y: p.y }));
+
+        const maxRatio = Math.max(...base.map((p) => p.y || 0), 0);
         const maxUsed = Math.max(...base.map((p) => p.used || 0), 0);
-        if (maxUsed > 0) {
-          return base.map((p) => ({ ...p, y: Math.max(0.04, (p.used || 0) / maxUsed) }));
-        }
-        return base.map((p) => ({ ...p, y: 0 }));
-      }, [stats, keys]);
+        return base.map((p) => {
+          const scaled = maxRatio >= 0.02 ? p.y : (maxUsed > 0 ? Math.max(0.04, (p.used || 0) / maxUsed) : 0);
+          return { ...p, y: scaled, pct: Math.round(scaled * 100) };
+        });
+      }, [stats, keys, selectedUsageKey]);
 
       const keysFiltered = useMemo(() => {
         const source = keys || [];
@@ -811,7 +861,6 @@
       const changeTab = (nextTab) => {
         if (!nextTab || nextTab === tab) return;
         setTabContentLoading(true);
-        setShowSectionsMenu(false);
         setTab(nextTab);
         setTimeout(() => setTabContentLoading(false), 170);
       };
@@ -927,7 +976,11 @@
           ]);
 
           if (u.status === 'fulfilled') setUser(u.value.data);
-          if (k.status === 'fulfilled') setKeys(k.value.data || []);
+          if (k.status === 'fulfilled') {
+            const keyRows = k.value.data || [];
+            setKeys(keyRows);
+            appendUsageHistory(keyRows);
+          }
           if (t.status === 'fulfilled') setTariffs(t.value.data || []);
           if (s.status === 'fulfilled') setStats(s.value.data || []);
           if (r.status === 'fulfilled') setRefData(r.value.data || null);
@@ -977,16 +1030,12 @@
             const active = promoData.active || null;
             const globalPromo = promoData.global || null;
             setActivePromo(active || null);
-            if (!promoCodeApplied && active?.code) {
-              setPromoCodeApplied(String(active.code || '').trim().toUpperCase());
-            }
+            setPromoGlobal(globalPromo || null);
             if (!promoCodeDraft && active?.code) {
               setPromoCodeDraft(String(active.code || '').trim().toUpperCase());
             }
-            if (!active?.code && globalPromo?.active && globalPromo?.code && !promoCodeApplied) {
-              const gCode = String(globalPromo.code || '').trim().toUpperCase();
-              setPromoCodeApplied(gCode);
-              if (!promoCodeDraft) setPromoCodeDraft(gCode);
+            if (!active?.code && globalPromo?.active && globalPromo?.code && !promoCodeDraft) {
+              setPromoCodeDraft(String(globalPromo.code || '').trim().toUpperCase());
             }
           }
 
@@ -1232,7 +1281,7 @@
               tariff_id: selectedTariff.id,
               method,
               key_id: user?.key_id || null,
-              promo_code: String((promoCodeApplied || activePromo?.code || '')).trim() || null,
+              promo_code: String(promoCodeApplied || '').trim() || null,
             },
           });
           setSelectedTariff(null);
@@ -1382,9 +1431,6 @@
         { id: 'service', title: 'Сервис', icon: '🧪' },
       ];
       if (user?.is_admin) tabs.push({ id: 'admin', title: 'Админ', icon: '⚙️' });
-      const primaryTabIds = ['dashboard', 'plans', 'usage', 'support'];
-      const primaryTabs = tabs.filter((item) => primaryTabIds.includes(item.id));
-      const extraTabs = tabs.filter((item) => !primaryTabIds.includes(item.id));
 
       useEffect(() => {
         if (tab !== 'support') return;
@@ -1411,11 +1457,11 @@
 
       function renderDashboard() {
         const totalPct = pct(totalTraffic.used, totalTraffic.limit);
-        const peakPct = (usagePoints || []).length ? Math.max(...usagePoints.map((p) => Number(p?.pct || 0))) : 0;
+        const peakPct = (usagePoints || []).length ? Math.max(...usagePoints.map((p) => Number(p?.pct || Math.round((Number(p?.y || 0)) * 100)))) : 0;
         const avgPct = (usagePoints || []).length
-          ? Math.round((usagePoints.reduce((sum, point) => sum + Number(point?.pct || 0), 0) / usagePoints.length))
+          ? Math.round((usagePoints.reduce((sum, point) => sum + Number(point?.pct || Math.round((Number(point?.y || 0)) * 100)), 0) / usagePoints.length))
           : 0;
-        const currentPct = (usagePoints || []).length ? Number(usagePoints[usagePoints.length - 1]?.pct || 0) : 0;
+        const currentPct = (usagePoints || []).length ? Number(usagePoints[usagePoints.length - 1]?.pct || Math.round((Number(usagePoints[usagePoints.length - 1]?.y || 0)) * 100)) : 0;
         const firstLabel = usagePoints?.[0]?.label || 'Старт';
         const midLabel = usagePoints?.[Math.floor((usagePoints?.length || 1) / 2)]?.label || 'Середина';
         const lastLabel = usagePoints?.[usagePoints.length - 1]?.label || 'Сейчас';
@@ -1467,8 +1513,24 @@
             </div>
 
             <div className="rounded-card glass premium-card p-4">
-              <div className="font-semibold">График потребления VPN</div>
-              <div className="mt-1 text-xs text-muted">Наглядный срез по ключам аккаунта: пик, среднее и текущая нагрузка</div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="font-semibold">График потребления VPN</div>
+                  <div className="mt-1 text-xs text-muted">Выберите ключ или общий срез, чтобы смотреть расход подробнее</div>
+                </div>
+                <select
+                  value={selectedUsageKey}
+                  onChange={(event) => setSelectedUsageKey(event.target.value)}
+                  className="rounded-xl border border-white/15 bg-surfaceSoft/60 px-3 py-2 text-xs"
+                >
+                  <option value="all">Все ключи</option>
+                  {(keys || []).map((item) => (
+                    <option key={item.id} value={String(item.id)}>
+                      {item.display_name || `Ключ #${item.id}`}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div className="mt-3 rounded-2xl bg-surfaceSoft/50 p-3">
                 {(usagePoints || []).length === 0 ? (
                   <div className="text-sm text-muted">Недостаточно данных для графика.</div>
@@ -1508,6 +1570,12 @@
                       <span className="chart-stat-chip">Пик: {peakPct}%</span>
                       <span className="chart-stat-chip">Среднее: {avgPct}%</span>
                       <span className="chart-stat-chip">Текущий: {currentPct}%</span>
+                    </div>
+                    <div className="mt-2 text-xs text-muted">
+                      Использовано сейчас: {fmtBytes(Number(usagePoints[usagePoints.length - 1]?.used || 0))}
+                      {Number(usagePoints[usagePoints.length - 1]?.limit || 0) > 0
+                        ? ` из ${fmtBytes(Number(usagePoints[usagePoints.length - 1]?.limit || 0))}`
+                        : ''}
                     </div>
                     {usagePoints.every((p) => p.y === 0) && (
                       <div className="mt-2 text-xs text-muted">Пока нет расхода трафика, график построен по текущим значениям.</div>
@@ -1551,11 +1619,10 @@
       function renderPlans() {
         const activePromoCode = String(activePromo?.code || promoCodeApplied || '').trim().toUpperCase();
         const activePromoScope = String(activePromo?.scope || '').toUpperCase();
-        const promoScopeLabel = activePromoScope === 'PERSONAL'
-          ? 'Персональный'
-          : activePromoScope === 'HIDDEN'
+        const promoScopeLabel = activePromoScope === 'HIDDEN'
             ? 'Скрытый'
             : 'Общий';
+        const globalPromoTimer = Number(promoGlobal?.remaining_seconds || 0);
         const promoPreviewText = promoCodeApplied
           ? `Промокод «${promoCodeApplied}» добавлен. Если код валиден на сервере, скидка применится при оплате.`
           : 'Добавьте промокод перед оплатой: он будет учтен, если активен в системе.';
@@ -1568,6 +1635,11 @@
                 <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-accent/35 bg-accent/10 px-3 py-1 text-xs text-accent">
                   <span>{promoScopeLabel}</span>
                   <span className="mono">{activePromoCode}</span>
+                </div>
+              )}
+              {promoGlobal?.active && promoGlobal?.code && (
+                <div className="mt-2 text-xs text-muted">
+                  Таймер акции в боте и mini app: <span className="mono text-text">{fmtCountdown(globalPromoTimer * 1000)}</span>
                 </div>
               )}
               <div className="mt-3 flex flex-col gap-2 sm:flex-row">
@@ -1589,6 +1661,16 @@
                   Применить
                 </button>
               </div>
+              <button
+                onClick={impact(() => {
+                  setPromoCodeApplied('');
+                  setPromoCodeDraft('');
+                  showToast('Покупка будет без промокода');
+                }, 'light')}
+                className="mt-2 rounded-xl border border-white/15 px-3 py-2 text-xs text-muted"
+              >
+                Купить без промокода
+              </button>
               {activePromoCode && (
                 <button
                   onClick={impact(() => {
@@ -1601,13 +1683,13 @@
                   Купить по промокоду
                 </button>
               )}
-              <div className="mt-3 flex flex-wrap gap-2">
-                <span className="tag">🎁 Купить в подарок</span>
-                <span className="tag">⚡ Быстрая оплата</span>
-                <span className="tag">🛡️ Безопасный checkout</span>
+              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <span className="tag text-center">🎁 Купить в подарок</span>
+                <span className="tag text-center">⚡ Быстрая оплата</span>
+                <span className="tag text-center">🛡️ Безопасный checkout</span>
               </div>
             </div>
-            <div className="desktop-grid-2">
+            <div className="grid grid-cols-1 gap-3">
             {(tariffs || []).map((tariff, idx) => (
               <button key={tariff.id} onClick={impact(() => setSelectedTariff(tariff), 'medium')} className="w-full rounded-card glass premium-card p-4 text-left shine">
                 {(() => {
@@ -1694,7 +1776,7 @@
                   <div className="mt-1 text-sm text-muted">До: <span className="text-text">{fmtDate(item.expires_at)}</span></div>
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     <button onClick={impact(() => openKeyDetails(item.id), 'medium')} className="rounded-xl border border-white/15 px-3 py-2 text-xs">Управление</button>
-                    <button onClick={impact(() => copyKeyLinkById(item.id))} className="rounded-xl border border-emerald-300/30 bg-emerald-500/20 px-3 py-2 text-xs font-semibold text-emerald-100">Скопировать</button>
+                    <button onClick={impact(() => copyKeyLinkById(item.id))} className="rounded-xl border border-emerald-300/35 bg-emerald-500/14 px-3 py-2 text-xs font-semibold text-emerald-100">Скопировать</button>
                   </div>
                 </div>
               ))}
@@ -2143,12 +2225,12 @@
           </div>
 
           <nav className="fixed bottom-3 left-0 right-0 z-20 mx-auto flex w-[calc(100%-20px)] max-w-[520px] items-center gap-2 rounded-2xl border border-white/10 px-2.5 py-2.5 glass" style={{ boxShadow: 'var(--panel-shadow)' }}>
-            <div className="flex min-w-0 w-full gap-2 overflow-x-auto">
-            {primaryTabs.map((item) => (
+            <div className="flex min-w-0 w-full gap-2 overflow-x-auto overflow-y-visible">
+            {tabs.map((item) => (
               <button
                 key={item.id}
                 onClick={impact(() => changeTab(item.id), 'light')}
-                className={`relative whitespace-nowrap rounded-xl px-3 py-2 text-xs sm:text-sm transition ${tab === item.id ? 'bg-accent text-black font-semibold' : 'bg-surfaceSoft/45 text-muted'}`}
+                className={`relative whitespace-nowrap rounded-xl px-3 py-2 text-xs sm:text-sm transition overflow-visible ${tab === item.id ? 'bg-accent text-black font-semibold' : 'bg-surfaceSoft/45 text-muted'}`}
               >
                 <span className="mr-1">{item.icon}</span>{item.title}
                 {Number(item.badge || 0) > 0 && tab !== item.id && (
@@ -2161,41 +2243,6 @@
             </div>
           </nav>
 
-          {extraTabs.length > 0 && (
-            <button
-              onClick={impact(() => setShowSectionsMenu((v) => !v), 'light')}
-              className={`fixed bottom-20 right-4 z-30 h-11 min-w-[44px] rounded-full border border-white/15 px-3 text-sm glass ${extraTabs.some((t) => t.id === tab) || showSectionsMenu ? 'text-accent' : 'text-muted'}`}
-              title="Разделы"
-            >
-              ⋮
-            </button>
-          )}
-
-          {showSectionsMenu && (
-            <div className="fixed inset-0 z-30 bg-black/50" onClick={() => setShowSectionsMenu(false)}>
-              <div className="absolute bottom-0 left-0 right-0 rounded-t-[24px] glass border-t border-white/10 p-4 modal-sheet" onClick={(event) => event.stopPropagation()}>
-                <div className="mx-auto mb-3 h-1.5 w-14 rounded-full bg-white/20"></div>
-                <div className="mb-2 text-sm font-semibold">Разделы</div>
-                <div className="grid grid-cols-2 gap-2">
-                  {extraTabs.map((item) => (
-                    <button
-                      key={item.id}
-                      onClick={impact(() => changeTab(item.id), 'light')}
-                      className={`relative rounded-xl px-3 py-3 text-left text-sm ${tab === item.id ? 'bg-accent text-black font-semibold' : 'border border-white/15 bg-surfaceSoft/45 text-text'}`}
-                    >
-                      <span className="mr-1">{item.icon}</span>{item.title}
-                      {Number(item.badge || 0) > 0 && tab !== item.id && (
-                        <span className="absolute right-2 top-2 min-w-[18px] rounded-full bg-danger px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
-                          {item.badge > 99 ? '99+' : item.badge}
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
           {selectedTariff && (
             <div className="fixed inset-0 z-30 bg-black/65" onClick={() => setSelectedTariff(null)}>
               <div className="absolute bottom-0 left-0 right-0 rounded-t-[26px] glass border-t border-white/10 p-4 modal-sheet desktop-modal" onClick={(event) => event.stopPropagation()}>
@@ -2204,6 +2251,11 @@
                 <div className="mb-3 text-sm text-muted">
                   {(String(selectedTariff?.name || '').toLowerCase().includes('навсегда') || Number(selectedTariff?.days || 0) >= 666) ? '∞' : `${selectedTariff.days} дней`} • {selectedTariff.price_rub} ₽
                 </div>
+                {promoGlobal?.active && promoGlobal?.code && (
+                  <div className="mb-3 text-xs text-muted">
+                    Промо-таймер акции: <span className="mono text-text">{fmtCountdown(Number(promoGlobal?.remaining_seconds || 0) * 1000)}</span>
+                  </div>
+                )}
                 <div className="rounded-2xl border border-white/10 bg-surfaceSoft/55 p-3">
                   <div className="text-sm font-semibold">Опции покупки</div>
                   <div className="mt-2">
@@ -2232,6 +2284,16 @@
                         Активный промокод: {String(promoCodeApplied || activePromo?.code || '').trim().toUpperCase()}
                       </div>
                     )}
+                    <button
+                      onClick={impact(() => {
+                        setPromoCodeDraft('');
+                        setPromoCodeApplied('');
+                        showToast('Покупка будет без промокода');
+                      }, 'light')}
+                      className="mt-2 rounded-xl border border-white/15 px-3 py-2 text-xs text-muted"
+                    >
+                      Купить без промокода
+                    </button>
                   </div>
                   <div className="mt-3 rounded-xl border border-white/10 bg-surface/40 p-2.5">
                     <div className="flex items-center justify-between gap-2">

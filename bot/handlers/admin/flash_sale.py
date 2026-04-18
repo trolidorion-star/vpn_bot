@@ -16,6 +16,30 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+def _sync_public_flash_promo() -> None:
+    state = get_flash_sale_state()
+    code = str(state.get("promo_code") or "").strip().upper()
+    base_price = int(state.get("base_price_rub") or 0)
+    sale_price = int(state.get("sale_price_rub") or 0)
+
+    if not code:
+        return
+
+    discount_percent = 0
+    if base_price > 0 and sale_price > 0 and sale_price < base_price:
+        discount_percent = round(((base_price - sale_price) / base_price) * 100)
+    discount_percent = max(1, min(95, int(discount_percent or 0)))
+
+    create_or_update_promocode(
+        code=code,
+        discount_type="PERCENT",
+        discount_value=discount_percent,
+        min_amount=1,
+        is_active=bool(state.get("enabled")),
+        visibility="PUBLIC",
+    )
+
+
 def _format_flash_sale_text() -> str:
     state = get_flash_sale_state()
     status = "🟢 Активна" if state["active"] else ("⚪ Включена (ожидание)" if state["enabled"] else "❌ Выключена")
@@ -30,7 +54,7 @@ def _format_flash_sale_text() -> str:
         f"Акционная цена: <b>{state['sale_price_rub']} ₽</b>\n"
         f"Длительность цикла: <b>{state['duration_hours']} ч</b>\n"
         f"Автоперезапуск: <b>{'ВКЛ' if state['auto_restart'] else 'ВЫКЛ'}</b>\n\n"
-        "Также можно создать скрытый или персональный промокод."
+        "Дополнительные скрытые промокоды можно создавать отдельно."
     )
 
 
@@ -40,6 +64,7 @@ async def show_flash_sale_menu(callback: CallbackQuery, state: FSMContext):
         await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
 
+    _sync_public_flash_promo()
     s = get_flash_sale_state()
     await state.set_state(AdminStates.flash_sale_menu)
     await safe_edit_or_send(
@@ -61,6 +86,7 @@ async def toggle_flash_sale(callback: CallbackQuery, state: FSMContext):
     set_setting("flash_sale_enabled", new_enabled)
     if new_enabled == "1":
         set_setting("flash_sale_started_at", datetime.datetime.now(datetime.timezone.utc).isoformat())
+    _sync_public_flash_promo()
     await show_flash_sale_menu(callback, state)
 
 
@@ -83,6 +109,7 @@ async def restart_flash_sale_timer(callback: CallbackQuery, state: FSMContext):
 
     set_setting("flash_sale_enabled", "1")
     set_setting("flash_sale_started_at", datetime.datetime.now(datetime.timezone.utc).isoformat())
+    _sync_public_flash_promo()
     await show_flash_sale_menu(callback, state)
 
 
@@ -143,20 +170,6 @@ async def create_hidden_promocode(callback: CallbackQuery, state: FSMContext):
     )
 
 
-@router.callback_query(F.data == "admin_flash_sale_create_personal")
-async def create_personal_promocode(callback: CallbackQuery, state: FSMContext):
-    if not is_admin(callback.from_user.id):
-        await callback.answer("⛔ Доступ запрещён", show_alert=True)
-        return
-    await _start_edit(
-        callback,
-        state,
-        "promo_create_personal",
-        "👤 <b>Персональный промокод</b>",
-        "Формат: <code>TELEGRAM_ID CODE DISCOUNT%</code>\nПример: <code>6989943466 PRIVATE25 25%</code>",
-    )
-
-
 @router.message(AdminStates.flash_sale_edit)
 async def save_flash_sale_field(message: Message, state: FSMContext):
     if not is_admin(message.from_user.id):
@@ -183,7 +196,7 @@ async def save_flash_sale_field(message: Message, state: FSMContext):
         elif field == "flash_sale_promo_code":
             if not value:
                 raise ValueError()
-            set_setting(field, value[:32])
+            set_setting(field, value[:32].upper())
         elif field == "promo_create_hidden":
             parts = value.split()
             if len(parts) < 2:
@@ -200,24 +213,6 @@ async def save_flash_sale_field(message: Message, state: FSMContext):
                 is_active=True,
                 visibility="HIDDEN",
             )
-        elif field == "promo_create_personal":
-            parts = value.split()
-            if len(parts) < 3:
-                raise ValueError()
-            telegram_id = int(parts[0].strip())
-            code = parts[1].strip().upper()
-            discount = int(parts[2].strip().replace("%", ""))
-            if telegram_id <= 0 or not code or discount < 1 or discount > 100:
-                raise ValueError()
-            create_or_update_promocode(
-                code=code,
-                discount_type="PERCENT",
-                discount_value=discount,
-                min_amount=1,
-                is_active=True,
-                visibility="PERSONAL",
-                target_telegram_id=telegram_id,
-            )
         else:
             raise ValueError()
     except ValueError:
@@ -228,6 +223,8 @@ async def save_flash_sale_field(message: Message, state: FSMContext):
         current = get_flash_sale_state()
         if current["enabled"]:
             set_setting("flash_sale_started_at", datetime.datetime.now(datetime.timezone.utc).isoformat())
+    if field in {"flash_sale_price_rub", "flash_sale_base_price_rub", "flash_sale_promo_code"}:
+        _sync_public_flash_promo()
 
     try:
         await message.delete()
