@@ -36,6 +36,7 @@ from bot.services.scheduler import (
     run_traffic_sync_scheduler,
     run_support_sla_scheduler,
     run_abandoned_payments_scheduler,
+    run_platega_reconcile_scheduler,
 )
 
 # Импорт роутеров
@@ -199,6 +200,8 @@ async def main():
     support_sla_tasks = asyncio.create_task(run_support_sla_scheduler(bot))
     # Запускаем планировщик напоминаний о брошенной оплате
     abandoned_payment_tasks = asyncio.create_task(run_abandoned_payments_scheduler(bot))
+    # Safety net: закрываем pending Platega даже если webhook не дошел
+    platega_reconcile_tasks = asyncio.create_task(run_platega_reconcile_scheduler(bot))
     
     try:
         await dp.start_polling(bot)
@@ -208,6 +211,7 @@ async def main():
         traffic_tasks.cancel()
         support_sla_tasks.cancel()
         abandoned_payment_tasks.cancel()
+        platega_reconcile_tasks.cancel()
         await bot.session.close()
 
 

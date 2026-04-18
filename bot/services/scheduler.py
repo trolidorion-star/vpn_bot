@@ -509,6 +509,126 @@ async def run_abandoned_payments_scheduler(bot: Bot) -> None:
         logger.error(f"Ошибка в планировщике напоминаний о брошенной оплате: {e}")
 
 
+async def reconcile_pending_platega_payments(bot: Bot, limit: int = 20) -> int:
+    """
+    Safety net for missed Platega webhook callbacks.
+    Finalizes confirmed pending payments and notifies users in Telegram.
+    """
+    from database.connection import get_db
+    from database.requests import (
+        consume_order_promocode,
+        is_order_already_paid,
+        update_transaction_status,
+    )
+    from bot.services.billing import process_payment_order
+    from bot.services.platega_client import get_transaction_status
+
+    reconciled = 0
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT p.order_id, t.payment_id, u.telegram_id
+            FROM payments p
+            JOIN users u ON u.id = p.user_id
+            JOIN transactions t ON t.order_id = p.order_id
+            WHERE p.payment_type = 'platega'
+              AND p.status = 'pending'
+              AND COALESCE(t.payment_id, '') <> ''
+              AND COALESCE(t.status, 'PENDING') <> 'SUCCESS'
+            ORDER BY p.id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+    for row in rows:
+        order_id = str(row["order_id"])
+        payment_id = str(row["payment_id"])
+        telegram_id = int(row["telegram_id"]) if row["telegram_id"] else None
+
+        try:
+            status_payload = await get_transaction_status(payment_id)
+        except Exception as exc:
+            logger.warning(
+                "Platega reconcile: status request failed order=%s payment_id=%s err=%s",
+                order_id,
+                payment_id,
+                exc,
+            )
+            continue
+
+        status = str(status_payload.get("status") or "").strip().upper()
+        if status in {"CONFIRMED", "SUCCESS", "PAID"}:
+            already_paid = is_order_already_paid(order_id)
+            success, text, _order = await process_payment_order(order_id)
+            if success:
+                update_transaction_status(
+                    order_id=order_id,
+                    status="SUCCESS",
+                    payment_id=payment_id,
+                    payload=status_payload,
+                )
+                consume_order_promocode(order_id)
+                reconciled += 1
+                logger.info(
+                    "Platega reconcile: finalized order=%s payment_id=%s",
+                    order_id,
+                    payment_id,
+                )
+
+                # Send message only when this run actually moved order from pending to paid.
+                if (not already_paid) and telegram_id:
+                    try:
+                        await bot.send_message(
+                            chat_id=telegram_id,
+                            text=text or "✅ Оплата прошла успешно!",
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "Platega reconcile: notify failed order=%s telegram_id=%s err=%s",
+                            order_id,
+                            telegram_id,
+                            exc,
+                        )
+            else:
+                logger.warning("Platega reconcile: process_payment_order failed for order=%s", order_id)
+        elif status in {"CANCELED", "CHARGEBACK", "CHARGEBACKED"}:
+            update_transaction_status(
+                order_id=order_id,
+                status="FAILED",
+                payment_id=payment_id,
+                payload=status_payload,
+            )
+        else:
+            update_transaction_status(
+                order_id=order_id,
+                status="PENDING",
+                payment_id=payment_id,
+                payload=status_payload,
+            )
+
+    return reconciled
+
+
+async def run_platega_reconcile_scheduler(bot: Bot) -> None:
+    """Background reconciliation for pending Platega payments."""
+    logger.info("🧾 Platega pending reconcile scheduler started")
+    try:
+        await asyncio.sleep(30)
+        while True:
+            try:
+                reconciled = await reconcile_pending_platega_payments(bot)
+                if reconciled:
+                    logger.info("Platega reconcile: finalized pending payments count=%s", reconciled)
+            except Exception as exc:
+                logger.error("Platega reconcile scheduler error: %s", exc)
+            await asyncio.sleep(45)
+    except asyncio.CancelledError:
+        logger.info("Platega pending reconcile scheduler stopped")
+    except Exception as exc:
+        logger.error("Platega pending reconcile scheduler fatal error: %s", exc)
+
+
 def get_seconds_until(target_hour: int, target_minute: int = 0) -> int:
     """
     Вычисляет количество секунд до указанного времени суток.
