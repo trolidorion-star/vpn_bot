@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from aiogram.types import MenuButtonCommands, MenuButtonWebApp, Message, WebAppInfo
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramBadRequest
 
@@ -145,6 +146,23 @@ async def get_admin_stats_text() -> str:
         )
 
     return "⚙️ <b>Админ-панель</b>\n\n🖥️ <b>Состояние серверов:</b>\n" + load["text"]
+
+
+@router.message(Command("admin"))
+async def admin_command_handler(message: Message, state: FSMContext):
+    """Открывает админ-панель по команде /admin."""
+    if not is_admin(message.from_user.id):
+        await safe_edit_or_send(message, "⛔ Доступ запрещён", force_new=True)
+        return
+
+    await state.set_state(AdminStates.admin_menu)
+    text = await get_admin_stats_text()
+    await safe_edit_or_send(
+        message,
+        text,
+        reply_markup=admin_main_menu_kb(miniapp_enabled=is_miniapp_enabled()),
+        force_new=True,
+    )
 
 
 @router.callback_query(F.data == "admin_panel")

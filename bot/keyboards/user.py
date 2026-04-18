@@ -47,6 +47,11 @@ def main_menu_kb(
         builder.row(
             InlineKeyboardButton(text="❓ Справка", callback_data="help")
         )
+
+    if is_admin:
+        builder.row(
+            InlineKeyboardButton(text="⚙️ Админ-панель", callback_data="admin_panel")
+        )
     
     return builder.as_markup()
 
