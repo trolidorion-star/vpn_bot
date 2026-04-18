@@ -103,7 +103,7 @@
       background: radial-gradient(42% 30% at 20% 10%, rgba(255,176,77,.25), transparent 72%);
     }
     .scene-layer.usage {
-      background: radial-gradient(45% 35% at 82% 15%, rgba(68,179,255,.22), transparent 72%);
+      background: transparent;
     }
     .scene-layer.ref {
       background: radial-gradient(40% 30% at 10% 55%, rgba(255,196,107,.24), transparent 72%);
@@ -121,7 +121,6 @@
       backdrop-filter: blur(10px);
       background: linear-gradient(145deg, rgba(17,31,45,0.92), rgba(12,24,37,0.94));
       background-size: 180% 180%;
-      animation: glassShift 9s ease-in-out infinite;
       border: 1px solid rgba(255, 255, 255, 0.12);
     }
     @keyframes glassShift {
@@ -133,8 +132,7 @@
       box-shadow: var(--panel-shadow);
       transition: transform .22s ease, border-color .22s ease, box-shadow .22s ease;
       will-change: transform;
-      content-visibility: auto;
-      contain-intrinsic-size: 180px;
+      content-visibility: visible;
     }
     .premium-card:hover {
       border-color: rgba(68,179,255,.45);
@@ -241,6 +239,12 @@
     }
     .usage-key-card {
       background: linear-gradient(145deg, rgba(16, 28, 40, 0.85), rgba(11, 21, 33, 0.88));
+    }
+    .tab-usage .hero-glow::after,
+    .tab-usage .shine::before,
+    .tab-usage .card-rise,
+    .tab-usage .animate-in {
+      animation: none !important;
     }
     .perf-low .glass {
       backdrop-filter: none;
@@ -2290,7 +2294,7 @@
       }
 
       return (
-        <div className="relative mx-auto min-h-screen w-full max-w-[520px] px-3 pb-24 pt-5 sm:px-4">
+        <div className={`relative mx-auto min-h-screen w-full max-w-[520px] px-3 pb-24 pt-5 sm:px-4 ${tab === 'usage' ? 'tab-usage' : ''}`}>
           <div className="app-bg">
             <div className="app-orb one"></div>
             <div className="app-orb two"></div>
