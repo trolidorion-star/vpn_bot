@@ -6,7 +6,7 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command, CommandObject, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramForbiddenError
-from config import ADMIN_IDS
+from config import ADMIN_IDS, MINI_APP_URL
 from database.requests import (
     get_or_create_user,
     is_user_banned,
@@ -106,6 +106,8 @@ async def buy_key_handler(callback: CallbackQuery):
 
     sale = get_flash_sale_state()
     text_override = build_buy_key_text(prepayment_text, sale, format_remaining_hms)
+    if MINI_APP_URL:
+        text_override += "\n\n🚀 <b>Рекомендуем Mini App:</b> там быстрее и удобнее оплачивать и управлять подпиской."
 
     kb = buy_key_kb(
         crypto_url=crypto_url,
@@ -120,6 +122,7 @@ async def buy_key_handler(callback: CallbackQuery):
         is_admin=telegram_id in ADMIN_IDS,
         order_id=existing_order_id,
         show_balance_button=show_balance_button,
+        mini_app_url=MINI_APP_URL,
     )
 
     sent_message = None

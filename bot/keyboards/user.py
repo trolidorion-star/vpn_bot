@@ -23,15 +23,15 @@ def main_menu_kb(
     """
     builder = InlineKeyboardBuilder()
     
+    if mini_app_url:
+        builder.row(
+            InlineKeyboardButton(text="🚀 MINI APP — ОСНОВНОЙ СПОСОБ", web_app=WebAppInfo(url=mini_app_url))
+        )
+
     builder.row(
         InlineKeyboardButton(text="🔑 Мои ключи", callback_data="my_keys"),
         InlineKeyboardButton(text="💳 Купить ключ", callback_data="buy_key")
     )
-
-    if mini_app_url:
-        builder.row(
-            InlineKeyboardButton(text="🌐 Открыть Mini App", web_app=WebAppInfo(url=mini_app_url))
-        )
     
     if show_trial:
         builder.row(
@@ -133,7 +133,8 @@ def buy_key_kb(
     is_admin: bool = False,
     order_id: str = None,
     show_balance_button: bool = False,
-    show_gift_button: bool = True
+    show_gift_button: bool = True,
+    mini_app_url: str = ""
 ) -> InlineKeyboardMarkup:
     """
     Клавиатура для страницы «Купить ключ».
@@ -152,6 +153,11 @@ def buy_key_kb(
     if legacy_enabled is None:
         from database.requests import is_legacy_payments_enabled
         legacy_enabled = is_legacy_payments_enabled()
+
+    if mini_app_url:
+        builder.row(
+            InlineKeyboardButton(text="🚀 Оплачивать через Mini App (быстрее)", web_app=WebAppInfo(url=mini_app_url))
+        )
 
     # Кнопки оплаты (показываем только включённые методы)
     # USDT

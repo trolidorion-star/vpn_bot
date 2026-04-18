@@ -515,6 +515,14 @@ def _serialize_user_info(telegram_id: int, username: Optional[str]) -> dict[str,
         if trial_tariff:
             trial_tariff_name = str(trial_tariff.get("name") or "").strip() or None
     trial_available = bool(trial_enabled and trial_tariff_id and (not trial_used))
+    default_privacy = "https://telegra.ph/Politika-konfidencialnosti-04-01-26"
+    default_terms = "https://telegra.ph/Polzovatelskoe-soglashenie-04-01-19"
+    privacy_link = (get_setting("privacy_policy_link", default_privacy) or "").strip()
+    terms_link = (get_setting("terms_of_service_link", default_terms) or "").strip()
+    if not privacy_link.startswith(("http://", "https://")):
+        privacy_link = default_privacy
+    if not terms_link.startswith(("http://", "https://")):
+        terms_link = default_terms
     return {
         "telegram_id": telegram_id,
         "username": username,
@@ -530,6 +538,8 @@ def _serialize_user_info(telegram_id: int, username: Optional[str]) -> dict[str,
         "keys_total": len(all_keys),
         "is_admin": telegram_id in admin_ids,
         "miniapp_enabled": is_miniapp_enabled(),
+        "privacy_link": privacy_link,
+        "terms_link": terms_link,
         "trial": {
             "enabled": trial_enabled,
             "available": trial_available,

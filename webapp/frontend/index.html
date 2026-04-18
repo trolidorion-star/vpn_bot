@@ -466,10 +466,37 @@
     }
 
     const PAY_METHODS = [
-      { code: 'sbp', title: 'СБП', hint: 'Мгновенно', icon: '⚡' },
-      { code: 'card', title: 'Карта РФ', hint: 'Банковские карты', icon: '💳' },
-      { code: 'crypto', title: 'Криптовалюта', hint: 'USDT и крипто-методы', icon: '🪙' },
+      { code: 'sbp', title: 'СБП', hint: 'Мгновенно' },
+      { code: 'card', title: 'Карта РФ', hint: 'Банковские карты' },
+      { code: 'crypto', title: 'Криптовалюта', hint: 'USDT и крипто-методы' },
     ];
+
+    function PaymentMethodIcon({ code }) {
+      const common = { className: 'h-5 w-5', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: '1.8', strokeLinecap: 'round', strokeLinejoin: 'round' };
+      if (code === 'card') {
+        return (
+          <svg {...common}>
+            <rect x="2.5" y="5" width="19" height="14" rx="2.5"></rect>
+            <path d="M2.5 9.5h19"></path>
+            <path d="M6.5 14.5h4"></path>
+          </svg>
+        );
+      }
+      if (code === 'crypto') {
+        return (
+          <svg {...common}>
+            <circle cx="12" cy="12" r="8.5"></circle>
+            <path d="M10.2 8.8h3.1a1.8 1.8 0 1 1 0 3.6h-2.9a1.8 1.8 0 1 0 0 3.6h3.3"></path>
+            <path d="M12 7.2v9.6"></path>
+          </svg>
+        );
+      }
+      return (
+        <svg {...common}>
+          <path d="M13 2L4 14h6l-1 8 9-12h-6l1-8z"></path>
+        </svg>
+      );
+    }
 
     const LOGO_SRC = './assets/logo-bobrik.jpg';
     const CACHE_KEY = 'bobrik-miniapp-cache-v8';
@@ -584,6 +611,15 @@
 
     const haptic = (style = 'light') => tg?.HapticFeedback?.impactOccurred?.(style);
     const hapticNotify = (style = 'success') => tg?.HapticFeedback?.notificationOccurred?.(style);
+    const openExternal = (url) => {
+      const link = String(url || '').trim();
+      if (!link) return;
+      if (tg?.openLink) {
+        tg.openLink(link);
+        return;
+      }
+      window.open(link, '_blank', 'noopener,noreferrer');
+    };
 
     const parseCache = () => {
       try {
@@ -1699,6 +1735,25 @@
             </div>
 
             <div className="rounded-card glass premium-card p-4">
+              <div className="font-semibold">Документы</div>
+              <div className="mt-1 text-xs text-muted readable">Политика конфиденциальности и пользовательское соглашение</div>
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button
+                  onClick={impact(() => openExternal(user?.privacy_link), 'light')}
+                  className="rounded-xl border border-white/15 px-3 py-2 text-xs"
+                >
+                  Политика
+                </button>
+                <button
+                  onClick={impact(() => openExternal(user?.terms_link), 'light')}
+                  className="rounded-xl border border-white/15 px-3 py-2 text-xs"
+                >
+                  Соглашение
+                </button>
+              </div>
+            </div>
+
+            <div className="rounded-card glass premium-card p-4">
               <div className="flex items-center justify-between">
                 <div>
                   <div className="font-semibold">RU Bypass</div>
@@ -2537,11 +2592,15 @@
                 <div className="space-y-2">
                   {PAY_METHODS.map((method) => (
                     <button key={method.code} onClick={impact(() => createInvoice(method.code), 'medium')} disabled={busy} className="w-full rounded-2xl border border-white/10 bg-surfaceSoft/70 px-4 py-3 text-left transition hover:border-accent/50">
-                      <div className="flex items-center justify-between">
-                        <div className="font-medium">{method.title}</div>
-                        <div className="text-lg">{method.icon}</div>
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-surfaceSoft/80 text-accent">
+                          <PaymentMethodIcon code={method.code} />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="font-medium">{method.title}</div>
+                          <div className="text-xs text-muted mt-1">{method.hint}</div>
+                        </div>
                       </div>
-                      <div className="text-xs text-muted mt-1">{method.hint}</div>
                     </button>
                   ))}
                 </div>

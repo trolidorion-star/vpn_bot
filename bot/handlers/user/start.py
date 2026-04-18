@@ -25,29 +25,26 @@ def get_welcome_text(is_admin: bool=False) -> tuple:
     Returns:
         Кортеж (text, photo_file_id) — текст и опциональное фото
     """
-    from database.requests import get_all_tariffs, get_setting, is_crypto_configured, is_stars_enabled, is_cards_enabled, is_yookassa_qr_configured
+    from database.requests import get_all_tariffs, get_setting, is_stars_enabled
     from bot.utils.text import escape_html
     from bot.utils.message_editor import get_message_data
     welcome_data = get_message_data('main_page_text', '🔐 <b>Добро пожаловать в VPN-бот!</b>')
     welcome_text = welcome_data.get('text', '🔐 <b>Добро пожаловать в VPN-бот!</b>')
     photo_file_id = welcome_data.get('photo_file_id')
-    crypto_enabled = is_crypto_configured()
     stars_enabled = is_stars_enabled()
-    cards_enabled = is_cards_enabled()
-    yookassa_qr_enabled = is_yookassa_qr_configured()
     tariffs = get_all_tariffs()
     tariff_lines = []
     if tariffs:
         tariff_lines.append('📋 <b>Тарифы:</b>')
         for tariff in tariffs:
             prices = []
-            if crypto_enabled:
+            if tariff.get('price_cents', 0) > 0:
                 price_usd = tariff['price_cents'] / 100
                 price_str = f'{price_usd:g}'.replace('.', ',')
                 prices.append(f'${escape_html(price_str)}')
-            if stars_enabled:
+            if stars_enabled and tariff.get('price_stars', 0) > 0:
                 prices.append(f"{tariff['price_stars']} ⭐")
-            if (cards_enabled or yookassa_qr_enabled) and tariff.get('price_rub', 0) > 0:
+            if tariff.get('price_rub', 0) > 0:
                 prices.append(f"{int(tariff['price_rub'])} ₽")
             price_display = ' / '.join(prices) if prices else 'Цена не установлена'
             tariff_lines.append(f"• {escape_html(tariff['name'])} — {price_display}")
@@ -238,6 +235,8 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
         show_referral=show_referral,
         mini_app_url=mini_app_url if show_mini_app else "",
     )
+    if show_mini_app:
+        text += "\n\n🚀 <b>Рекомендуем Mini App:</b> это основной способ оплаты и управления подпиской."
     try:
         await safe_edit_or_send(message, text, reply_markup=kb, photo=welcome_photo, force_new=True)
     except TelegramForbiddenError:
@@ -267,6 +266,8 @@ async def callback_start(callback: CallbackQuery, state: FSMContext):
         show_referral=show_referral,
         mini_app_url=mini_app_url if show_mini_app else "",
     )
+    if show_mini_app:
+        text += "\n\n🚀 <b>Рекомендуем Mini App:</b> это основной способ оплаты и управления подпиской."
     await safe_edit_or_send(callback.message, text, reply_markup=kb, photo=welcome_photo)
     await callback.answer()
 

@@ -502,6 +502,8 @@ def count_direct_paid_referrals(referrer_id: int) -> int:
             JOIN payments p ON p.user_id = u.id
             WHERE u.referred_by = ?
               AND p.status = 'paid'
+              AND COALESCE(p.payment_type, '') NOT IN ('trial', 'gift')
+              AND (COALESCE(p.amount_cents, 0) > 0 OR COALESCE(p.amount_stars, 0) > 0)
             """,
             (referrer_id,),
         )
@@ -640,7 +642,10 @@ def get_direct_referrals_with_purchase_info(referrer_id: int, limit: int = 10) -
                 (
                     SELECT p.paid_at
                     FROM payments p
-                    WHERE p.user_id = u.id AND p.status = 'paid'
+                    WHERE p.user_id = u.id
+                      AND p.status = 'paid'
+                      AND COALESCE(p.payment_type, '') NOT IN ('trial', 'gift')
+                      AND (COALESCE(p.amount_cents, 0) > 0 OR COALESCE(p.amount_stars, 0) > 0)
                     ORDER BY p.paid_at DESC
                     LIMIT 1
                 ) AS last_paid_at,
@@ -648,7 +653,10 @@ def get_direct_referrals_with_purchase_info(referrer_id: int, limit: int = 10) -
                     SELECT t.name
                     FROM payments p
                     LEFT JOIN tariffs t ON t.id = p.tariff_id
-                    WHERE p.user_id = u.id AND p.status = 'paid'
+                    WHERE p.user_id = u.id
+                      AND p.status = 'paid'
+                      AND COALESCE(p.payment_type, '') NOT IN ('trial', 'gift')
+                      AND (COALESCE(p.amount_cents, 0) > 0 OR COALESCE(p.amount_stars, 0) > 0)
                     ORDER BY p.paid_at DESC
                     LIMIT 1
                 ) AS last_tariff_name
