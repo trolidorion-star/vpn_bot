@@ -103,7 +103,7 @@
       background: radial-gradient(42% 30% at 20% 10%, rgba(255,176,77,.25), transparent 72%);
     }
     .scene-layer.usage {
-      background: radial-gradient(40% 30% at 78% 75%, rgba(33,201,138,.28), transparent 70%);
+      background: radial-gradient(45% 35% at 82% 15%, rgba(68,179,255,.30), transparent 70%);
     }
     .scene-layer.ref {
       background: radial-gradient(40% 30% at 10% 55%, rgba(255,196,107,.24), transparent 72%);
@@ -391,6 +391,43 @@
       border-color: rgba(12, 32, 52, 0.16);
       background: rgba(12, 32, 52, 0.03);
       color: #10253a;
+    }
+    .desktop-grid-2 {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+    .desktop-modal {
+      max-width: 560px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    .nav-badge {
+      position: absolute;
+      right: 4px;
+      top: 4px;
+      min-width: 18px;
+      border-radius: 999px;
+      background: #ff6b6b;
+      padding: 2px 6px;
+      font-size: 10px;
+      line-height: 1;
+      font-weight: 700;
+      color: #fff;
+      z-index: 2;
+    }
+    @media (min-width: 960px) {
+      .desktop-grid-2 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+    @media (max-width: 430px) {
+      .glass {
+        backdrop-filter: blur(8px);
+      }
+      .premium-card {
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+      }
     }
   </style>
 </head>
@@ -690,17 +727,17 @@
 
     function ToggleRow({ title, hint, enabled, onToggle, disabled = false }) {
       return (
-        <div className="flex items-center justify-between gap-2 overflow-hidden rounded-2xl border border-white/10 bg-surfaceSoft/45 px-3 py-2.5">
-          <div className="min-w-0 flex-1 pr-2">
+        <div className="flex items-center justify-between gap-2 rounded-2xl border border-white/10 bg-surfaceSoft/45 px-3 py-2.5 sm:gap-3">
+          <div className="min-w-0 flex-1">
             <div className="text-sm font-semibold readable">{title}</div>
             <div className="text-[11px] text-muted readable">{hint}</div>
           </div>
           <button
             onClick={() => onToggle?.(!enabled)}
             disabled={disabled}
-            className={`h-8 w-14 flex-none rounded-full transition ${enabled ? 'bg-accent' : 'bg-surface'} ${disabled ? 'opacity-60' : ''}`}
+            className={`h-7 w-12 flex-none rounded-full transition sm:h-8 sm:w-14 ${enabled ? 'bg-accent' : 'bg-surface'} ${disabled ? 'opacity-60' : ''}`}
           >
-            <span className={`block h-6 w-6 rounded-full bg-white transition ${enabled ? 'translate-x-7' : 'translate-x-1'}`}></span>
+            <span className={`block h-5 w-5 rounded-full bg-white transition sm:h-6 sm:w-6 ${enabled ? 'translate-x-6 sm:translate-x-7' : 'translate-x-1'}`}></span>
           </button>
         </div>
       );
@@ -1435,8 +1472,7 @@
         const downlink = Number(conn.downlink || 0);
         const nativeRtt = Number(conn.rtt || 0);
         const rtt = nativeRtt > 0 ? nativeRtt : (avg || 0);
-        const tzCity = tz.includes('/') ? tz.split('/')[1].replaceAll('_', ' ') : tz;
-        const region = `${tzCity} (по часовому поясу устройства)`;
+        const region = tz ? `Устройство (${tz})` : 'По данным устройства';
         const preset = (performanceMode || isLowEndDevice || netType.includes('2g') || netType.includes('3g'))
           ? 'Эко-профиль: меньше анимаций, стабильность при слабой сети'
           : 'Стандарт-профиль: максимум плавности и визуальных эффектов';
@@ -1467,7 +1503,6 @@
         { id: 'diag', title: 'Диагностика', icon: '🛰️' },
         { id: 'service', title: 'Сервис', icon: '🧪' },
       ];
-      if (user?.is_admin) tabs.push({ id: 'admin', title: 'Админ', icon: '⚙️' });
       const primaryTabIds = ['dashboard', 'plans', 'usage', 'support'];
       const primaryTabs = tabs.filter((item) => primaryTabIds.includes(item.id));
       const extraTabs = tabs.filter((item) => !primaryTabIds.includes(item.id));
@@ -1668,14 +1703,30 @@
             ? 'Скрытый'
             : 'Общий';
         const globalPromoTimer = promoGlobalSecondsLive;
-        const promoPreviewText = promoCodeApplied
-          ? `Промокод «${promoCodeApplied}» добавлен. Если код валиден на сервере, скидка применится при оплате.`
-          : 'Добавьте промокод перед оплатой: он будет учтен, если активен в системе.';
+        const trial = user?.trial || {};
         return (
           <div className="space-y-3 animate-in">
+            {Boolean(trial?.available) && (
+              <div className="rounded-card glass premium-card p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="font-semibold">Пробная подписка</div>
+                    <div className="mt-1 text-xs text-muted readable">
+                      {trial?.duration_hours ? `Доступ на ${trial.duration_hours} ч` : 'Пробный период доступен'}
+                      {trial?.tariff_name ? ` • ${trial.tariff_name}` : ''}
+                    </div>
+                  </div>
+                  <button
+                    onClick={impact(() => tg?.openLink?.('https://t.me/BobrikVPNbot'), 'light')}
+                    className="rounded-xl border border-white/15 px-3 py-2 text-xs"
+                  >
+                    Активировать в боте
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="rounded-card glass premium-card p-4">
               <div className="font-semibold">Скидки и промокод</div>
-              <div className="mt-1 text-xs text-muted readable">{promoPreviewText}</div>
               {activePromoCode && (
                 <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-accent/35 bg-accent/10 px-3 py-1 text-xs text-accent">
                   <span>{promoScopeLabel}</span>
@@ -1775,8 +1826,7 @@
                       </div>
                       <div className="mt-3 flex items-center gap-2">
                         {isLifetime ? <span className="tag">Выгодно</span> : (idx === 0 && <span className="tag">Популярный</span>)}
-                        {discountPercent > 0 && <span className="tag">Скидка {discountPercent}%</span>}
-                        {promoDiscountPct > 0 && <span className="tag">По акции</span>}
+                        {discountPercent > 0 && <span className="tag mono">-{discountPercent}%</span>}
                         <span className="tag">{perDayLabel}</span>
                       </div>
                       <div className="mt-3 text-xs text-muted readable">Нажмите, чтобы выбрать способ оплаты</div>
@@ -1833,7 +1883,7 @@
                   <div className="mt-1 text-sm text-muted">До: <span className="text-text">{fmtDate(item.expires_at)}</span></div>
                   <div className="mt-3 grid grid-cols-2 gap-2">
                     <button onClick={impact(() => openKeyDetails(item.id), 'medium')} className="rounded-xl border border-white/15 px-3 py-2 text-xs">Управление</button>
-                    <button onClick={impact(() => copyKeyLinkById(item.id))} className="rounded-xl border border-emerald-300/35 bg-emerald-500/14 px-3 py-2 text-xs font-semibold text-emerald-100">Скопировать</button>
+                    <button onClick={impact(() => copyKeyLinkById(item.id))} className="rounded-xl border border-emerald-300/30 bg-emerald-400/10 px-3 py-2 text-xs text-emerald-100 transition hover:bg-emerald-400/16">Скопировать</button>
                   </div>
                 </div>
               ))}
@@ -2202,7 +2252,6 @@
         if (tab === 'support') return renderSupport();
         if (tab === 'diag') return renderDiagnostics();
         if (tab === 'service') return renderService();
-        if (tab === 'admin' && user?.is_admin) return renderAdmin();
         return renderDashboard();
       }
 
@@ -2291,24 +2340,23 @@
               >
                 <span className="mr-1">{item.icon}</span>{item.title}
                 {Number(item.badge || 0) > 0 && tab !== item.id && (
-                  <span className="absolute right-0 top-0 translate-x-1/3 -translate-y-1/3 min-w-[18px] rounded-full bg-danger px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
+                  <span className="nav-badge">
                     {item.badge > 99 ? '99+' : item.badge}
                   </span>
                 )}
               </button>
             ))}
+            {extraTabs.length > 0 && (
+              <button
+                onClick={impact(() => setShowSectionsMenu((v) => !v), 'light')}
+                className={`whitespace-nowrap rounded-xl px-3 py-2 text-xs sm:text-sm transition ${extraTabs.some((t) => t.id === tab) || showSectionsMenu ? 'bg-accent text-black font-semibold' : 'bg-surfaceSoft/45 text-muted'}`}
+                title="Разделы"
+              >
+                ⋮ Разделы
+              </button>
+            )}
             </div>
           </nav>
-
-          {extraTabs.length > 0 && (
-            <button
-              onClick={impact(() => setShowSectionsMenu((v) => !v), 'light')}
-              className={`fixed bottom-20 right-4 z-30 h-11 min-w-[44px] rounded-full border border-white/15 px-3 text-sm glass ${extraTabs.some((t) => t.id === tab) || showSectionsMenu ? 'text-accent' : 'text-muted'}`}
-              title="Разделы"
-            >
-              ⋮
-            </button>
-          )}
 
           {showSectionsMenu && (
             <div className="fixed inset-0 z-30 bg-black/50" onClick={() => setShowSectionsMenu(false)}>
@@ -2324,7 +2372,7 @@
                     >
                       <span className="mr-1">{item.icon}</span>{item.title}
                       {Number(item.badge || 0) > 0 && tab !== item.id && (
-                        <span className="absolute right-2 top-2 min-w-[18px] rounded-full bg-danger px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
+                        <span className="nav-badge">
                           {item.badge > 99 ? '99+' : item.badge}
                         </span>
                       )}

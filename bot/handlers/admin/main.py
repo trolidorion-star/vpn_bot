@@ -5,7 +5,6 @@
 """
 import logging
 from aiogram import Router, F
-from aiogram.filters import Command
 from aiogram.types import CallbackQuery
 from aiogram.types import MenuButtonCommands, MenuButtonWebApp, Message, WebAppInfo
 from aiogram.fsm.context import FSMContext
@@ -33,7 +32,7 @@ async def _sync_miniapp_menu_button(message: Message) -> None:
     mini_app_url = (getattr(app_config, "MINI_APP_URL", "") or "").strip()
     mini_app_short_name = (getattr(app_config, "MINI_APP_SHORT_NAME", "Mini App") or "Mini App").strip()
 
-    if mini_app_url and is_miniapp_enabled():
+    if mini_app_url:
         try:
             await message.bot.set_chat_menu_button(
                 menu_button=MenuButtonWebApp(
@@ -204,21 +203,6 @@ async def show_admin_business_stats(callback: CallbackQuery):
     )
 
 
-@router.message(Command("admin"))
-async def cmd_admin(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
-        return
-
-    await state.set_state(AdminStates.admin_menu)
-    text = await get_admin_stats_text()
-    await safe_edit_or_send(
-        message,
-        text,
-        reply_markup=admin_main_menu_kb(miniapp_enabled=is_miniapp_enabled()),
-        force_new=True,
-    )
-
-
 @router.callback_query(F.data == "admin_miniapp_toggle")
 async def admin_miniapp_toggle(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id):
@@ -355,3 +339,4 @@ async def edit_gift_receiver_card(callback: CallbackQuery, state: FSMContext):
 
 # Раздел «Пользователи» реализован в users.py
 # Раздел «Настройки бота» реализован в system.py
+

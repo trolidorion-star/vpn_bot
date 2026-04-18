@@ -58,11 +58,15 @@ from database.requests import (
     get_ticket_messages,
     get_referral_reward_type,
     get_referral_stats,
+    get_setting,
     get_tariff_by_id,
     get_user_balance,
     get_user_keys_for_display,
+    get_trial_tariff_id,
+    has_used_trial,
     is_miniapp_enabled,
     is_referral_enabled,
+    is_trial_enabled,
     set_user_active_promocode,
     set_miniapp_enabled,
     update_key_custom_name,
@@ -501,6 +505,16 @@ def _serialize_user_info(telegram_id: int, username: Optional[str]) -> dict[str,
     status = "active" if key and key.get("is_active") else "expired"
     admin_ids = _parse_admin_ids()
     key_copy = _build_key_copy_value(key)
+    trial_enabled = bool(is_trial_enabled())
+    trial_tariff_id = get_trial_tariff_id()
+    trial_used = bool(has_used_trial(telegram_id))
+    trial_duration_hours = int(get_setting("trial_duration_hours_override", "1") or "1")
+    trial_tariff_name = None
+    if trial_tariff_id:
+        trial_tariff = get_tariff_by_id(int(trial_tariff_id))
+        if trial_tariff:
+            trial_tariff_name = str(trial_tariff.get("name") or "").strip() or None
+    trial_available = bool(trial_enabled and trial_tariff_id and (not trial_used))
     return {
         "telegram_id": telegram_id,
         "username": username,
@@ -516,6 +530,14 @@ def _serialize_user_info(telegram_id: int, username: Optional[str]) -> dict[str,
         "keys_total": len(all_keys),
         "is_admin": telegram_id in admin_ids,
         "miniapp_enabled": is_miniapp_enabled(),
+        "trial": {
+            "enabled": trial_enabled,
+            "available": trial_available,
+            "used": trial_used,
+            "tariff_id": int(trial_tariff_id) if trial_tariff_id else None,
+            "tariff_name": trial_tariff_name,
+            "duration_hours": trial_duration_hours,
+        },
     }
 
 

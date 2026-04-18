@@ -10,7 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramForbiddenError
 from config import ADMIN_IDS
 from bot.services.buy_key_timer import cancel_buy_key_timer
-from database.requests import get_or_create_user, is_user_banned, get_all_servers, get_setting, is_referral_enabled, get_user_by_referral_code, set_user_referrer, is_miniapp_enabled
+from database.requests import get_or_create_user, is_user_banned, get_all_servers, get_setting, is_referral_enabled, get_user_by_referral_code, set_user_referrer
 from bot.keyboards.user import main_menu_kb
 from bot.states.user_states import RenameKey, ReplaceKey
 from bot.utils.text import escape_html, safe_edit_or_send
@@ -231,7 +231,7 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
     show_trial = is_trial_enabled() and get_trial_tariff_id() is not None and (not has_used_trial(user_id))
     show_referral = is_referral_enabled()
     mini_app_url = (getattr(app_config, "MINI_APP_URL", "") or "").strip()
-    show_mini_app = bool(mini_app_url and is_miniapp_enabled())
+    show_mini_app = bool(mini_app_url)
     kb = main_menu_kb(
         is_admin=is_admin,
         show_trial=show_trial,
@@ -260,7 +260,7 @@ async def callback_start(callback: CallbackQuery, state: FSMContext):
     show_trial = is_trial_enabled() and get_trial_tariff_id() is not None and (not has_used_trial(user_id))
     show_referral = is_referral_enabled()
     mini_app_url = (getattr(app_config, "MINI_APP_URL", "") or "").strip()
-    show_mini_app = bool(mini_app_url and is_miniapp_enabled())
+    show_mini_app = bool(mini_app_url)
     kb = main_menu_kb(
         is_admin=is_admin,
         show_trial=show_trial,
