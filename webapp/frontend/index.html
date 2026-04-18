@@ -103,7 +103,7 @@
       background: radial-gradient(42% 30% at 20% 10%, rgba(255,176,77,.25), transparent 72%);
     }
     .scene-layer.usage {
-      background: radial-gradient(45% 35% at 82% 15%, rgba(68,179,255,.30), transparent 70%);
+      background: radial-gradient(45% 35% at 82% 15%, rgba(68,179,255,.35), transparent 70%);
     }
     .scene-layer.ref {
       background: radial-gradient(40% 30% at 10% 55%, rgba(255,196,107,.24), transparent 72%);
@@ -404,8 +404,8 @@
     }
     .nav-badge {
       position: absolute;
-      right: 4px;
-      top: 4px;
+      right: -4px;
+      top: -5px;
       min-width: 18px;
       border-radius: 999px;
       background: #ff6b6b;
@@ -423,10 +423,32 @@
     }
     @media (max-width: 430px) {
       .glass {
-        backdrop-filter: blur(8px);
+        backdrop-filter: blur(7px);
       }
       .premium-card {
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+        box-shadow: 0 7px 18px rgba(0, 0, 0, 0.24);
+      }
+    }
+    @media (max-width: 768px) {
+      .scene-layer {
+        opacity: .22;
+      }
+      .glass::before,
+      .hero-glow,
+      .premium-card::before,
+      .shine::after {
+        animation: none !important;
+      }
+      .glass {
+        backdrop-filter: blur(7px);
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .glass::before,
+      .hero-glow,
+      .premium-card::before,
+      .shine::after {
+        animation: none !important;
       }
     }
   </style>
@@ -1820,13 +1842,13 @@
                           <div className="text-sm text-muted mt-1 readable">{daysLabel}</div>
                         </div>
                         <div className="rounded-xl bg-accent/15 px-3 py-2 text-right">
+                          {discountPercent > 0 && <div className="text-[11px] font-semibold text-accent/95">-{discountPercent}%</div>}
                           {oldPrice > newPrice && <div className="text-[11px] text-muted line-through">{oldPrice} ₽</div>}
                           <div className="text-accent font-semibold">{newPrice} ₽</div>
                         </div>
                       </div>
                       <div className="mt-3 flex items-center gap-2">
                         {isLifetime ? <span className="tag">Выгодно</span> : (idx === 0 && <span className="tag">Популярный</span>)}
-                        {discountPercent > 0 && <span className="tag mono">-{discountPercent}%</span>}
                         <span className="tag">{perDayLabel}</span>
                       </div>
                       <div className="mt-3 text-xs text-muted readable">Нажмите, чтобы выбрать способ оплаты</div>
@@ -2346,17 +2368,18 @@
                 )}
               </button>
             ))}
-            {extraTabs.length > 0 && (
-              <button
-                onClick={impact(() => setShowSectionsMenu((v) => !v), 'light')}
-                className={`whitespace-nowrap rounded-xl px-3 py-2 text-xs sm:text-sm transition ${extraTabs.some((t) => t.id === tab) || showSectionsMenu ? 'bg-accent text-black font-semibold' : 'bg-surfaceSoft/45 text-muted'}`}
-                title="Разделы"
-              >
-                ⋮ Разделы
-              </button>
-            )}
             </div>
           </nav>
+
+          {extraTabs.length > 0 && (
+            <button
+              onClick={impact(() => setShowSectionsMenu((v) => !v), 'light')}
+              className={`fixed bottom-20 right-4 z-20 rounded-xl border border-white/15 px-3 py-2 text-xs sm:text-sm transition glass ${extraTabs.some((t) => t.id === tab) || showSectionsMenu ? 'bg-accent text-black font-semibold' : 'text-text'}`}
+              title="Разделы"
+            >
+              ⋮
+            </button>
+          )}
 
           {showSectionsMenu && (
             <div className="fixed inset-0 z-30 bg-black/50" onClick={() => setShowSectionsMenu(false)}>
