@@ -106,8 +106,9 @@ async def buy_key_handler(callback: CallbackQuery):
 
     sale = get_flash_sale_state()
     text_override = build_buy_key_text(prepayment_text, sale, format_remaining_hms)
-    if MINI_APP_URL:
-        text_override += "\n\n🚀 <b>Рекомендуем Mini App:</b> там быстрее и удобнее оплачивать и управлять подпиской."
+    mini_app_url = (MINI_APP_URL or "").strip() or (get_setting("mini_app_url", "") or "").strip()
+    if mini_app_url:
+        text_override = "🚀 <b>Рекомендуем использовать Mini App:</b> это основной и самый удобный способ оплаты.\n\n" + text_override
 
     kb = buy_key_kb(
         crypto_url=crypto_url,
@@ -122,7 +123,7 @@ async def buy_key_handler(callback: CallbackQuery):
         is_admin=telegram_id in ADMIN_IDS,
         order_id=existing_order_id,
         show_balance_button=show_balance_button,
-        mini_app_url=MINI_APP_URL,
+        mini_app_url=mini_app_url,
     )
 
     sent_message = None

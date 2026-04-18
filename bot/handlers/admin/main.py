@@ -15,6 +15,7 @@ import config as app_config
 from database.requests import (
     get_all_servers,
     get_business_metrics,
+    get_setting,
     is_miniapp_enabled,
     set_miniapp_enabled,
 )
@@ -30,6 +31,8 @@ router = Router()
 
 async def _sync_miniapp_menu_button(message: Message) -> None:
     mini_app_url = (getattr(app_config, "MINI_APP_URL", "") or "").strip()
+    if not mini_app_url:
+        mini_app_url = (get_setting("mini_app_url", "") or "").strip()
     mini_app_short_name = (getattr(app_config, "MINI_APP_SHORT_NAME", "Mini App") or "Mini App").strip()
 
     if mini_app_url:

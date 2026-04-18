@@ -25,7 +25,7 @@ def main_menu_kb(
     
     if mini_app_url:
         builder.row(
-            InlineKeyboardButton(text="🚀 MINI APP — ОСНОВНОЙ СПОСОБ", web_app=WebAppInfo(url=mini_app_url))
+            InlineKeyboardButton(text="🚀 ОТКРЫТЬ MINI APP (РЕКОМЕНДУЕМ)", web_app=WebAppInfo(url=mini_app_url))
         )
 
     builder.row(
@@ -156,7 +156,7 @@ def buy_key_kb(
 
     if mini_app_url:
         builder.row(
-            InlineKeyboardButton(text="🚀 Оплачивать через Mini App (быстрее)", web_app=WebAppInfo(url=mini_app_url))
+            InlineKeyboardButton(text="🚀 ПЕРЕЙТИ В MINI APP ДЛЯ ОПЛАТЫ", web_app=WebAppInfo(url=mini_app_url))
         )
 
     # Кнопки оплаты (показываем только включённые методы)

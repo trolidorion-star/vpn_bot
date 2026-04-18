@@ -228,6 +228,8 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
     show_trial = is_trial_enabled() and get_trial_tariff_id() is not None and (not has_used_trial(user_id))
     show_referral = is_referral_enabled()
     mini_app_url = (getattr(app_config, "MINI_APP_URL", "") or "").strip()
+    if not mini_app_url:
+        mini_app_url = (get_setting("mini_app_url", "") or "").strip()
     show_mini_app = bool(mini_app_url)
     kb = main_menu_kb(
         is_admin=is_admin,
@@ -236,7 +238,7 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
         mini_app_url=mini_app_url if show_mini_app else "",
     )
     if show_mini_app:
-        text += "\n\n🚀 <b>Рекомендуем Mini App:</b> это основной способ оплаты и управления подпиской."
+        text = "🚀 <b>Рекомендуем использовать Mini App:</b> основной способ оплаты и управления VPN.\n\n" + text
     try:
         await safe_edit_or_send(message, text, reply_markup=kb, photo=welcome_photo, force_new=True)
     except TelegramForbiddenError:
@@ -259,6 +261,8 @@ async def callback_start(callback: CallbackQuery, state: FSMContext):
     show_trial = is_trial_enabled() and get_trial_tariff_id() is not None and (not has_used_trial(user_id))
     show_referral = is_referral_enabled()
     mini_app_url = (getattr(app_config, "MINI_APP_URL", "") or "").strip()
+    if not mini_app_url:
+        mini_app_url = (get_setting("mini_app_url", "") or "").strip()
     show_mini_app = bool(mini_app_url)
     kb = main_menu_kb(
         is_admin=is_admin,
@@ -267,7 +271,7 @@ async def callback_start(callback: CallbackQuery, state: FSMContext):
         mini_app_url=mini_app_url if show_mini_app else "",
     )
     if show_mini_app:
-        text += "\n\n🚀 <b>Рекомендуем Mini App:</b> это основной способ оплаты и управления подпиской."
+        text = "🚀 <b>Рекомендуем использовать Mini App:</b> основной способ оплаты и управления VPN.\n\n" + text
     await safe_edit_or_send(callback.message, text, reply_markup=kb, photo=welcome_photo)
     await callback.answer()
 
