@@ -34,7 +34,7 @@ async def pay_cards_select_tariff(callback: CallbackQuery):
     order_id = None
     if ':' in callback.data:
         order_id = callback.data.split(':')[1]
-    tariffs = get_all_tariffs(include_hidden=False)
+    tariffs = get_all_tariffs(include_hidden=callback.from_user.id in ADMIN_IDS)
     tariffs = apply_flash_sale_to_tariffs(tariffs)
     if not tariffs:
         await safe_edit_or_send(callback.message, '💳 <b>Оплата картой</b>\n\n😔 Нет доступных тарифов.\n\nПопробуйте позже или обратитесь в поддержку.', reply_markup=home_only_kb())
@@ -178,7 +178,7 @@ async def pay_qr_select_tariff(callback: CallbackQuery):
     from database.requests import get_all_tariffs
     from bot.keyboards.user import tariff_select_kb
     from bot.keyboards.admin import home_only_kb
-    tariffs = get_all_tariffs(include_hidden=False)
+    tariffs = get_all_tariffs(include_hidden=callback.from_user.id in ADMIN_IDS)
     tariffs = apply_flash_sale_to_tariffs(tariffs)
     rub_tariffs = [t for t in tariffs if t.get('price_rub') and t['price_rub'] > 0]
     if not rub_tariffs:

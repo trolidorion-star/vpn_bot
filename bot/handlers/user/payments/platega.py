@@ -246,7 +246,7 @@ async def pay_platega_choose_method(callback: CallbackQuery, state: FSMContext):
         await callback.answer("Метод недоступен", show_alert=True)
         return
 
-    tariffs = get_all_tariffs(include_hidden=False)
+    tariffs = get_all_tariffs(include_hidden=callback.from_user.id in ADMIN_IDS)
     if not tariffs:
         await callback.answer("Нет доступных тарифов", show_alert=True)
         return

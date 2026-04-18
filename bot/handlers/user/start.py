@@ -32,7 +32,7 @@ def get_welcome_text(is_admin: bool=False) -> tuple:
     welcome_text = welcome_data.get('text', '🔐 <b>Добро пожаловать в VPN-бот!</b>')
     photo_file_id = welcome_data.get('photo_file_id')
     stars_enabled = is_stars_enabled()
-    tariffs = get_all_tariffs()
+    tariffs = get_all_tariffs(include_hidden=is_admin)
     tariff_lines = []
     if tariffs:
         tariff_lines.append('📋 <b>Тарифы:</b>')

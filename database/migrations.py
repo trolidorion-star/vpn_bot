@@ -28,7 +28,7 @@ def _add_column(conn: sqlite3.Connection, table: str, column_def: str) -> None:
 
 
 # Текущая версия схемы БД
-LATEST_VERSION = 30
+LATEST_VERSION = 31
 
 
 def get_current_version() -> int:
@@ -1842,6 +1842,32 @@ def migration_30(conn: sqlite3.Connection) -> None:
     logger.info("Migration v30 applied")
 
 
+def migration_31(conn: sqlite3.Connection) -> None:
+    """
+    Migration v31:
+    - Ensures hidden admin-only test tariff with 1 RUB price exists.
+    - This tariff is visible only to admins in user-facing tariff lists.
+    """
+    logger.info("Applying migration v31 (admin test tariff 1 RUB)...")
+
+    conn.execute(
+        """
+        INSERT INTO tariffs (
+            name, duration_days, price_cents, price_stars, price_rub,
+            external_id, display_order, is_active, traffic_limit_gb, group_id
+        )
+        SELECT
+            'Admin Test 1 RUB', 30, 100, 1, 1,
+            NULL, 998, 0, 0, 1
+        WHERE NOT EXISTS (
+            SELECT 1 FROM tariffs WHERE name = 'Admin Test 1 RUB'
+        )
+        """
+    )
+
+    logger.info("Migration v31 applied")
+
+
 MIGRATIONS = {
     1: migration_1,
     2: migration_2,
@@ -1873,6 +1899,7 @@ MIGRATIONS = {
     28: migration_28,
     29: migration_29,
     30: migration_30,
+    31: migration_31,
 }
 
 

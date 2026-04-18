@@ -6,6 +6,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.filters import StateFilter
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from config import ADMIN_IDS
 from bot.keyboards.user import tariff_select_kb, yookassa_qr_kb
 from bot.services.buy_key_timer import cancel_buy_key_timer
 from bot.services.flash_sale import apply_flash_sale_to_tariff, apply_flash_sale_to_tariffs
@@ -188,7 +189,7 @@ async def gift_stars_select_tariff(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     recipient_name = _gift_recipient_name(data)
 
-    tariffs = get_all_tariffs(include_hidden=False)
+    tariffs = get_all_tariffs(include_hidden=callback.from_user.id in ADMIN_IDS)
     if not tariffs:
         await callback.answer("❌ Нет доступных тарифов", show_alert=True)
         return
@@ -211,7 +212,7 @@ async def gift_cards_select_tariff(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     recipient_name = _gift_recipient_name(data)
 
-    tariffs = apply_flash_sale_to_tariffs(get_all_tariffs(include_hidden=False))
+    tariffs = apply_flash_sale_to_tariffs(get_all_tariffs(include_hidden=callback.from_user.id in ADMIN_IDS))
     rub_tariffs = [t for t in tariffs if (t.get("price_rub") or 0) > 0]
     if not rub_tariffs:
         await callback.answer("❌ Нет тарифов с ценой в рублях", show_alert=True)
@@ -240,7 +241,7 @@ async def gift_qr_select_tariff(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     recipient_name = _gift_recipient_name(data)
 
-    tariffs = apply_flash_sale_to_tariffs(get_all_tariffs(include_hidden=False))
+    tariffs = apply_flash_sale_to_tariffs(get_all_tariffs(include_hidden=callback.from_user.id in ADMIN_IDS))
     rub_tariffs = [t for t in tariffs if (t.get("price_rub") or 0) > 0]
     if not rub_tariffs:
         await callback.answer("❌ Нет тарифов с ценой в рублях", show_alert=True)
@@ -271,7 +272,7 @@ async def gift_platega_select_tariff(callback: CallbackQuery, state: FSMContext)
     recipient_name = _gift_recipient_name(data)
     await state.update_data(gift_platega_method_code=method_code)
 
-    tariffs = apply_flash_sale_to_tariffs(get_all_tariffs(include_hidden=False))
+    tariffs = apply_flash_sale_to_tariffs(get_all_tariffs(include_hidden=callback.from_user.id in ADMIN_IDS))
     rub_tariffs = [t for t in tariffs if (t.get("price_rub") or 0) > 0]
     if not rub_tariffs:
         await callback.answer("❌ Нет тарифов с ценой в рублях", show_alert=True)
@@ -306,7 +307,7 @@ async def gift_crypto_select_tariff(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     recipient_name = _gift_recipient_name(data)
 
-    tariffs = get_all_tariffs(include_hidden=False)
+    tariffs = get_all_tariffs(include_hidden=callback.from_user.id in ADMIN_IDS)
     if not tariffs:
         await callback.answer("❌ Нет доступных тарифов", show_alert=True)
         return

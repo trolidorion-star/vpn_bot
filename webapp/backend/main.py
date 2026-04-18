@@ -689,8 +689,9 @@ def rename_key(key_id: int, payload: RenameKeyRequest, session: dict[str, Any] =
 @app.get("/api/get_tariffs")
 def get_tariffs(session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
     _ensure_miniapp_enabled()
-    _ = session
-    tariffs = get_all_tariffs(include_hidden=False)
+    telegram_id = int(session["telegram_id"])
+    is_admin = telegram_id in _parse_admin_ids()
+    tariffs = get_all_tariffs(include_hidden=is_admin)
     data = []
     for tariff in tariffs:
         price_rub = int(float(tariff.get("price_rub") or 0))
@@ -722,6 +723,9 @@ async def create_invoice(payload: InvoiceRequest, session: dict[str, Any] = Depe
     tariff = get_tariff_by_id(payload.tariff_id)
     if not tariff:
         raise HTTPException(status_code=404, detail="Tariff not found")
+    telegram_id = int(session["telegram_id"])
+    if int(tariff.get("is_active") or 0) != 1 and telegram_id not in _parse_admin_ids():
+        raise HTTPException(status_code=403, detail="Tariff is not available")
 
     price_rub = int(float(tariff.get("price_rub") or 0))
     if price_rub <= 0:
@@ -927,7 +931,6 @@ def referral_data(session: dict[str, Any] = Depends(_current_session)) -> dict[s
 @app.get("/api/support")
 def get_support_ticket(session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
     _ensure_miniapp_enabled()
-    telegram_id = int(session["telegram_id"])
     user, _ = get_or_create_user(telegram_id, session.get("username"))
     ticket = get_open_ticket_for_user(user["id"])
     messages: list[dict[str, Any]] = []

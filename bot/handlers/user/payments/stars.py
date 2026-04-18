@@ -71,7 +71,7 @@ async def pay_stars_select_tariff(callback: CallbackQuery):
     order_id = None
     if ':' in callback.data:
         order_id = callback.data.split(':')[1]
-    tariffs = get_all_tariffs(include_hidden=False)
+    tariffs = get_all_tariffs(include_hidden=callback.from_user.id in ADMIN_IDS)
     if not tariffs:
         await safe_edit_or_send(callback.message, '⭐ <b>Оплата звёздами</b>\n\n😔 Нет доступных тарифов.\n\nПопробуйте позже или обратитесь в поддержку.', reply_markup=home_only_kb())
         await callback.answer()

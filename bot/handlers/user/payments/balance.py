@@ -76,7 +76,7 @@ async def pay_use_balance_buy_handler(callback: CallbackQuery, state: FSMContext
     if balance_cents <= 0:
         await callback.answer('❌ Недостаточно средств на балансе', show_alert=True)
         return
-    tariffs = get_all_tariffs(include_hidden=False)
+    tariffs = get_all_tariffs(include_hidden=callback.from_user.id in ADMIN_IDS)
     rub_tariffs = [t for t in tariffs if t.get('price_rub') and t['price_rub'] > 0]
     if not rub_tariffs:
         await safe_edit_or_send(callback.message, '💰 <b>Оплата с баланса</b>\n\n😔 Нет доступных тарифов с ценой в рублях.', reply_markup=home_only_kb())
