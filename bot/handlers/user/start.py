@@ -37,15 +37,27 @@ def get_welcome_text(is_admin: bool=False) -> tuple:
     if tariffs:
         tariff_lines.append('📋 <b>Тарифы:</b>')
         for tariff in tariffs:
+            try:
+                price_cents = int(tariff.get('price_cents') or 0)
+            except (TypeError, ValueError):
+                price_cents = 0
+            try:
+                price_stars = int(tariff.get('price_stars') or 0)
+            except (TypeError, ValueError):
+                price_stars = 0
+            try:
+                price_rub = int(float(tariff.get('price_rub') or 0))
+            except (TypeError, ValueError):
+                price_rub = 0
             prices = []
-            if tariff.get('price_cents', 0) > 0:
-                price_usd = tariff['price_cents'] / 100
+            if price_cents > 0:
+                price_usd = price_cents / 100
                 price_str = f'{price_usd:g}'.replace('.', ',')
                 prices.append(f'${escape_html(price_str)}')
-            if stars_enabled and tariff.get('price_stars', 0) > 0:
-                prices.append(f"{tariff['price_stars']} ⭐")
-            if tariff.get('price_rub', 0) > 0:
-                prices.append(f"{int(tariff['price_rub'])} ₽")
+            if stars_enabled and price_stars > 0:
+                prices.append(f"{price_stars} ⭐")
+            if price_rub > 0:
+                prices.append(f"{price_rub} ₽")
             price_display = ' / '.join(prices) if prices else 'Цена не установлена'
             tariff_lines.append(f"• {escape_html(tariff['name'])} — {price_display}")
     tariff_text = '\n'.join(tariff_lines)
