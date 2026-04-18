@@ -1,6 +1,7 @@
 import logging
 import uuid
 from datetime import datetime
+from urllib.parse import urlparse
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command, CommandObject, StateFilter
@@ -28,6 +29,21 @@ from bot.utils.text import escape_html, safe_edit_or_send
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+
+def _sanitize_mini_app_url(url: str) -> str:
+    value = (url or "").strip()
+    if not value:
+        return ""
+    lowered = value.lower()
+    if "your_mini_app_url" in lowered:
+        return ""
+    parsed = urlparse(value)
+    if parsed.scheme not in ("http", "https"):
+        return ""
+    if not parsed.netloc:
+        return ""
+    return value
 
 @router.callback_query(F.data == "buy_key")
 async def buy_key_handler(callback: CallbackQuery):
@@ -107,6 +123,7 @@ async def buy_key_handler(callback: CallbackQuery):
     sale = get_flash_sale_state()
     text_override = build_buy_key_text(prepayment_text, sale, format_remaining_hms)
     mini_app_url = (MINI_APP_URL or "").strip() or (get_setting("mini_app_url", "") or "").strip()
+    mini_app_url = _sanitize_mini_app_url(mini_app_url)
     if mini_app_url:
         text_override = "🚀 <b>Рекомендуем использовать Mini App:</b> это основной и самый удобный способ оплаты.\n\n" + text_override
 

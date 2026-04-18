@@ -4,6 +4,7 @@
 Обрабатывает вход в админку и главное меню.
 """
 import logging
+from urllib.parse import urlparse
 from aiogram import Router, F
 from aiogram.types import CallbackQuery
 from aiogram.types import MenuButtonCommands, MenuButtonWebApp, Message, WebAppInfo
@@ -29,10 +30,26 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+def _sanitize_mini_app_url(url: str) -> str:
+    value = (url or "").strip()
+    if not value:
+        return ""
+    lowered = value.lower()
+    if "your_mini_app_url" in lowered:
+        return ""
+    parsed = urlparse(value)
+    if parsed.scheme not in ("http", "https"):
+        return ""
+    if not parsed.netloc:
+        return ""
+    return value
+
+
 async def _sync_miniapp_menu_button(message: Message) -> None:
     mini_app_url = (getattr(app_config, "MINI_APP_URL", "") or "").strip()
     if not mini_app_url:
         mini_app_url = (get_setting("mini_app_url", "") or "").strip()
+    mini_app_url = _sanitize_mini_app_url(mini_app_url)
     mini_app_short_name = (getattr(app_config, "MINI_APP_SHORT_NAME", "Mini App") or "Mini App").strip()
 
     if mini_app_url:

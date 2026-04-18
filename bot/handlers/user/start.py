@@ -2,6 +2,7 @@ import logging
 import uuid
 import asyncio
 from datetime import datetime
+from urllib.parse import urlparse
 import config as app_config
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
@@ -18,6 +19,21 @@ from bot.utils.text import escape_html, safe_edit_or_send
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+
+def _sanitize_mini_app_url(url: str) -> str:
+    value = (url or "").strip()
+    if not value:
+        return ""
+    lowered = value.lower()
+    if "your_mini_app_url" in lowered:
+        return ""
+    parsed = urlparse(value)
+    if parsed.scheme not in ("http", "https"):
+        return ""
+    if not parsed.netloc:
+        return ""
+    return value
 
 def get_welcome_text(is_admin: bool=False) -> tuple:
     """Формирует приветственный текст с реальными тарифами из БД.
@@ -242,6 +258,7 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
     mini_app_url = (getattr(app_config, "MINI_APP_URL", "") or "").strip()
     if not mini_app_url:
         mini_app_url = (get_setting("mini_app_url", "") or "").strip()
+    mini_app_url = _sanitize_mini_app_url(mini_app_url)
     show_mini_app = bool(mini_app_url)
     kb = main_menu_kb(
         is_admin=is_admin,
@@ -275,6 +292,7 @@ async def callback_start(callback: CallbackQuery, state: FSMContext):
     mini_app_url = (getattr(app_config, "MINI_APP_URL", "") or "").strip()
     if not mini_app_url:
         mini_app_url = (get_setting("mini_app_url", "") or "").strip()
+    mini_app_url = _sanitize_mini_app_url(mini_app_url)
     show_mini_app = bool(mini_app_url)
     kb = main_menu_kb(
         is_admin=is_admin,
