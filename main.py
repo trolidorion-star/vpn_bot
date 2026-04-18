@@ -17,6 +17,7 @@ from config import BOT_TOKEN
 import config as app_config
 from database.migrations import run_migrations
 from database.db_transactions import ensure_transactions_table
+from bot.utils.mini_app import resolve_mini_app_url
 from bot.services.vpn_api import close_all_clients
 from bot.services.split_config_server import start_split_config_server, stop_split_config_server
 from bot.services.platega_webhook_server import (
@@ -70,6 +71,7 @@ logger = logging.getLogger(__name__)
 async def _setup_native_commands(bot: Bot) -> None:
     commands = [
         BotCommand(command="start", description="Главное меню"),
+        BotCommand(command="app", description="Открыть Mini App"),
         BotCommand(command="support", description="Поддержка"),
     ]
     try:
@@ -79,7 +81,7 @@ async def _setup_native_commands(bot: Bot) -> None:
 
 
 async def _sync_menu_button(bot: Bot) -> None:
-    mini_app_url = (getattr(app_config, "MINI_APP_URL", "") or "").strip()
+    mini_app_url = resolve_mini_app_url()
     mini_app_short_name = (getattr(app_config, "MINI_APP_SHORT_NAME", "Mini App") or "Mini App").strip()
 
     if mini_app_url:

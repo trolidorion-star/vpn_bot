@@ -2,8 +2,6 @@ import logging
 import uuid
 import asyncio
 from datetime import datetime
-from urllib.parse import urlparse
-import config as app_config
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command, CommandObject, StateFilter
@@ -15,25 +13,11 @@ from database.requests import get_or_create_user, is_user_banned, get_all_server
 from bot.keyboards.user import main_menu_kb
 from bot.states.user_states import RenameKey, ReplaceKey
 from bot.utils.text import escape_html, safe_edit_or_send
+from bot.utils.mini_app import resolve_mini_app_url
 
 logger = logging.getLogger(__name__)
 
 router = Router()
-
-
-def _sanitize_mini_app_url(url: str) -> str:
-    value = (url or "").strip()
-    if not value:
-        return ""
-    lowered = value.lower()
-    if "your_mini_app_url" in lowered:
-        return ""
-    parsed = urlparse(value)
-    if parsed.scheme not in ("http", "https"):
-        return ""
-    if not parsed.netloc:
-        return ""
-    return value
 
 def get_welcome_text(is_admin: bool=False) -> tuple:
     """Формирует приветственный текст с реальными тарифами из БД.
@@ -255,10 +239,7 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
     from database.requests import is_trial_enabled, get_trial_tariff_id, has_used_trial
     show_trial = is_trial_enabled() and get_trial_tariff_id() is not None and (not has_used_trial(user_id))
     show_referral = is_referral_enabled()
-    mini_app_url = (getattr(app_config, "MINI_APP_URL", "") or "").strip()
-    if not mini_app_url:
-        mini_app_url = (get_setting("mini_app_url", "") or "").strip()
-    mini_app_url = _sanitize_mini_app_url(mini_app_url)
+    mini_app_url = resolve_mini_app_url()
     show_mini_app = bool(mini_app_url)
     kb = main_menu_kb(
         is_admin=is_admin,
@@ -289,10 +270,7 @@ async def callback_start(callback: CallbackQuery, state: FSMContext):
     from database.requests import is_trial_enabled, get_trial_tariff_id, has_used_trial
     show_trial = is_trial_enabled() and get_trial_tariff_id() is not None and (not has_used_trial(user_id))
     show_referral = is_referral_enabled()
-    mini_app_url = (getattr(app_config, "MINI_APP_URL", "") or "").strip()
-    if not mini_app_url:
-        mini_app_url = (get_setting("mini_app_url", "") or "").strip()
-    mini_app_url = _sanitize_mini_app_url(mini_app_url)
+    mini_app_url = resolve_mini_app_url()
     show_mini_app = bool(mini_app_url)
     kb = main_menu_kb(
         is_admin=is_admin,
@@ -314,6 +292,33 @@ async def cmd_help(message: Message, state: FSMContext):
     cancel_buy_key_timer(message.from_user.id)
     await state.clear()
     await show_help(message, is_callback=False)
+
+
+@router.message(Command('app'))
+async def cmd_app(message: Message):
+    """Быстрый вход в Mini App."""
+    from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, WebAppInfo
+
+    mini_app_url = resolve_mini_app_url()
+    if not mini_app_url:
+        await safe_edit_or_send(
+            message,
+            "🚫 Mini App пока не настроен. Обратитесь к администратору.",
+            force_new=True,
+        )
+        return
+
+    kb = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="🚀 Открыть Mini App", web_app=WebAppInfo(url=mini_app_url))]
+        ]
+    )
+    await safe_edit_or_send(
+        message,
+        "🚀 <b>Mini App — основной способ оплаты и управления.</b>\n\nОткройте приложение по кнопке ниже.",
+        reply_markup=kb,
+        force_new=True,
+    )
 
 async def show_help(message: 'Message', is_callback: bool = False):
     """Общая логика для показа справки.
