@@ -83,23 +83,35 @@ def _webhook_token() -> str:
     return os.getenv("PLATEGA_WEBHOOK_TOKEN", "").strip()
 
 
+def _get_header(request: web.Request, *names: str) -> str:
+    for name in names:
+        value = (request.headers.get(name) or "").strip()
+        if value:
+            return value
+    return ""
+
+
 def _verify_headers(request: web.Request) -> bool:
+    # Prefer explicit webhook token when configured.
+    expected_token = _webhook_token()
+    if expected_token:
+        got_token = (
+            _get_header(request, "X-Webhook-Token", "X-WebhookToken", "Webhook-Token", "X-Token")
+            or (request.query.get("token") or "").strip()
+        )
+        if got_token and hmac.compare_digest(got_token, expected_token):
+            return True
+
     expected_merchant = _merchant_id()
     expected_secret = _api_key()
-    if not expected_merchant or not expected_secret:
-        return False
+    if expected_merchant and expected_secret:
+        # Support common header variants from provider/proxies.
+        got_merchant = _get_header(request, "X-MerchantId", "X-Merchant-ID", "MerchantId", "merchantId")
+        got_secret = _get_header(request, "X-Secret", "X-Api-Key", "X-ApiKey", "Api-Key")
+        return hmac.compare_digest(got_merchant, expected_merchant) and hmac.compare_digest(got_secret, expected_secret)
 
-    got_merchant = (request.headers.get("X-MerchantId") or "").strip()
-    got_secret = (request.headers.get("X-Secret") or "").strip()
-    header_ok = hmac.compare_digest(got_merchant, expected_merchant) and hmac.compare_digest(got_secret, expected_secret)
-    if not header_ok:
-        return False
-
-    expected_token = _webhook_token()
-    if not expected_token:
-        return True
-    got_token = (request.headers.get("X-Webhook-Token") or request.query.get("token") or "").strip()
-    return hmac.compare_digest(got_token, expected_token)
+    # If only token is configured, we already validated above (if present).
+    return False
 
 
 async def _notify_user(order: dict, text: str) -> None:
@@ -184,6 +196,12 @@ def _parse_tx_payload(tx: Optional[dict]) -> dict:
 
 async def _platega_webhook_handler(request: web.Request) -> web.Response:
     if not _verify_headers(request):
+        logger.warning(
+            "Platega webhook auth failed: has_token=%s has_merchant=%s has_secret=%s",
+            bool(_get_header(request, "X-Webhook-Token", "X-WebhookToken", "Webhook-Token", "X-Token") or (request.query.get("token") or "").strip()),
+            bool(_get_header(request, "X-MerchantId", "X-Merchant-ID", "MerchantId", "merchantId")),
+            bool(_get_header(request, "X-Secret", "X-Api-Key", "X-ApiKey", "Api-Key")),
+        )
         return web.Response(status=403, text="Forbidden")
 
     try:
@@ -268,8 +286,8 @@ async def start_platega_webhook_server(bot) -> None:
         logger.info("Platega webhook server disabled by PLATEGA_WEBHOOK_ENABLED")
         return
 
-    if not _merchant_id() or not _api_key():
-        logger.info("Platega webhook server disabled: missing PLATEGA_MERCHANT_ID / PLATEGA_API_KEY")
+    if not _webhook_token() and (not _merchant_id() or not _api_key()):
+        logger.info("Platega webhook server disabled: missing auth config (PLATEGA_WEBHOOK_TOKEN or PLATEGA_MERCHANT_ID/PLATEGA_API_KEY)")
         return
 
     _bot = bot
