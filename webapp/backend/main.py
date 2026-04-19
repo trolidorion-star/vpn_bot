@@ -34,6 +34,7 @@ from bot.services.ru_bypass import get_default_ru_exclusions
 from bot.services.split_config_settings import get_split_config_public_base_url
 from bot.services.key_limits import get_key_connection_limit
 from bot.services.vpn_api import get_client
+from bot.services.vpn_api import push_key_to_panel
 from bot.utils.key_generator import generate_link
 from config import ADMIN_IDS
 from database.connection import get_db
@@ -69,6 +70,7 @@ from database.requests import (
     get_referral_stats,
     get_setting,
     get_user_by_referral_code,
+    get_user_referrer,
     get_tariff_by_id,
     get_user_trial_bonus_hours,
     get_user_balance,
@@ -968,25 +970,27 @@ def health() -> dict[str, Any]:
 def auth_session(payload: SessionRequest) -> dict[str, Any]:
     tg_user = _verify_telegram_init_data(payload.initData)
     telegram_id = int(tg_user["id"])
-    user, is_new = get_or_create_user(telegram_id, tg_user.get("username"))
+    user, _ = get_or_create_user(telegram_id, tg_user.get("username"))
 
     start_param = _extract_start_param_from_init_data(payload.initData)
     ref_code = _extract_ref_code(start_param)
-    if is_new and ref_code:
+    if ref_code:
         referrer = get_user_by_referral_code(ref_code)
         if referrer and int(referrer.get("id") or 0) != int(user["id"]):
             try:
-                bound = set_user_referrer(int(user["id"]), int(referrer["id"]))
-                if bound:
+                referrer_id = int(referrer["id"])
+                bound_now = set_user_referrer(int(user["id"]), referrer_id)
+                already_bound_to_same = int(get_user_referrer(int(user["id"])) or 0) == referrer_id
+                if bound_now or already_bound_to_same:
                     applied = apply_referrer_offer_to_user(
                         referred_user_id=int(user["id"]),
                         referred_telegram_id=telegram_id,
-                        referrer_user_id=int(referrer["id"]),
+                        referrer_user_id=referrer_id,
                     )
                     logger.info(
-                        "MiniApp referral bound: user_id=%s referrer_id=%s promo_applied=%s trial_bonus_hours=%s",
+                        "MiniApp referral offer applied: user_id=%s referrer_id=%s promo_applied=%s trial_bonus_hours=%s",
                         user["id"],
-                        referrer["id"],
+                        referrer_id,
                         bool(applied.get("promo_applied")),
                         int(applied.get("trial_bonus_hours") or 0),
                     )
@@ -1154,6 +1158,11 @@ async def activate_trial(session: dict[str, Any] = Depends(_current_session)) ->
         traffic_limit=traffic_limit_bytes,
     )
     set_key_expiration_hours(int(key_id), effective_hours)
+    try:
+        await _ensure_key_provisioned_for_user(telegram_id, int(key_id))
+        await push_key_to_panel(int(key_id))
+    except Exception as exc:
+        logger.warning("MiniApp trial: failed to sync trial expiry to panel for key_id=%s: %s", key_id, exc)
     _, order_id = create_pending_order(
         user_id=internal_user_id,
         tariff_id=int(tariff_id),

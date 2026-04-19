@@ -792,11 +792,25 @@ async def admin_referrer_view(callback: CallbackQuery):
     offer_promo = str(offer.get("promo_code") or "").strip().upper()
     offer_bonus_hours = int(offer.get("trial_bonus_hours") or 0)
     offer_active = int(offer.get("is_active") or 0) == 1
+    offer_promo_text = "not set"
+    if offer_promo:
+        promo = get_promocode(offer_promo)
+        if promo and int(promo.get("is_active") or 0) == 1:
+            discount_type = str(promo.get("discount_type") or "").upper()
+            discount_value = int(promo.get("discount_value") or 0)
+            if discount_type == "PERCENT":
+                offer_promo_text = f"{offer_promo} (-{discount_value}%)"
+            elif discount_type == "FIXED":
+                offer_promo_text = f"{offer_promo} (-{discount_value} RUB)"
+            else:
+                offer_promo_text = offer_promo
+        else:
+            offer_promo_text = f"{offer_promo} (inactive/not found)"
 
     lines.append("")
     lines.append("<b>Персональный медиа-оффер:</b>")
     lines.append(f"Статус: <b>{'активен' if offer_active else 'отключён'}</b>")
-    lines.append(f"Автопромокод: <code>{escape_html(offer_promo or 'не задан')}</code>")
+    lines.append(f"Автопромокод: <code>{escape_html(offer_promo_text)}</code>")
     lines.append(f"Бонус к trial: <b>{offer_bonus_hours} ч</b>")
 
     from aiogram.types import InlineKeyboardButton

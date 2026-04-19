@@ -16,6 +16,7 @@ from database.requests import (
     get_setting,
     is_referral_enabled,
     get_user_by_referral_code,
+    get_user_referrer,
     set_user_referrer,
     apply_referrer_offer_to_user,
 )
@@ -239,22 +240,25 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
                 logger.exception(f'Ошибка обработки платежа: {e}')
                 await safe_edit_or_send(message, '❌ Произошла ошибка при обработке платежа.', force_new=True)
         return
-    if is_new and args and (args.startswith('ref_') or args.startswith('ref')):
+    if args and (args.startswith('ref_') or args.startswith('ref')):
         ref_code = args[4:] if args.startswith('ref_') else args[3:]
         referrer = get_user_by_referral_code(ref_code)
         if referrer and referrer['id'] != user['id']:
-            if set_user_referrer(user['id'], referrer['id']):
+            referrer_id = int(referrer['id'])
+            bound_now = set_user_referrer(user['id'], referrer_id)
+            already_bound_to_same = int(get_user_referrer(int(user['id'])) or 0) == referrer_id
+            if bound_now or already_bound_to_same:
                 logger.info(f"User {user_id} привязан к рефереру {referrer['telegram_id']}")
                 try:
                     applied = apply_referrer_offer_to_user(
                         referred_user_id=int(user['id']),
                         referred_telegram_id=int(user_id),
-                        referrer_user_id=int(referrer['id']),
+                        referrer_user_id=referrer_id,
                     )
                     logger.info(
                         "Referral offer applied: user_id=%s referrer_id=%s promo=%s trial_bonus=%s",
                         user['id'],
-                        referrer['id'],
+                        referrer_id,
                         bool(applied.get('promo_applied')),
                         int(applied.get('trial_bonus_hours') or 0),
                     )
