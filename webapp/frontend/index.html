@@ -567,6 +567,8 @@
     const COMPACT_LISTS_KEY = 'bobrik-miniapp-compact-lists-v1';
     const THEME_VARIANT_KEY = 'bobrik-miniapp-theme-variant-v1';
     const PENDING_PAYMENT_KEY = 'bobrik-miniapp-pending-payment-v1';
+    const RECENT_PAID_KEY = 'bobrik-miniapp-recent-paid-v1';
+    const RECENT_PAID_TTL_MS = 15 * 60 * 1000;
     const SUPPORT_QUICK_ISSUES = [
       'Проблема с подключением',
       'Не обновляется подписка после оплаты',
@@ -680,6 +682,35 @@
           return;
         }
         localStorage.setItem(PENDING_PAYMENT_KEY, JSON.stringify(payload));
+      } catch {}
+    };
+
+    const loadRecentPaidEntry = () => {
+      try {
+        const raw = localStorage.getItem(RECENT_PAID_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') return null;
+        const orderId = String(parsed.order_id || '').trim();
+        if (!orderId) return null;
+        const showUntil = Number(parsed.show_until || 0);
+        if (showUntil <= Date.now()) {
+          localStorage.removeItem(RECENT_PAID_KEY);
+          return null;
+        }
+        return parsed;
+      } catch {
+        return null;
+      }
+    };
+
+    const saveRecentPaidEntry = (payload) => {
+      try {
+        if (!payload) {
+          localStorage.removeItem(RECENT_PAID_KEY);
+          return;
+        }
+        localStorage.setItem(RECENT_PAID_KEY, JSON.stringify(payload));
       } catch {}
     };
 
@@ -973,6 +1004,8 @@
       const [pendingPayment, setPendingPayment] = useState(loadPendingPayment());
       const [paymentResult, setPaymentResult] = useState(null);
       const [paymentResultResolving, setPaymentResultResolving] = useState(false);
+      const [paymentResultRetryCount, setPaymentResultRetryCount] = useState(0);
+      const [recentPaidEntry, setRecentPaidEntry] = useState(loadRecentPaidEntry());
       const [installPlatform, setInstallPlatform] = useState('android');
       const [paymentPolling, setPaymentPolling] = useState(false);
       const [isScrollOptimizing, setIsScrollOptimizing] = useState(false);
@@ -1626,6 +1659,43 @@
         resolvePaymentResultKeyLink(paymentResult, { silent: true }).catch(() => null);
       }, [paymentResult?.order_id, paymentResult?.key_id, token]);
 
+      useEffect(() => {
+        if (!paymentResult?.order_id) return;
+        const existing = loadRecentPaidEntry();
+        const keepUntil = Number(existing?.show_until || 0) > Date.now()
+          ? Number(existing.show_until)
+          : (Date.now() + RECENT_PAID_TTL_MS);
+        const payload = {
+          order_id: String(paymentResult.order_id || ''),
+          key_id: Number(paymentResult.key_id || 0) || null,
+          key_link: String(paymentResult.key_link || '').trim(),
+          key_name: String(paymentResult.key_name || '').trim(),
+          expires_at: paymentResult.expires_at || null,
+          show_until: keepUntil,
+        };
+        setRecentPaidEntry(payload);
+        saveRecentPaidEntry(payload);
+      }, [paymentResult?.order_id, paymentResult?.key_id, paymentResult?.key_link, paymentResult?.key_name, paymentResult?.expires_at]);
+
+      useEffect(() => {
+        const sync = () => setRecentPaidEntry(loadRecentPaidEntry());
+        sync();
+        const timer = setInterval(sync, 15000);
+        return () => clearInterval(timer);
+      }, []);
+
+      useEffect(() => {
+        if (!paymentResult || !token) return;
+        const hasLink = String(paymentResult?.key_link || '').trim().length > 0;
+        if (hasLink || paymentResultResolving) return;
+        if (paymentResultRetryCount >= 14) return;
+        const timer = setTimeout(() => {
+          resolvePaymentResultKeyLink(paymentResult, { silent: true }).catch(() => null);
+          setPaymentResultRetryCount((prev) => prev + 1);
+        }, 1200);
+        return () => clearTimeout(timer);
+      }, [paymentResult?.order_id, paymentResult?.key_id, paymentResult?.key_link, paymentResultResolving, paymentResultRetryCount, token]);
+
       async function copyText(text, okText = 'Скопировано') {
         try {
           await navigator.clipboard.writeText(text || '');
@@ -1750,9 +1820,24 @@
         }
       }
 
+      function openPaymentResult(details) {
+        if (!details) return;
+        const normalized = {
+          order_id: String(details.order_id || '').trim(),
+          key_id: Number(details.key_id || 0) || null,
+          key_link: String(details.key_link || '').trim(),
+          key_name: String(details.key_name || '').trim(),
+          expires_at: details.expires_at || null,
+        };
+        setPaymentResult(normalized);
+        setPaymentResultResolving(false);
+        setPaymentResultRetryCount(0);
+      }
+
       const closePaymentResult = () => {
         setPaymentResult(null);
         setPaymentResultResolving(false);
+        setPaymentResultRetryCount(0);
       };
 
       const clearPendingPayment = () => {
@@ -1803,7 +1888,7 @@
             key_name: String(order.key_name || '').trim(),
             expires_at: order.expires_at || null,
           };
-          setPaymentResult(details);
+          openPaymentResult(details);
           clearPendingPayment();
           await refreshData(token, { silent: true });
           if (details.key_id) setSelectedKeyId(details.key_id);
@@ -1829,7 +1914,7 @@
             key_name: String(data.key_name || '').trim(),
             expires_at: data.expires_at || null,
           };
-          setPaymentResult(details);
+          openPaymentResult(details);
           clearPendingPayment();
           await refreshData(token, { silent: true });
           if (details.key_id) {
@@ -2091,6 +2176,7 @@
 
       function renderDashboard() {
         const totalPct = pct(totalTraffic.used, totalTraffic.limit);
+        const hasRecentPaid = Boolean(recentPaidEntry?.order_id && Number(recentPaidEntry?.show_until || 0) > Date.now());
         return (
           <div className="space-y-3 animate-in">
             <div className="desktop-grid-2">
@@ -2136,6 +2222,14 @@
                 <button onClick={impact(() => copyMainKey())} disabled={!token} className="rounded-2xl bg-accent px-3 py-3 text-sm font-semibold text-black disabled:opacity-40">Скопировать ключ</button>
                 <button onClick={impact(async () => { await refreshData(token); showToast('Данные обновлены'); }, 'medium')} className="rounded-2xl border border-white/15 px-3 py-3 text-sm">Обновить</button>
               </div>
+              {hasRecentPaid && (
+                <button
+                  onClick={impact(() => openPaymentResult(recentPaidEntry), 'light')}
+                  className="mt-2 w-full rounded-2xl border border-ok/35 bg-ok/15 px-3 py-2.5 text-sm text-emerald-100"
+                >
+                  VPN куплен • Открыть инструкцию и ключ
+                </button>
+              )}
             </div>
 
             <div className="rounded-card glass premium-card p-4">
@@ -2805,10 +2899,10 @@
               <div className="rounded-xl border border-white/10 bg-surfaceSoft/50 p-2.5">
                 <div className="text-sm font-medium">1. Установите Happ</div>
                 <div className="mt-1 text-xs text-muted readable">Откройте установку под вашу платформу.</div>
-                <div className="mt-2 grid grid-cols-3 gap-2">
-                  <button onClick={impact(() => openExternal(links.store), 'light')} className="rounded-xl border border-white/15 px-3 py-2 text-[11px]">Открыть</button>
-                  <button onClick={impact(() => openExternal(links.alt), 'light')} className="rounded-xl border border-white/15 px-3 py-2 text-[11px]">Альтернатива</button>
-                  <button onClick={impact(() => openExternal(HAPP_OFFICIAL_URL), 'light')} className="rounded-xl border border-white/15 px-3 py-2 text-[11px]">Сайт Happ</button>
+                <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  <button onClick={impact(() => openExternal(links.store), 'light')} className="rounded-xl border border-white/15 px-3 py-2 text-[11px]">Store</button>
+                  <button onClick={impact(() => openExternal(links.alt), 'light')} className="rounded-xl border border-white/15 px-3 py-2 text-[11px]">Резерв</button>
+                  <button onClick={impact(() => openExternal(HAPP_OFFICIAL_URL), 'light')} className="rounded-xl border border-white/15 px-3 py-2 text-[11px]">happ.su</button>
                 </div>
               </div>
               <div className="rounded-xl border border-white/10 bg-surfaceSoft/50 p-2.5">
@@ -2865,9 +2959,14 @@
       function renderPaymentResultModal() {
         if (!paymentResult) return null;
         const keyLink = String(paymentResult?.key_link || '').trim();
+        const linkStatusText = keyLink
+          ? keyLink
+          : ((paymentResultResolving || paymentResultRetryCount < 14)
+              ? 'Активируем ссылку ключа...'
+              : 'Ссылка пока недоступна. Нажмите "Обновить ключ".');
         return (
           <div className="fixed inset-0 z-40 bg-black/70" onClick={closePaymentResult}>
-            <div className="absolute inset-x-0 bottom-0 rounded-t-[26px] glass border-t border-white/10 p-4 modal-sheet desktop-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="absolute inset-x-0 bottom-0 max-h-[88vh] overflow-y-auto overscroll-contain rounded-t-[26px] glass border-t border-white/10 p-4 pb-[calc(14px+env(safe-area-inset-bottom,0px))] modal-sheet desktop-modal" onClick={(event) => event.stopPropagation()}>
               <div className="mx-auto mb-3 h-1.5 w-14 rounded-full bg-white/20"></div>
               <div className="text-lg font-semibold">Оплата подтверждена</div>
               <div className="mt-1 text-xs text-muted readable">Ключ и инструкция готовы. Подключитесь в пару шагов.</div>
@@ -2879,7 +2978,7 @@
                   <div className="mt-1 text-xs text-muted">Истекает: {fmtDate(paymentResult.expires_at)}</div>
                 )}
                 <div className="mt-2 rounded-xl border border-white/10 bg-surfaceSoft/60 px-3 py-2 text-xs mono break-all">
-                  {keyLink || (paymentResultResolving ? 'Ссылка ключа подгружается...' : 'Ссылка ключа пока недоступна')}
+                  {linkStatusText}
                 </div>
                 <div className="mt-2 grid grid-cols-2 gap-2">
                   <button
