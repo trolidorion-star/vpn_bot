@@ -16,3 +16,4 @@ from database.db_settings import *
 from database.db_support import *
 from database.db_transactions import *
 from database.db_promocodes import *
+from database.db_referral_offers import *

@@ -9,7 +9,16 @@ from aiogram.fsm.context import FSMContext
 from aiogram.exceptions import TelegramForbiddenError
 from config import ADMIN_IDS
 from bot.services.buy_key_timer import cancel_buy_key_timer
-from database.requests import get_or_create_user, is_user_banned, get_all_servers, get_setting, is_referral_enabled, get_user_by_referral_code, set_user_referrer
+from database.requests import (
+    get_or_create_user,
+    is_user_banned,
+    get_all_servers,
+    get_setting,
+    is_referral_enabled,
+    get_user_by_referral_code,
+    set_user_referrer,
+    apply_referrer_offer_to_user,
+)
 from bot.keyboards.user import main_menu_kb
 from bot.states.user_states import RenameKey, ReplaceKey
 from bot.utils.text import escape_html, safe_edit_or_send
@@ -236,6 +245,21 @@ async def cmd_start(message: Message, state: FSMContext, command: CommandObject)
         if referrer and referrer['id'] != user['id']:
             if set_user_referrer(user['id'], referrer['id']):
                 logger.info(f"User {user_id} привязан к рефереру {referrer['telegram_id']}")
+                try:
+                    applied = apply_referrer_offer_to_user(
+                        referred_user_id=int(user['id']),
+                        referred_telegram_id=int(user_id),
+                        referrer_user_id=int(referrer['id']),
+                    )
+                    logger.info(
+                        "Referral offer applied: user_id=%s referrer_id=%s promo=%s trial_bonus=%s",
+                        user['id'],
+                        referrer['id'],
+                        bool(applied.get('promo_applied')),
+                        int(applied.get('trial_bonus_hours') or 0),
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to apply referral offer for user_id=%s: %s", user['id'], exc)
     from database.requests import is_trial_enabled, get_trial_tariff_id, has_used_trial
     show_trial = is_trial_enabled() and get_trial_tariff_id() is not None and (not has_used_trial(user_id))
     show_referral = is_referral_enabled()

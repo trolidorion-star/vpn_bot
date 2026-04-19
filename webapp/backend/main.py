@@ -38,6 +38,7 @@ from bot.utils.key_generator import generate_link
 from config import ADMIN_IDS
 from database.connection import get_db
 from database.requests import (
+    apply_referrer_offer_to_user,
     apply_promocode_to_order,
     add_key_exclusion_for_user,
     add_ticket_message,
@@ -49,6 +50,9 @@ from database.requests import (
     get_promocode,
     create_or_update_transaction,
     create_pending_order,
+    create_initial_vpn_key,
+    complete_order,
+    consume_user_trial_bonus_hours,
     ensure_user_referral_code,
     get_active_referral_levels,
     get_all_tariffs,
@@ -64,7 +68,9 @@ from database.requests import (
     get_referral_reward_type,
     get_referral_stats,
     get_setting,
+    get_user_by_referral_code,
     get_tariff_by_id,
+    get_user_trial_bonus_hours,
     get_user_balance,
     get_user_keys_for_display,
     get_trial_tariff_id,
@@ -72,6 +78,9 @@ from database.requests import (
     is_miniapp_enabled,
     is_referral_enabled,
     is_trial_enabled,
+    mark_trial_used,
+    set_key_expiration_hours,
+    set_user_referrer,
     set_user_active_promocode,
     set_miniapp_enabled,
     update_key_custom_name,
@@ -290,6 +299,23 @@ def _verify_telegram_init_data(init_data: str) -> dict[str, Any]:
     if not isinstance(user, dict) or "id" not in user:
         raise HTTPException(status_code=401, detail="Invalid Telegram user")
     return user
+
+
+def _extract_start_param_from_init_data(init_data: str) -> str:
+    normalized = str(init_data or "").strip()
+    if normalized.startswith("?"):
+        normalized = normalized[1:]
+    parsed = dict(parse_qsl(normalized, keep_blank_values=True))
+    return str(parsed.get("start_param") or "").strip()
+
+
+def _extract_ref_code(start_param: str) -> str:
+    raw = str(start_param or "").strip()
+    if raw.startswith("ref_"):
+        return raw[4:].strip()
+    if raw.startswith("ref"):
+        return raw[3:].strip()
+    return ""
 
 
 def _create_session(tg_user: dict[str, Any]) -> str:
@@ -805,6 +831,7 @@ def _serialize_user_info(telegram_id: int, username: Optional[str]) -> dict[str,
     trial_tariff_id = get_trial_tariff_id()
     trial_used = bool(has_used_trial(telegram_id))
     trial_duration_hours = int(get_setting("trial_duration_hours_override", "1") or "1")
+    trial_bonus_hours = get_user_trial_bonus_hours(int(user["id"]))
     trial_tariff_name = None
     if trial_tariff_id:
         trial_tariff = get_tariff_by_id(int(trial_tariff_id))
@@ -843,6 +870,8 @@ def _serialize_user_info(telegram_id: int, username: Optional[str]) -> dict[str,
             "tariff_id": int(trial_tariff_id) if trial_tariff_id else None,
             "tariff_name": trial_tariff_name,
             "duration_hours": trial_duration_hours,
+            "bonus_hours": int(trial_bonus_hours or 0),
+            "effective_duration_hours": int(max(0, trial_duration_hours + int(trial_bonus_hours or 0))),
         },
     }
 
@@ -938,11 +967,37 @@ def health() -> dict[str, Any]:
 @app.post("/api/auth/session")
 def auth_session(payload: SessionRequest) -> dict[str, Any]:
     tg_user = _verify_telegram_init_data(payload.initData)
+    telegram_id = int(tg_user["id"])
+    user, is_new = get_or_create_user(telegram_id, tg_user.get("username"))
+
+    start_param = _extract_start_param_from_init_data(payload.initData)
+    ref_code = _extract_ref_code(start_param)
+    if is_new and ref_code:
+        referrer = get_user_by_referral_code(ref_code)
+        if referrer and int(referrer.get("id") or 0) != int(user["id"]):
+            try:
+                bound = set_user_referrer(int(user["id"]), int(referrer["id"]))
+                if bound:
+                    applied = apply_referrer_offer_to_user(
+                        referred_user_id=int(user["id"]),
+                        referred_telegram_id=telegram_id,
+                        referrer_user_id=int(referrer["id"]),
+                    )
+                    logger.info(
+                        "MiniApp referral bound: user_id=%s referrer_id=%s promo_applied=%s trial_bonus_hours=%s",
+                        user["id"],
+                        referrer["id"],
+                        bool(applied.get("promo_applied")),
+                        int(applied.get("trial_bonus_hours") or 0),
+                    )
+            except Exception as exc:
+                logger.warning("MiniApp referral bind failed for telegram_id=%s: %s", telegram_id, exc)
+
     session_token = _create_session(tg_user)
     return {
         "ok": True,
         "token": session_token,
-        "user": _serialize_user_info(int(tg_user["id"]), tg_user.get("username")),
+        "user": _serialize_user_info(telegram_id, tg_user.get("username")),
     }
 
 
@@ -1064,6 +1119,70 @@ def get_tariffs(session: dict[str, Any] = Depends(_current_session)) -> dict[str
             }
         )
     return {"ok": True, "data": data}
+
+
+@app.post("/api/trial/activate")
+async def activate_trial(session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
+    _ensure_miniapp_enabled()
+    telegram_id = int(session["telegram_id"])
+    if not is_trial_enabled():
+        raise HTTPException(status_code=400, detail="Trial is disabled")
+
+    tariff_id = get_trial_tariff_id()
+    if not tariff_id:
+        raise HTTPException(status_code=400, detail="Trial tariff is not configured")
+
+    if has_used_trial(telegram_id):
+        raise HTTPException(status_code=400, detail="Trial already used")
+
+    tariff = get_tariff_by_id(int(tariff_id))
+    if not tariff:
+        raise HTTPException(status_code=404, detail="Trial tariff not found")
+
+    user, _ = get_or_create_user(telegram_id, session.get("username"))
+    internal_user_id = int(user["id"])
+    trial_hours = int(get_setting("trial_duration_hours_override", "1") or "1")
+    bonus_hours = consume_user_trial_bonus_hours(internal_user_id)
+    effective_hours = max(1, int(trial_hours) + int(bonus_hours or 0))
+
+    duration_days = int(tariff.get("duration_days") or 1)
+    traffic_limit_bytes = int((tariff.get("traffic_limit_gb") or 0) * (1024 ** 3))
+    key_id = create_initial_vpn_key(
+        internal_user_id,
+        int(tariff_id),
+        duration_days,
+        traffic_limit=traffic_limit_bytes,
+    )
+    set_key_expiration_hours(int(key_id), effective_hours)
+    _, order_id = create_pending_order(
+        user_id=internal_user_id,
+        tariff_id=int(tariff_id),
+        payment_type="trial",
+        vpn_key_id=int(key_id),
+    )
+    complete_order(order_id)
+    mark_trial_used(internal_user_id)
+
+    key_link = ""
+    try:
+        key_link = await _resolve_key_link_for_key(telegram_id, int(key_id))
+    except Exception as exc:
+        logger.warning("MiniApp trial: failed to resolve key link for key_id=%s: %s", key_id, exc)
+    key = get_key_details_for_user(int(key_id), telegram_id)
+
+    return {
+        "ok": True,
+        "data": {
+            "order_id": order_id,
+            "key_id": int(key_id),
+            "key_link": key_link or "",
+            "key_name": (key or {}).get("display_name"),
+            "expires_at": (key or {}).get("expires_at"),
+            "base_hours": trial_hours,
+            "bonus_hours": int(bonus_hours or 0),
+            "effective_hours": int(effective_hours),
+        },
+    }
 
 
 @app.post("/api/create_invoice")
@@ -1331,6 +1450,7 @@ def referral_data(session: dict[str, Any] = Depends(_current_session)) -> dict[s
 @app.get("/api/support")
 def get_support_ticket(session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
     _ensure_miniapp_enabled()
+    telegram_id = int(session["telegram_id"])
     user, _ = get_or_create_user(telegram_id, session.get("username"))
     ticket = get_open_ticket_for_user(user["id"])
     messages: list[dict[str, Any]] = []

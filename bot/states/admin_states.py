@@ -46,6 +46,8 @@ class AdminStates(StatesGroup):
     referral_menu = State()          # Главное меню реферальной системы
     referral_level_edit = State()    # Редактирование уровня
     referral_bonus_edit = State()    # Редактирование фиксированного бонуса за реферала
+    referral_offer_promo_edit = State()  # Редактирование промокода оффера реферера
+    referral_offer_trial_bonus_edit = State()  # Редактирование trial-бонуса оффера реферера
     trial_hours_edit = State()       # Редактирование длительности trial в часах
     flash_sale_menu = State()        # Меню акции/скидок
     flash_sale_edit = State()        # Ввод значения для полей акции

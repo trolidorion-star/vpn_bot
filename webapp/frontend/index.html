@@ -2021,6 +2021,31 @@
         }
       }
 
+      async function activateTrialInMiniApp() {
+        if (!token) return;
+        setBusy(true);
+        try {
+          const response = await api('/api/trial/activate', { method: 'POST', token });
+          const data = response?.data || {};
+          if (data?.order_id) {
+            setPaymentResult({
+              order_id: String(data.order_id || ''),
+              key_id: Number(data.key_id || 0) || null,
+              key_link: String(data.key_link || '').trim(),
+              key_name: String(data.key_name || '').trim(),
+              expires_at: data.expires_at || null,
+            });
+          }
+          await refreshData(token, { silent: true });
+          const bonus = Number(data?.bonus_hours || 0);
+          showToast(bonus > 0 ? `Пробный период активирован (+${bonus} ч бонус)` : 'Пробный период активирован');
+        } catch (error) {
+          showToast(normalizeApiError(error), 'error');
+        } finally {
+          setBusy(false);
+        }
+      }
+
       async function toggleRuBypass(next) {
         if (!user?.key_id || !token) {
           showToast('Сначала создайте ключ', 'error');
@@ -2376,13 +2401,15 @@
                     <div className="mt-1 text-xs text-muted readable">
                       {trial?.duration_hours ? `Доступ на ${trial.duration_hours} ч` : 'Пробный период доступен'}
                       {trial?.tariff_name ? ` • ${trial.tariff_name}` : ''}
+                      {Number(trial?.bonus_hours || 0) > 0 ? ` • бонус +${Number(trial.bonus_hours)} ч` : ''}
                     </div>
                   </div>
                   <button
-                    onClick={impact(() => tg?.openLink?.('https://t.me/BobrikVPNbot'), 'light')}
+                    onClick={impact(() => activateTrialInMiniApp(), 'light')}
+                    disabled={busy}
                     className="rounded-xl border border-white/15 px-3 py-2 text-xs"
                   >
-                    Активировать в боте
+                    Активировать в Mini App
                   </button>
                 </div>
               </div>
