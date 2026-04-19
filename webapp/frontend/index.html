@@ -580,26 +580,27 @@
       { id: 'macos', title: 'macOS' },
       { id: 'linux', title: 'Linux' },
     ];
+    const HAPP_OFFICIAL_URL = 'https://www.happ.su/main/ru';
     const INSTALL_LINKS = {
       ios: {
-        store: 'https://apps.apple.com/app/happ-proxy-utility/id6504287215',
-        alt: 'https://github.com/Epodonios/happ/releases',
+        store: 'https://apps.apple.com/us/app/happ-proxy-utility/id6504287215',
+        alt: HAPP_OFFICIAL_URL,
       },
       android: {
         store: 'https://play.google.com/store/apps/details?id=com.happproxy',
-        alt: 'https://github.com/Epodonios/happ/releases',
+        alt: HAPP_OFFICIAL_URL,
       },
       windows: {
-        store: 'https://github.com/Epodonios/happ/releases',
-        alt: 'https://github.com/Epodonios/happ/releases',
+        store: 'https://github.com/Happ-proxy/happ-desktop/releases',
+        alt: HAPP_OFFICIAL_URL,
       },
       macos: {
-        store: 'https://github.com/Epodonios/happ/releases',
-        alt: 'https://github.com/Epodonios/happ/releases',
+        store: 'https://apps.apple.com/us/app/happ-proxy-utility/id6504287215',
+        alt: 'https://github.com/Happ-proxy/happ-desktop/releases',
       },
       linux: {
-        store: 'https://github.com/Epodonios/happ/releases',
-        alt: 'https://github.com/Epodonios/happ/releases',
+        store: 'https://github.com/Happ-proxy/happ-desktop/releases',
+        alt: HAPP_OFFICIAL_URL,
       },
     };
 
@@ -971,6 +972,7 @@
       const [checkoutUsePromo, setCheckoutUsePromo] = useState(true);
       const [pendingPayment, setPendingPayment] = useState(loadPendingPayment());
       const [paymentResult, setPaymentResult] = useState(null);
+      const [paymentResultResolving, setPaymentResultResolving] = useState(false);
       const [installPlatform, setInstallPlatform] = useState('android');
       const [paymentPolling, setPaymentPolling] = useState(false);
       const [isScrollOptimizing, setIsScrollOptimizing] = useState(false);
@@ -1589,8 +1591,8 @@
       useEffect(() => {
         if (!token || !pendingPayment?.order_id) return;
         runPendingPaymentPolling(String(pendingPayment.order_id), {
-          attempts: 30,
-          intervalMs: (performanceMode || isLowEndDevice) ? 5000 : 3500,
+          attempts: (performanceMode || isLowEndDevice) ? 14 : 18,
+          intervalMs: (performanceMode || isLowEndDevice) ? 3000 : 2200,
           silent: false,
         }).catch(() => null);
       }, [token, pendingPayment?.order_id]);
@@ -1603,8 +1605,8 @@
           if (!pending?.order_id) return;
           setPendingPayment(pending);
           runPendingPaymentPolling(String(pending.order_id), {
-            attempts: 12,
-            intervalMs: 3000,
+            attempts: 8,
+            intervalMs: 2200,
             silent: true,
           }).catch(() => null);
         };
@@ -1616,6 +1618,13 @@
         if (!token) return;
         recoverRecentPaidOrder({ silent: true }).catch(() => null);
       }, [token]);
+
+      useEffect(() => {
+        if (!paymentResult || !token) return;
+        const hasLink = String(paymentResult?.key_link || '').trim().length > 0;
+        if (hasLink) return;
+        resolvePaymentResultKeyLink(paymentResult, { silent: true }).catch(() => null);
+      }, [paymentResult?.order_id, paymentResult?.key_id, token]);
 
       async function copyText(text, okText = 'Скопировано') {
         try {
@@ -1743,12 +1752,42 @@
 
       const closePaymentResult = () => {
         setPaymentResult(null);
+        setPaymentResultResolving(false);
       };
 
       const clearPendingPayment = () => {
         setPendingPayment(null);
         savePendingPayment(null);
       };
+
+      async function resolvePaymentResultKeyLink(resultObj, { silent = false } = {}) {
+        const source = resultObj || paymentResult;
+        const keyId = Number(source?.key_id || 0);
+        if (!token || !keyId) return '';
+        if (String(source?.key_link || '').trim()) return String(source.key_link).trim();
+        setPaymentResultResolving(true);
+        try {
+          let link = '';
+          try {
+            const byId = await api(`/api/keys/${keyId}/link`, { token });
+            link = String(byId?.data?.key_link || '').trim();
+          } catch {}
+          if (!link) {
+            try {
+              const fallback = await api('/api/key_link', { token });
+              link = String(fallback?.data?.key_link || '').trim();
+            } catch {}
+          }
+          if (link) {
+            setPaymentResult((prev) => ({ ...(prev || source || {}), key_link: link }));
+            return link;
+          }
+          if (!silent) showToast('Ссылка ключа пока недоступна. Попробуйте кнопку "Обновить ключ".', 'error');
+          return '';
+        } finally {
+          setPaymentResultResolving(false);
+        }
+      }
 
       async function recoverRecentPaidOrder({ silent = false } = {}) {
         if (!token) return false;
@@ -1828,6 +1867,13 @@
             }
           }
           count += 1;
+          if (count % 3 === 0) {
+            const restoredEarly = await recoverRecentPaidOrder({ silent: true });
+            if (restoredEarly) {
+              setPaymentPolling(false);
+              return;
+            }
+          }
           if (count >= attempts) {
             setPaymentPolling(false);
             const restored = await recoverRecentPaidOrder({ silent: true });
@@ -2008,6 +2054,7 @@
         { id: 'ref', title: 'Рефералы', icon: '👥' },
         { id: 'support', title: 'Поддержка', icon: '💬', badge: supportUnread },
         { id: 'diag', title: 'Диагностика', icon: '🛰️' },
+        { id: 'setup', title: 'Установка', icon: '📲' },
         { id: 'service', title: 'Сервис', icon: '🧪' },
       ];
       const primaryTabIds = ['dashboard', 'plans', 'usage', 'support'];
@@ -2733,10 +2780,90 @@
         );
       }
 
-      function renderPaymentResultModal() {
-        if (!paymentResult) return null;
+      function renderInstallGuideSection({ keyLink = '', onCopyKey = null, compact = false } = {}) {
         const platform = installPlatform in INSTALL_LINKS ? installPlatform : 'android';
         const links = INSTALL_LINKS[platform] || INSTALL_LINKS.android;
+        const hasKey = String(keyLink || '').trim().length > 0;
+        return (
+          <div className="rounded-2xl border border-white/10 bg-surfaceSoft/55 p-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-sm font-semibold">Установка Happ</div>
+              <select
+                value={platform}
+                onChange={(event) => setInstallPlatform(event.target.value)}
+                className="rounded-xl border border-white/15 bg-surfaceSoft/60 px-3 py-1.5 text-xs"
+              >
+                {INSTALL_PLATFORMS.map((item) => (
+                  <option key={item.id} value={item.id}>{item.title}</option>
+                ))}
+              </select>
+            </div>
+            {!compact && (
+              <div className="mt-2 text-xs text-muted readable">Пошаговая инструкция подключения в приложении Happ.</div>
+            )}
+            <div className="mt-3 space-y-2">
+              <div className="rounded-xl border border-white/10 bg-surfaceSoft/50 p-2.5">
+                <div className="text-sm font-medium">1. Установите Happ</div>
+                <div className="mt-1 text-xs text-muted readable">Откройте установку под вашу платформу.</div>
+                <div className="mt-2 grid grid-cols-3 gap-2">
+                  <button onClick={impact(() => openExternal(links.store), 'light')} className="rounded-xl border border-white/15 px-3 py-2 text-[11px]">Открыть</button>
+                  <button onClick={impact(() => openExternal(links.alt), 'light')} className="rounded-xl border border-white/15 px-3 py-2 text-[11px]">Альтернатива</button>
+                  <button onClick={impact(() => openExternal(HAPP_OFFICIAL_URL), 'light')} className="rounded-xl border border-white/15 px-3 py-2 text-[11px]">Сайт Happ</button>
+                </div>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-surfaceSoft/50 p-2.5">
+                <div className="text-sm font-medium">2. Добавьте подписку</div>
+                <div className="mt-1 text-xs text-muted readable">В Happ нажмите «Добавить подписку», вставьте ссылку ключа и сохраните.</div>
+                {hasKey && (
+                  <div className="mt-2 rounded-xl border border-white/10 bg-surfaceSoft/70 px-2 py-1.5 text-[11px] mono break-all">{keyLink}</div>
+                )}
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <button
+                    onClick={impact(() => (onCopyKey ? onCopyKey() : copyMainKey()), 'light')}
+                    className="rounded-xl border border-white/15 px-3 py-2 text-xs"
+                  >
+                    Скопировать ключ
+                  </button>
+                  <button
+                    onClick={impact(() => hasKey && openExternal(keyLink), 'light')}
+                    disabled={!hasKey}
+                    className="rounded-xl border border-white/15 px-3 py-2 text-xs disabled:opacity-45"
+                  >
+                    Открыть ключ
+                  </button>
+                </div>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-surfaceSoft/50 p-2.5">
+                <div className="text-sm font-medium">3. Подключитесь</div>
+                <div className="mt-1 text-xs text-muted readable">Выберите сервер и включите VPN-соединение.</div>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
+      function renderSetup() {
+        const candidate =
+          String(paymentResult?.key_link || '').trim()
+          || String(selectedKeyDetails?.key_link || '').trim()
+          || '';
+        return (
+          <div className="space-y-3 animate-in">
+            <div className="rounded-card glass premium-card p-4">
+              <div className="text-lg font-semibold">Инструкция подключения</div>
+              <div className="mt-1 text-xs text-muted readable">Раздел для быстрого возврата к установке и подключению в любой момент.</div>
+            </div>
+            {renderInstallGuideSection({
+              keyLink: candidate,
+              onCopyKey: () => (candidate ? copyText(candidate, 'Ключ скопирован') : copyMainKey()),
+              compact: false,
+            })}
+          </div>
+        );
+      }
+
+      function renderPaymentResultModal() {
+        if (!paymentResult) return null;
         const keyLink = String(paymentResult?.key_link || '').trim();
         return (
           <div className="fixed inset-0 z-40 bg-black/70" onClick={closePaymentResult}>
@@ -2752,7 +2879,7 @@
                   <div className="mt-1 text-xs text-muted">Истекает: {fmtDate(paymentResult.expires_at)}</div>
                 )}
                 <div className="mt-2 rounded-xl border border-white/10 bg-surfaceSoft/60 px-3 py-2 text-xs mono break-all">
-                  {keyLink || 'Ссылка ключа подгружается...'}
+                  {keyLink || (paymentResultResolving ? 'Ссылка ключа подгружается...' : 'Ссылка ключа пока недоступна')}
                 </div>
                 <div className="mt-2 grid grid-cols-2 gap-2">
                   <button
@@ -2770,39 +2897,23 @@
                     Открыть подписку
                   </button>
                 </div>
+                {!keyLink && (
+                  <button
+                    onClick={impact(() => resolvePaymentResultKeyLink(paymentResult, { silent: false }), 'light')}
+                    disabled={paymentResultResolving}
+                    className="mt-2 w-full rounded-xl border border-white/15 px-3 py-2 text-xs disabled:opacity-45"
+                  >
+                    {paymentResultResolving ? 'Обновляем ссылку...' : 'Обновить ключ'}
+                  </button>
+                )}
               </div>
 
-              <div className="mt-3 rounded-2xl border border-white/10 bg-surfaceSoft/55 p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="text-sm font-semibold">Установка</div>
-                  <select
-                    value={platform}
-                    onChange={(event) => setInstallPlatform(event.target.value)}
-                    className="rounded-xl border border-white/15 bg-surfaceSoft/60 px-3 py-1.5 text-xs"
-                  >
-                    {INSTALL_PLATFORMS.map((item) => (
-                      <option key={item.id} value={item.id}>{item.title}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="mt-3 space-y-2">
-                  <div className="rounded-xl border border-white/10 bg-surfaceSoft/50 p-2.5">
-                    <div className="text-sm font-medium">1. Установите Happ</div>
-                    <div className="mt-1 text-xs text-muted readable">Откройте магазин приложений или скачайте релиз напрямую.</div>
-                    <div className="mt-2 grid grid-cols-2 gap-2">
-                      <button onClick={impact(() => openExternal(links.store), 'light')} className="rounded-xl border border-white/15 px-3 py-2 text-xs">Открыть Store</button>
-                      <button onClick={impact(() => openExternal(links.alt), 'light')} className="rounded-xl border border-white/15 px-3 py-2 text-xs">Скачать релиз</button>
-                    </div>
-                  </div>
-                  <div className="rounded-xl border border-white/10 bg-surfaceSoft/50 p-2.5">
-                    <div className="text-sm font-medium">2. Добавьте подписку</div>
-                    <div className="mt-1 text-xs text-muted readable">В приложении Happ нажмите «Добавить подписку» и вставьте ключ.</div>
-                  </div>
-                  <div className="rounded-xl border border-white/10 bg-surfaceSoft/50 p-2.5">
-                    <div className="text-sm font-medium">3. Подключитесь</div>
-                    <div className="mt-1 text-xs text-muted readable">Выберите сервер и включите VPN. Готово.</div>
-                  </div>
-                </div>
+              <div className="mt-3">
+                {renderInstallGuideSection({
+                  keyLink,
+                  onCopyKey: () => (keyLink ? copyText(keyLink, 'Ключ скопирован') : resolvePaymentResultKeyLink(paymentResult, { silent: false })),
+                  compact: true,
+                })}
               </div>
 
               <div className="mt-3 grid grid-cols-2 gap-2">
@@ -2821,6 +2932,7 @@
         if (tab === 'ref') return renderReferrals();
         if (tab === 'support') return renderSupport();
         if (tab === 'diag') return renderDiagnostics();
+        if (tab === 'setup') return renderSetup();
         if (tab === 'service') return renderService();
         return renderDashboard();
       }

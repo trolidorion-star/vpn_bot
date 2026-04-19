@@ -7,6 +7,7 @@ import re
 import secrets
 import time
 import logging
+import asyncio
 import aiohttp
 from datetime import datetime, timezone
 from pathlib import Path
@@ -426,12 +427,14 @@ async def _resolve_key_link_for_user(telegram_id: int) -> str:
 
     if key and key.get("server_id") and key.get("panel_email"):
         try:
-            client = await get_client(int(key["server_id"]))
-            cfg = await client.get_client_config(str(key["panel_email"]))
+            client = await asyncio.wait_for(get_client(int(key["server_id"])), timeout=1.5)
+            cfg = await asyncio.wait_for(client.get_client_config(str(key["panel_email"])), timeout=1.8)
             if cfg:
                 generated = generate_link(cfg)
                 if generated:
                     return generated
+        except asyncio.TimeoutError:
+            logger.warning("Timeout while resolving live key link for telegram_id=%s", telegram_id)
         except Exception as exc:
             logger.warning("Failed to generate live key link for telegram_id=%s: %s", telegram_id, exc)
 
@@ -449,12 +452,14 @@ async def _resolve_key_link_for_key(telegram_id: int, key_id: int) -> str:
 
     if key.get("server_id") and key.get("panel_email"):
         try:
-            client = await get_client(int(key["server_id"]))
-            cfg = await client.get_client_config(str(key["panel_email"]))
+            client = await asyncio.wait_for(get_client(int(key["server_id"])), timeout=1.5)
+            cfg = await asyncio.wait_for(client.get_client_config(str(key["panel_email"])), timeout=1.8)
             if cfg:
                 generated = generate_link(cfg)
                 if generated:
                     return generated
+        except asyncio.TimeoutError:
+            logger.warning("Timeout while resolving key link for key_id=%s telegram_id=%s", key_id, telegram_id)
         except Exception as exc:
             logger.warning("Failed to generate key link for key_id=%s telegram_id=%s: %s", key_id, telegram_id, exc)
 
