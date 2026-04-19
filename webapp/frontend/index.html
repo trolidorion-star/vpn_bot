@@ -566,12 +566,42 @@
     const REDUCED_MOTION_KEY = 'bobrik-miniapp-reduced-motion-v1';
     const COMPACT_LISTS_KEY = 'bobrik-miniapp-compact-lists-v1';
     const THEME_VARIANT_KEY = 'bobrik-miniapp-theme-variant-v1';
+    const PENDING_PAYMENT_KEY = 'bobrik-miniapp-pending-payment-v1';
     const SUPPORT_QUICK_ISSUES = [
       'Проблема с подключением',
       'Не обновляется подписка после оплаты',
       'Нужна помощь с настройкой клиента',
       'Не работает ключ на устройстве',
     ];
+    const INSTALL_PLATFORMS = [
+      { id: 'ios', title: 'iOS' },
+      { id: 'android', title: 'Android' },
+      { id: 'windows', title: 'Windows' },
+      { id: 'macos', title: 'macOS' },
+      { id: 'linux', title: 'Linux' },
+    ];
+    const INSTALL_LINKS = {
+      ios: {
+        store: 'https://apps.apple.com/app/happ-proxy-utility/id6504287215',
+        alt: 'https://github.com/Epodonios/happ/releases',
+      },
+      android: {
+        store: 'https://play.google.com/store/apps/details?id=com.happproxy',
+        alt: 'https://github.com/Epodonios/happ/releases',
+      },
+      windows: {
+        store: 'https://github.com/Epodonios/happ/releases',
+        alt: 'https://github.com/Epodonios/happ/releases',
+      },
+      macos: {
+        store: 'https://github.com/Epodonios/happ/releases',
+        alt: 'https://github.com/Epodonios/happ/releases',
+      },
+      linux: {
+        store: 'https://github.com/Epodonios/happ/releases',
+        alt: 'https://github.com/Epodonios/happ/releases',
+      },
+    };
 
     const getSavedFlag = (key, fallback = false) => {
       try {
@@ -619,6 +649,30 @@
     const setSavedJson = (key, value) => {
       try {
         localStorage.setItem(key, JSON.stringify(value || {}));
+      } catch {}
+    };
+
+    const loadPendingPayment = () => {
+      try {
+        const raw = localStorage.getItem(PENDING_PAYMENT_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object') return null;
+        const orderId = String(parsed.order_id || '').trim();
+        if (!orderId) return null;
+        return parsed;
+      } catch {
+        return null;
+      }
+    };
+
+    const savePendingPayment = (payload) => {
+      try {
+        if (!payload) {
+          localStorage.removeItem(PENDING_PAYMENT_KEY);
+          return;
+        }
+        localStorage.setItem(PENDING_PAYMENT_KEY, JSON.stringify(payload));
       } catch {}
     };
 
@@ -909,6 +963,10 @@
       const [promoGlobal, setPromoGlobal] = useState(null);
       const [selectedUsageKey, setSelectedUsageKey] = useState('all');
       const [checkoutUsePromo, setCheckoutUsePromo] = useState(true);
+      const [pendingPayment, setPendingPayment] = useState(loadPendingPayment());
+      const [paymentResult, setPaymentResult] = useState(null);
+      const [installPlatform, setInstallPlatform] = useState('android');
+      const [paymentPolling, setPaymentPolling] = useState(false);
       const [isScrollOptimizing, setIsScrollOptimizing] = useState(false);
       const [giftMode, setGiftMode] = useState(false);
       const [giftRecipientName, setGiftRecipientName] = useState('');
@@ -922,6 +980,7 @@
       const saveCacheIdleRef = useRef(null);
       const scrollOptimizeTimerRef = useRef(null);
       const lastScrollSampleRef = useRef({ t: 0, y: 0 });
+      const paymentPollTimerRef = useRef(null);
 
       const expiresAtMs = useMemo(() => {
         const ts = new Date(user?.expires_at || 0).getTime();
@@ -1208,6 +1267,7 @@
         if (saveCacheTimerRef.current) clearTimeout(saveCacheTimerRef.current);
         if (saveCacheIdleRef.current && window.cancelIdleCallback) window.cancelIdleCallback(saveCacheIdleRef.current);
         if (scrollOptimizeTimerRef.current) clearTimeout(scrollOptimizeTimerRef.current);
+        if (paymentPollTimerRef.current) clearTimeout(paymentPollTimerRef.current);
       }, []);
 
       useEffect(() => {
@@ -1501,6 +1561,51 @@
         return () => clearInterval(timer);
       }, [token, tab, performanceMode, isLowEndDevice]);
 
+      useEffect(() => {
+        if (!token) return;
+        const params = new URLSearchParams(window.location.search || '');
+        const orderFromUrl = String(params.get('order_id') || '').trim();
+        const payStatus = String(params.get('pay_status') || '').trim().toLowerCase();
+        if (!orderFromUrl) return;
+        if (payStatus === 'fail') {
+          clearPendingPayment();
+          showToast('Оплата была отменена', 'error');
+          return;
+        }
+        const existing = loadPendingPayment();
+        if (!existing || String(existing.order_id || '').trim() !== orderFromUrl) {
+          const pending = { order_id: orderFromUrl, created_at: Date.now(), source: 'return_url' };
+          setPendingPayment(pending);
+          savePendingPayment(pending);
+        }
+      }, [token]);
+
+      useEffect(() => {
+        if (!token || !pendingPayment?.order_id) return;
+        runPendingPaymentPolling(String(pendingPayment.order_id), {
+          attempts: 30,
+          intervalMs: (performanceMode || isLowEndDevice) ? 5000 : 3500,
+          silent: false,
+        }).catch(() => null);
+      }, [token, pendingPayment?.order_id]);
+
+      useEffect(() => {
+        if (!token) return;
+        const onVisibility = () => {
+          if (document.hidden) return;
+          const pending = loadPendingPayment();
+          if (!pending?.order_id) return;
+          setPendingPayment(pending);
+          runPendingPaymentPolling(String(pending.order_id), {
+            attempts: 12,
+            intervalMs: 3000,
+            silent: true,
+          }).catch(() => null);
+        };
+        document.addEventListener('visibilitychange', onVisibility);
+        return () => document.removeEventListener('visibilitychange', onVisibility);
+      }, [token]);
+
       async function copyText(text, okText = 'Скопировано') {
         try {
           await navigator.clipboard.writeText(text || '');
@@ -1625,6 +1730,77 @@
         }
       }
 
+      const closePaymentResult = () => {
+        setPaymentResult(null);
+      };
+
+      const clearPendingPayment = () => {
+        setPendingPayment(null);
+        savePendingPayment(null);
+      };
+
+      async function pollPaymentStatus(orderId, { silent = false } = {}) {
+        if (!token || !orderId) return { done: false, paid: false };
+        const response = await api(`/api/payment_status/${encodeURIComponent(orderId)}`, { token });
+        const data = response.data || {};
+        const paid = Boolean(data.is_paid);
+        const failed = String(data.transaction_status || '').toUpperCase() === 'FAILED';
+        if (paid) {
+          const details = {
+            order_id: String(data.order_id || orderId),
+            key_id: Number(data.key_id || 0) || null,
+            key_link: String(data.key_link || '').trim(),
+            key_name: String(data.key_name || '').trim(),
+            expires_at: data.expires_at || null,
+          };
+          setPaymentResult(details);
+          clearPendingPayment();
+          await refreshData(token, { silent: true });
+          if (details.key_id) {
+            setSelectedKeyId(details.key_id);
+          }
+          if (!silent) showToast('Оплата подтверждена. Ключ готов.');
+          return { done: true, paid: true };
+        }
+        if (failed) {
+          clearPendingPayment();
+          if (!silent) showToast('Платеж отменен или отклонен', 'error');
+          return { done: true, paid: false };
+        }
+        return { done: false, paid: false };
+      }
+
+      async function runPendingPaymentPolling(orderId, { attempts = 24, intervalMs = 4000, silent = false } = {}) {
+        if (!orderId || !token) return;
+        if (paymentPollTimerRef.current) {
+          clearTimeout(paymentPollTimerRef.current);
+          paymentPollTimerRef.current = null;
+        }
+        setPaymentPolling(true);
+        let count = 0;
+        const tick = async () => {
+          try {
+            const result = await pollPaymentStatus(orderId, { silent });
+            if (result.done) {
+              setPaymentPolling(false);
+              return;
+            }
+          } catch (error) {
+            if (!silent) {
+              showToast(error?.message || 'Ошибка проверки оплаты', 'error');
+            }
+          }
+          count += 1;
+          if (count >= attempts) {
+            setPaymentPolling(false);
+            if (!silent) showToast('Оплата еще обрабатывается. Обновите через пару секунд.');
+            return;
+          }
+          paymentPollTimerRef.current = setTimeout(tick, intervalMs);
+        };
+        await tick();
+      }
+
       async function createInvoice(method) {
         if (!selectedTariff || !token) return;
         setBusy(true);
@@ -1642,6 +1818,15 @@
               use_promo: Boolean(checkoutUsePromo),
             },
           });
+          const pending = {
+            order_id: String(response.data.order_id || '').trim(),
+            transaction_id: String(response.data.transaction_id || '').trim(),
+            method: String(method || ''),
+            tariff_name: String(selectedTariff?.name || ''),
+            created_at: Date.now(),
+          };
+          setPendingPayment(pending);
+          savePendingPayment(pending);
           setSelectedTariff(null);
           setGiftMode(false);
           setGiftRecipientName('');
@@ -2510,6 +2695,87 @@
         );
       }
 
+      function renderPaymentResultModal() {
+        if (!paymentResult) return null;
+        const platform = installPlatform in INSTALL_LINKS ? installPlatform : 'android';
+        const links = INSTALL_LINKS[platform] || INSTALL_LINKS.android;
+        const keyLink = String(paymentResult?.key_link || '').trim();
+        return (
+          <div className="fixed inset-0 z-40 bg-black/70" onClick={closePaymentResult}>
+            <div className="absolute inset-x-0 bottom-0 rounded-t-[26px] glass border-t border-white/10 p-4 modal-sheet desktop-modal" onClick={(event) => event.stopPropagation()}>
+              <div className="mx-auto mb-3 h-1.5 w-14 rounded-full bg-white/20"></div>
+              <div className="text-lg font-semibold">Оплата подтверждена</div>
+              <div className="mt-1 text-xs text-muted readable">Ключ и инструкция готовы. Подключитесь в пару шагов.</div>
+
+              <div className="mt-3 rounded-2xl border border-ok/35 bg-ok/10 p-3">
+                <div className="text-xs text-muted">Ваш ключ</div>
+                <div className="mt-1 text-sm font-semibold readable">{paymentResult?.key_name || `Ключ #${paymentResult?.key_id || '—'}`}</div>
+                {paymentResult?.expires_at && (
+                  <div className="mt-1 text-xs text-muted">Истекает: {fmtDate(paymentResult.expires_at)}</div>
+                )}
+                <div className="mt-2 rounded-xl border border-white/10 bg-surfaceSoft/60 px-3 py-2 text-xs mono break-all">
+                  {keyLink || 'Ссылка ключа подгружается...'}
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <button
+                    onClick={impact(() => copyText(keyLink, 'Ключ скопирован'))}
+                    disabled={!keyLink}
+                    className="rounded-xl border border-white/15 px-3 py-2 text-xs disabled:opacity-45"
+                  >
+                    Скопировать ключ
+                  </button>
+                  <button
+                    onClick={impact(() => keyLink && openExternal(keyLink))}
+                    disabled={!keyLink}
+                    className="rounded-xl bg-accent/20 border border-accent/40 px-3 py-2 text-xs text-accent disabled:opacity-45"
+                  >
+                    Открыть подписку
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-3 rounded-2xl border border-white/10 bg-surfaceSoft/55 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-sm font-semibold">Установка</div>
+                  <select
+                    value={platform}
+                    onChange={(event) => setInstallPlatform(event.target.value)}
+                    className="rounded-xl border border-white/15 bg-surfaceSoft/60 px-3 py-1.5 text-xs"
+                  >
+                    {INSTALL_PLATFORMS.map((item) => (
+                      <option key={item.id} value={item.id}>{item.title}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="mt-3 space-y-2">
+                  <div className="rounded-xl border border-white/10 bg-surfaceSoft/50 p-2.5">
+                    <div className="text-sm font-medium">1. Установите Happ</div>
+                    <div className="mt-1 text-xs text-muted readable">Откройте магазин приложений или скачайте релиз напрямую.</div>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <button onClick={impact(() => openExternal(links.store), 'light')} className="rounded-xl border border-white/15 px-3 py-2 text-xs">Открыть Store</button>
+                      <button onClick={impact(() => openExternal(links.alt), 'light')} className="rounded-xl border border-white/15 px-3 py-2 text-xs">Скачать релиз</button>
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-surfaceSoft/50 p-2.5">
+                    <div className="text-sm font-medium">2. Добавьте подписку</div>
+                    <div className="mt-1 text-xs text-muted readable">В приложении Happ нажмите «Добавить подписку» и вставьте ключ.</div>
+                  </div>
+                  <div className="rounded-xl border border-white/10 bg-surfaceSoft/50 p-2.5">
+                    <div className="text-sm font-medium">3. Подключитесь</div>
+                    <div className="mt-1 text-xs text-muted readable">Выберите сервер и включите VPN. Готово.</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-3 grid grid-cols-2 gap-2">
+                <button onClick={impact(() => changeTab('usage'))} className="rounded-xl border border-white/15 px-3 py-2 text-sm">Перейти в ключи</button>
+                <button onClick={impact(() => closePaymentResult(), 'light')} className="rounded-xl border border-white/15 px-3 py-2 text-sm">Закрыть</button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
       function renderTabContent() {
         if (tab === 'dashboard') return renderDashboard();
         if (tab === 'plans') return renderPlans();
@@ -2549,6 +2815,20 @@
           {offlineMode && (
             <div className="relative z-10 mb-3 rounded-2xl border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning readable">
               Оффлайн-режим: показаны кэшированные данные. Некоторые действия могут быть временно недоступны.
+            </div>
+          )}
+          {pendingPayment?.order_id && (
+            <div className="relative z-10 mb-3 rounded-2xl border border-accent/35 bg-accent/10 px-3 py-2 text-xs readable">
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-accent">Оплата обрабатывается: <span className="mono">{pendingPayment.order_id}</span></div>
+                <button
+                  onClick={impact(() => runPendingPaymentPolling(String(pendingPayment.order_id), { attempts: 10, intervalMs: 2800, silent: false }), 'light')}
+                  disabled={paymentPolling}
+                  className="rounded-lg border border-accent/40 px-2 py-1 text-[11px] text-accent disabled:opacity-45"
+                >
+                  {paymentPolling ? 'Проверка...' : 'Проверить'}
+                </button>
+              </div>
             </div>
           )}
 
@@ -2829,6 +3109,7 @@
               </div>
             </div>
           )}
+          {renderPaymentResultModal()}
         </div>
       );
     }

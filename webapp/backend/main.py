@@ -150,6 +150,17 @@ class RenameKeyRequest(BaseModel):
     name: str
 
 
+class PaymentStatusResponse(BaseModel):
+    order_id: str
+    payment_status: str
+    transaction_status: str
+    is_paid: bool
+    key_id: Optional[int] = None
+    key_link: str = ""
+    key_name: Optional[str] = None
+    expires_at: Optional[str] = None
+
+
 def _bot_token() -> str:
     token = _normalize_secret(os.getenv("BOT_TOKEN", ""))
     if token:
@@ -172,6 +183,25 @@ def _bot_token() -> str:
 
 def _normalize_secret(raw_value: Any) -> str:
     return re.sub(r"[\u200b-\u200d\u2060\ufeff]", "", str(raw_value or "")).strip().strip("'\"")
+
+
+def _get_mini_app_public_url() -> str:
+    env_url = str(os.getenv("MINI_APP_URL", "") or "").strip()
+    if env_url and env_url.startswith("http"):
+        return env_url.rstrip("/")
+    db_url = str(get_setting("mini_app_url", "") or "").strip()
+    if db_url and db_url.startswith("http"):
+        return db_url.rstrip("/")
+    return ""
+
+
+def _build_mini_app_return_url(order_id: str, status: str) -> str:
+    base = _get_mini_app_public_url()
+    if not base:
+        return BOT_RETURN_URL
+    safe_order = re.sub(r"[^A-Za-z0-9_-]", "", str(order_id or ""))
+    safe_status = "ok" if str(status).lower() == "success" else "fail"
+    return f"{base}/?pay_status={safe_status}&order_id={safe_order}"
 
 
 def _parse_admin_ids() -> set[int]:
@@ -429,6 +459,81 @@ async def _resolve_key_link_for_key(telegram_id: int, key_id: int) -> str:
             logger.warning("Failed to generate key link for key_id=%s telegram_id=%s: %s", key_id, telegram_id, exc)
 
     return link or ""
+
+
+async def _load_miniapp_order_state(telegram_id: int, order_id: str) -> dict[str, Any]:
+    with get_db() as conn:
+        payment_row = conn.execute(
+            """
+            SELECT p.id, p.order_id, p.user_id, p.vpn_key_id, p.status, p.paid_at
+            FROM payments p
+            JOIN users u ON u.id = p.user_id
+            WHERE p.order_id = ? AND u.telegram_id = ?
+            LIMIT 1
+            """,
+            (order_id, telegram_id),
+        ).fetchone()
+        tx_row = conn.execute(
+            """
+            SELECT payment_id, status
+            FROM transactions
+            WHERE order_id = ?
+            LIMIT 1
+            """,
+            (order_id,),
+        ).fetchone()
+
+    if not payment_row:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    payment = dict(payment_row)
+    tx = dict(tx_row) if tx_row else {}
+    return {
+        "payment": payment,
+        "transaction": tx,
+    }
+
+
+async def _finalize_miniapp_order_if_needed(telegram_id: int, order_id: str, state: dict[str, Any]) -> dict[str, Any]:
+    payment = dict(state.get("payment") or {})
+    tx = dict(state.get("transaction") or {})
+
+    payment_status = str(payment.get("status") or "").strip().lower()
+    tx_status = str(tx.get("status") or "").strip().upper()
+    payment_id = str(tx.get("payment_id") or "").strip()
+
+    if payment_status == "paid":
+        return state
+
+    if tx_status in {"SUCCESS"}:
+        success, _text, _order = await process_payment_order(order_id)
+        if success:
+            update_transaction_status(order_id=order_id, status="SUCCESS", payment_id=payment_id or None, payload={"source": "miniapp_status_poll"})
+            consume_order_promocode(order_id)
+        return await _load_miniapp_order_state(telegram_id, order_id)
+
+    if not payment_id:
+        return state
+
+    try:
+        status_payload = await get_transaction_status(payment_id)
+    except Exception as exc:
+        logger.warning("MiniApp payment status request failed: order=%s payment_id=%s err=%s", order_id, payment_id, exc)
+        return state
+
+    provider_status = str(status_payload.get("status") or "").strip().upper()
+    if provider_status in PLATEGA_SUCCESS_STATUSES:
+        success, _text, _order = await process_payment_order(order_id)
+        if success:
+            update_transaction_status(order_id=order_id, status="SUCCESS", payment_id=payment_id, payload=status_payload)
+            consume_order_promocode(order_id)
+            return await _load_miniapp_order_state(telegram_id, order_id)
+    elif provider_status in PLATEGA_FAILED_STATUSES:
+        update_transaction_status(order_id=order_id, status="FAILED", payment_id=payment_id, payload=status_payload)
+    else:
+        update_transaction_status(order_id=order_id, status="PENDING", payment_id=payment_id, payload=status_payload)
+
+    return await _load_miniapp_order_state(telegram_id, order_id)
 
 
 def _admin_ticket_reply_markup(ticket_id: int) -> dict[str, Any]:
@@ -869,13 +974,15 @@ async def create_invoice(payload: InvoiceRequest, session: dict[str, Any] = Depe
     )
 
     platega_method = get_platega_payment_method_id(method_code)
+    success_url = _build_mini_app_return_url(order_id, "success")
+    fail_url = _build_mini_app_return_url(order_id, "fail")
     try:
         result = await create_payment_link(
             amount_rub=final_price_rub,
             order_id=order_id,
             description=f"Оплата тарифа {tariff.get('name')}",
-            success_url=BOT_RETURN_URL,
-            fail_url=BOT_RETURN_URL,
+            success_url=success_url,
+            fail_url=fail_url,
             payment_method=platega_method,
             method_code_hint=method_code,
         )
@@ -925,6 +1032,52 @@ async def create_invoice(payload: InvoiceRequest, session: dict[str, Any] = Depe
             "promo_code": applied_promo_code,
         },
     }
+
+
+@app.get("/api/payment_status/{order_id}")
+async def get_payment_status(order_id: str, session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
+    _ensure_miniapp_enabled()
+    telegram_id = int(session["telegram_id"])
+    clean_order_id = str(order_id or "").strip()
+    if not clean_order_id:
+        raise HTTPException(status_code=400, detail="order_id is required")
+
+    state = await _load_miniapp_order_state(telegram_id, clean_order_id)
+    state = await _finalize_miniapp_order_if_needed(telegram_id, clean_order_id, state)
+
+    payment = dict(state.get("payment") or {})
+    tx = dict(state.get("transaction") or {})
+
+    payment_status = str(payment.get("status") or "").strip().lower()
+    tx_status = str(tx.get("status") or "").strip().upper()
+    key_id_raw = payment.get("vpn_key_id")
+    key_id = int(key_id_raw) if key_id_raw is not None else None
+
+    key_link = ""
+    key_name = None
+    expires_at = None
+    if key_id:
+        key = get_key_details_for_user(key_id, telegram_id)
+        if key:
+            key_name = key.get("display_name")
+            expires_at = key.get("expires_at")
+            try:
+                key_link = await _resolve_key_link_for_key(telegram_id, key_id)
+            except Exception as exc:
+                logger.warning("MiniApp payment_status: failed to resolve key link for key_id=%s order=%s: %s", key_id, clean_order_id, exc)
+
+    is_paid = payment_status == "paid"
+    payload = PaymentStatusResponse(
+        order_id=clean_order_id,
+        payment_status=payment_status or "pending",
+        transaction_status=tx_status or "PENDING",
+        is_paid=is_paid,
+        key_id=key_id,
+        key_link=key_link or "",
+        key_name=key_name,
+        expires_at=expires_at,
+    )
+    return {"ok": True, "data": payload.dict()}
 
 
 @app.post("/api/set_ru_bypass")
