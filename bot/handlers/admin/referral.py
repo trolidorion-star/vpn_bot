@@ -1,11 +1,11 @@
-﻿"""
-Р РѕСѓС‚РµСЂ СЂР°Р·РґРµР»Р° В«Р РµС„РµСЂР°Р»СЊРЅР°СЏ СЃРёСЃС‚РµРјР°В».
+"""
+Роутер раздела «Реферальная система».
 
-РќР°СЃС‚СЂРѕР№РєР° СЂРµС„РµСЂР°Р»СЊРЅРѕР№ РїСЂРѕРіСЂР°РјРјС‹:
-- Р’РєР»СЋС‡РµРЅРёРµ/РІС‹РєР»СЋС‡РµРЅРёРµ
-- Р РµР¶РёРј РЅР°С‡РёСЃР»РµРЅРёСЏ (РґРЅРё/Р±Р°Р»Р°РЅСЃ)
-- РќР°СЃС‚СЂРѕР№РєР° СѓСЂРѕРІРЅРµР№ (1-3)
-- РўРµРєСЃС‚ СѓСЃР»РѕРІРёР№
+Настройка реферальной программы:
+- Включение/выключение
+- Режим начисления (дни/баланс)
+- Настройка уровней (1-3)
+- Текст условий
 """
 import logging
 from aiogram import Router, F
@@ -56,28 +56,28 @@ def _referral_leads_kb(page: int, total: int, sort_by: str, sort_dir: str, rows:
     page = max(0, min(page, max_page))
 
     sort_labels = {
-        "invited": "РџРѕ РїСЂРёРіР»Р°С€РµРЅРЅС‹Рј",
-        "paid": "РџРѕ РѕРїР»Р°С‚Р°Рј",
-        "conversion": "РџРѕ РєРѕРЅРІРµСЂСЃРёРё",
-        "created": "РџРѕ РґР°С‚Рµ",
+        "invited": "По приглашенным",
+        "paid": "По оплатам",
+        "conversion": "По конверсии",
+        "created": "По дате",
     }
-    dir_label = "в†“" if sort_dir == "desc" else "в†‘"
+    dir_label = "↓" if sort_dir == "desc" else "↑"
 
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
-            text=f"РЎРѕСЂС‚РёСЂРѕРІРєР°: {sort_labels.get(sort_by, 'РџРѕ РїСЂРёРіР»Р°С€РµРЅРЅС‹Рј')} {dir_label}",
+            text=f"Сортировка: {sort_labels.get(sort_by, 'По приглашенным')} {dir_label}",
             callback_data=f"admin_referral_sort_toggle:{page}:{sort_by}:{sort_dir}",
         )
     )
 
     builder.row(
-        InlineKeyboardButton(text="рџ‘Ґ РџСЂРёРіР»Р°С€РµРЅРЅС‹Рµ", callback_data=f"admin_referral_leads:{page}:invited:{sort_dir}"),
-        InlineKeyboardButton(text="рџ’і РћРїР»Р°С‚РёРІС€РёРµ", callback_data=f"admin_referral_leads:{page}:paid:{sort_dir}"),
+        InlineKeyboardButton(text="👥 Приглашенные", callback_data=f"admin_referral_leads:{page}:invited:{sort_dir}"),
+        InlineKeyboardButton(text="💳 Оплатившие", callback_data=f"admin_referral_leads:{page}:paid:{sort_dir}"),
     )
     builder.row(
-        InlineKeyboardButton(text="рџ“€ РљРѕРЅРІРµСЂСЃРёСЏ", callback_data=f"admin_referral_leads:{page}:conversion:{sort_dir}"),
-        InlineKeyboardButton(text="рџ—“ Р”Р°С‚Р°", callback_data=f"admin_referral_leads:{page}:created:{sort_dir}"),
+        InlineKeyboardButton(text="📈 Конверсия", callback_data=f"admin_referral_leads:{page}:conversion:{sort_dir}"),
+        InlineKeyboardButton(text="🗓 Дата", callback_data=f"admin_referral_leads:{page}:created:{sort_dir}"),
     )
 
     for row in rows:
@@ -97,7 +97,7 @@ def _referral_leads_kb(page: int, total: int, sort_by: str, sort_dir: str, rows:
     if page > 0:
         nav_row.append(
             InlineKeyboardButton(
-                text="в¬…пёЏ",
+                text="⬅️",
                 callback_data=f"admin_referral_leads:{page - 1}:{sort_by}:{sort_dir}",
             )
         )
@@ -110,15 +110,15 @@ def _referral_leads_kb(page: int, total: int, sort_by: str, sort_dir: str, rows:
     if page < max_page:
         nav_row.append(
             InlineKeyboardButton(
-                text="вћЎпёЏ",
+                text="➡️",
                 callback_data=f"admin_referral_leads:{page + 1}:{sort_by}:{sort_dir}",
             )
         )
     builder.row(*nav_row)
 
     builder.row(
-        InlineKeyboardButton(text="в¬…пёЏ Рљ СЂРµС„РµСЂР°Р»СЊРЅРѕР№ СЃРёСЃС‚РµРјРµ", callback_data="admin_referral"),
-        InlineKeyboardButton(text="рџЂ„ РќР° РіР»Р°РІРЅСѓСЋ", callback_data="start"),
+        InlineKeyboardButton(text="⬅️ К реферальной системе", callback_data="admin_referral"),
+        InlineKeyboardButton(text="🀄 На главную", callback_data="start"),
     )
     return builder.as_markup()
 
@@ -143,27 +143,27 @@ def _referrer_offer_kb(user_id: int, page: int, sort_by: str, sort_dir: str):
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
-            text="рџЋџ РџСЂРѕРјРѕРєРѕРґ РѕС„С„РµСЂР°",
+            text="🎟 Промокод оффера",
             callback_data=f"admin_referrer_offer_setpromo:{user_id}:{page}:{sort_by}:{sort_dir}",
         ),
         InlineKeyboardButton(
-            text="вЏ± Р‘РѕРЅСѓСЃ trial (С‡Р°СЃС‹)",
+            text="⏱ Бонус trial (часы)",
             callback_data=f"admin_referrer_offer_settrial:{user_id}:{page}:{sort_by}:{sort_dir}",
         ),
     )
     builder.row(
         InlineKeyboardButton(
-            text="рџ§№ РћС‡РёСЃС‚РёС‚СЊ РѕС„С„РµСЂ",
+            text="🧹 Очистить оффер",
             callback_data=f"admin_referrer_offer_clear:{user_id}:{page}:{sort_by}:{sort_dir}",
         )
     )
     builder.row(
         InlineKeyboardButton(
-            text="в¬…пёЏ Рљ РєР°СЂС‚РѕС‡РєРµ СЂРµС„РµСЂРµСЂР°",
+            text="⬅️ К карточке реферера",
             callback_data=f"admin_referrer_view:{user_id}:{page}:{sort_by}:{sort_dir}",
         ),
         InlineKeyboardButton(
-            text="рџЏ  РќР° РіР»Р°РІРЅСѓСЋ",
+            text="🏠 На главную",
             callback_data="start",
         ),
     )
@@ -171,7 +171,7 @@ def _referrer_offer_kb(user_id: int, page: int, sort_by: str, sort_dir: str):
 
 
 async def show_referral_menu(callback: CallbackQuery, state: FSMContext):
-    """РџРѕРєР°Р·С‹РІР°РµС‚ РіР»Р°РІРЅРѕРµ РјРµРЅСЋ СЂРµС„РµСЂР°Р»СЊРЅРѕР№ СЃРёСЃС‚РµРјС‹."""
+    """Показывает главное меню реферальной системы."""
     await state.set_state(AdminStates.referral_menu)
     
     enabled = is_referral_enabled()
@@ -182,35 +182,35 @@ async def show_referral_menu(callback: CallbackQuery, state: FSMContext):
     conditions_data = get_message_data('referral_conditions_text', '')
     conditions_text = conditions_data.get('text', '')
     
-    status_emoji = "рџџў" if enabled else "вљЄ"
-    status_text = "РІРєР»СЋС‡РµРЅР°" if enabled else "РІС‹РєР»СЋС‡РµРЅР°"
+    status_emoji = "🟢" if enabled else "⚪"
+    status_text = "включена" if enabled else "выключена"
     
     if reward_type == 'days':
-        type_text = "рџ“… Р”РЅРё Рє РєР»СЋС‡Сѓ"
+        type_text = "📅 Дни к ключу"
     else:
-        type_text = "рџ’° РќР° Р±Р°Р»Р°РЅСЃ"
+        type_text = "💰 На баланс"
     
     text = (
-        f"рџ”— <b>Р РµС„РµСЂР°Р»СЊРЅР°СЏ СЃРёСЃС‚РµРјР°</b>\n\n"
-        f"{status_emoji} РЎС‚Р°С‚СѓСЃ: <b>{status_text}</b>\n"
-        f"рџ“Љ Р РµР¶РёРј РЅР°С‡РёСЃР»РµРЅРёСЏ: <b>{type_text}</b>\n\n"
-        f"<b>РЈСЂРѕРІРЅРё:</b>\n"
+        f"🔗 <b>Реферальная система</b>\n\n"
+        f"{status_emoji} Статус: <b>{status_text}</b>\n"
+        f"📊 Режим начисления: <b>{type_text}</b>\n\n"
+        f"<b>Уровни:</b>\n"
     )
     
     for level in levels:
         level_num = level['level_number']
         percent = level['percent']
         is_enabled = level['enabled']
-        status = "вњ…" if is_enabled else "вљЄ"
-        text += f"{status} РЈСЂРѕРІРµРЅСЊ {level_num}: {percent}%\n"
+        status = "✅" if is_enabled else "⚪"
+        text += f"{status} Уровень {level_num}: {percent}%\n"
     
     if reward_type == 'balance':
-        text += f"\nрџ’µ Р¤РёРєСЃРёСЂРѕРІР°РЅРЅС‹Р№ Р±РѕРЅСѓСЃ Р·Р° СЂРµС„РµСЂР°Р»Р°: <b>{fixed_bonus_rub} в‚Ѕ</b>\n"
+        text += f"\n💵 Фиксированный бонус за реферала: <b>{fixed_bonus_rub} ₽</b>\n"
 
     if conditions_text:
-        text += f"\nрџ“ќ РўРµРєСЃС‚ СѓСЃР»РѕРІРёР№ Р·Р°РґР°РЅ\n"
+        text += f"\n📝 Текст условий задан\n"
     
-    text += "\nР’С‹Р±РµСЂРёС‚Рµ РґРµР№СЃС‚РІРёРµ:"
+    text += "\nВыберите действие:"
     
     await safe_edit_or_send(callback.message, 
         text,
@@ -221,9 +221,9 @@ async def show_referral_menu(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "admin_referral")
 async def admin_referral(callback: CallbackQuery, state: FSMContext):
-    """Р’С…РѕРґ РІ СЂР°Р·РґРµР» СЂРµС„РµСЂР°Р»СЊРЅРѕР№ СЃРёСЃС‚РµРјС‹."""
+    """Вход в раздел реферальной системы."""
     if not is_admin(callback.from_user.id):
-        await callback.answer("в›” Р”РѕСЃС‚СѓРї Р·Р°РїСЂРµС‰С‘РЅ", show_alert=True)
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
     
     await show_referral_menu(callback, state)
@@ -231,26 +231,26 @@ async def admin_referral(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "admin_referral_toggle")
 async def referral_toggle(callback: CallbackQuery, state: FSMContext):
-    """РџРµСЂРµРєР»СЋС‡РµРЅРёРµ СЂРµС„РµСЂР°Р»СЊРЅРѕР№ СЃРёСЃС‚РµРјС‹."""
+    """Переключение реферальной системы."""
     if not is_admin(callback.from_user.id):
-        await callback.answer("в›” Р”РѕСЃС‚СѓРї Р·Р°РїСЂРµС‰С‘РЅ", show_alert=True)
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
     
     current = is_referral_enabled()
     new_value = '0' if current else '1'
     update_referral_setting('referral_enabled', new_value)
     
-    status = "РІРєР»СЋС‡РµРЅР° вњ…" if new_value == '1' else "РІС‹РєР»СЋС‡РµРЅР°"
-    await callback.answer(f"Р РµС„РµСЂР°Р»СЊРЅР°СЏ СЃРёСЃС‚РµРјР° {status}")
+    status = "включена ✅" if new_value == '1' else "выключена"
+    await callback.answer(f"Реферальная система {status}")
     
     await show_referral_menu(callback, state)
 
 
 @router.callback_query(F.data == "admin_referral_toggle_type")
 async def referral_toggle_type(callback: CallbackQuery, state: FSMContext):
-    """РџРµСЂРµРєР»СЋС‡РµРЅРёРµ СЂРµР¶РёРјР° РЅР°С‡РёСЃР»РµРЅРёСЏ."""
+    """Переключение режима начисления."""
     if not is_admin(callback.from_user.id):
-        await callback.answer("в›” Р”РѕСЃС‚СѓРї Р·Р°РїСЂРµС‰С‘РЅ", show_alert=True)
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
     
     current = get_referral_reward_type()
@@ -258,27 +258,27 @@ async def referral_toggle_type(callback: CallbackQuery, state: FSMContext):
     update_referral_setting('referral_reward_type', new_value)
     
     if new_value == 'days':
-        await callback.answer("Р РµР¶РёРј: Р”РЅРё Рє РєР»СЋС‡Сѓ")
+        await callback.answer("Режим: Дни к ключу")
     else:
-        await callback.answer("Р РµР¶РёРј: РќР° Р±Р°Р»Р°РЅСЃ")
+        await callback.answer("Режим: На баланс")
     
     await show_referral_menu(callback, state)
 
 
 @router.callback_query(F.data == "admin_referral_bonus")
 async def referral_bonus_start(callback: CallbackQuery, state: FSMContext):
-    """Р—Р°РїСЂРѕСЃ РЅРѕРІРѕРіРѕ С„РёРєСЃРёСЂРѕРІР°РЅРЅРѕРіРѕ Р±РѕРЅСѓСЃР° Р·Р° СЂРµС„РµСЂР°Р»Р° (РІ СЂСѓР±Р»СЏС…)."""
+    """Запрос нового фиксированного бонуса за реферала (в рублях)."""
     if not is_admin(callback.from_user.id):
-        await callback.answer("в›” Р”РѕСЃС‚СѓРї Р·Р°РїСЂРµС‰С‘РЅ", show_alert=True)
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
 
     current_value = int(get_setting('referral_fixed_bonus_rub', '50') or '50')
     await state.set_state(AdminStates.referral_bonus_edit)
 
     text = (
-        "рџ’µ <b>Р¤РёРєСЃРёСЂРѕРІР°РЅРЅС‹Р№ Р±РѕРЅСѓСЃ Р·Р° СЂРµС„РµСЂР°Р»Р°</b>\n\n"
-        f"РўРµРєСѓС‰РµРµ Р·РЅР°С‡РµРЅРёРµ: <b>{current_value} в‚Ѕ</b>\n\n"
-        "Р’РІРµРґРёС‚Рµ РЅРѕРІРѕРµ Р·РЅР°С‡РµРЅРёРµ РІ СЂСѓР±Р»СЏС… (1-100000):"
+        "💵 <b>Фиксированный бонус за реферала</b>\n\n"
+        f"Текущее значение: <b>{current_value} ₽</b>\n\n"
+        "Введите новое значение в рублях (1-100000):"
     )
     await safe_edit_or_send(
         callback.message,
@@ -290,7 +290,7 @@ async def referral_bonus_start(callback: CallbackQuery, state: FSMContext):
 
 @router.message(AdminStates.referral_bonus_edit)
 async def referral_bonus_input(message: Message, state: FSMContext):
-    """РЎРѕС…СЂР°РЅРµРЅРёРµ С„РёРєСЃРёСЂРѕРІР°РЅРЅРѕРіРѕ Р±РѕРЅСѓСЃР° Р·Р° СЂРµС„РµСЂР°Р»Р°."""
+    """Сохранение фиксированного бонуса за реферала."""
     if not is_admin(message.from_user.id):
         return
 
@@ -298,12 +298,12 @@ async def referral_bonus_input(message: Message, state: FSMContext):
     raw = get_message_text_for_storage(message, 'plain').strip().replace(',', '.')
 
     if not raw.replace('.', '', 1).isdigit():
-        await safe_edit_or_send(message, "вќЊ Р’РІРµРґРёС‚Рµ С‡РёСЃР»Рѕ РѕС‚ 1 РґРѕ 100000")
+        await safe_edit_or_send(message, "❌ Введите число от 1 до 100000")
         return
 
     value = int(float(raw))
     if value < 1 or value > 100000:
-        await safe_edit_or_send(message, "вќЊ Р—РЅР°С‡РµРЅРёРµ РґРѕР»Р¶РЅРѕ Р±С‹С‚СЊ РѕС‚ 1 РґРѕ 100000")
+        await safe_edit_or_send(message, "❌ Значение должно быть от 1 до 100000")
         return
 
     update_referral_setting('referral_fixed_bonus_rub', str(value))
@@ -316,16 +316,16 @@ async def referral_bonus_input(message: Message, state: FSMContext):
     await state.set_state(AdminStates.referral_menu)
     await safe_edit_or_send(
         message,
-        f"вњ… Р¤РёРєСЃРёСЂРѕРІР°РЅРЅС‹Р№ Р±РѕРЅСѓСЃ РѕР±РЅРѕРІР»С‘РЅ: <b>{value} в‚Ѕ</b>",
+        f"✅ Фиксированный бонус обновлён: <b>{value} ₽</b>",
         reply_markup=back_and_home_kb('admin_referral')
     )
 
 
 @router.callback_query(F.data.regexp(r"^admin_referral_level:(\d+)$"))
 async def referral_level_view(callback: CallbackQuery, state: FSMContext):
-    """РџСЂРѕСЃРјРѕС‚СЂ СѓСЂРѕРІРЅСЏ."""
+    """Просмотр уровня."""
     if not is_admin(callback.from_user.id):
-        await callback.answer("в›” Р”РѕСЃС‚СѓРї Р·Р°РїСЂРµС‰С‘РЅ", show_alert=True)
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
     
     level_num = int(callback.data.split(':')[1])
@@ -338,19 +338,19 @@ async def referral_level_view(callback: CallbackQuery, state: FSMContext):
             break
     
     if not level:
-        await callback.answer("РЈСЂРѕРІРµРЅСЊ РЅРµ РЅР°Р№РґРµРЅ", show_alert=True)
+        await callback.answer("Уровень не найден", show_alert=True)
         return
     
     await state.set_state(AdminStates.referral_level_edit)
     await state.update_data(current_level=level_num)
     
-    status = "РІРєР»СЋС‡С‘РЅ" if level['enabled'] else "РІС‹РєР»СЋС‡РµРЅ"
+    status = "включён" if level['enabled'] else "выключен"
     
     text = (
-        f"рџ“Љ <b>РЈСЂРѕРІРµРЅСЊ {level_num}</b>\n\n"
-        f"РџСЂРѕС†РµРЅС‚: <b>{level['percent']}%</b>\n"
-        f"РЎС‚Р°С‚СѓСЃ: <b>{status}</b>\n\n"
-        "Р’С‹Р±РµСЂРёС‚Рµ РґРµР№СЃС‚РІРёРµ:"
+        f"📊 <b>Уровень {level_num}</b>\n\n"
+        f"Процент: <b>{level['percent']}%</b>\n"
+        f"Статус: <b>{status}</b>\n\n"
+        "Выберите действие:"
     )
     
     await safe_edit_or_send(callback.message, 
@@ -362,9 +362,9 @@ async def referral_level_view(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.regexp(r"^admin_referral_level_toggle:(\d+)$"))
 async def referral_level_toggle(callback: CallbackQuery, state: FSMContext):
-    """РџРµСЂРµРєР»СЋС‡РµРЅРёРµ СѓСЂРѕРІРЅСЏ."""
+    """Переключение уровня."""
     if not is_admin(callback.from_user.id):
-        await callback.answer("в›” Р”РѕСЃС‚СѓРї Р·Р°РїСЂРµС‰С‘РЅ", show_alert=True)
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
     
     level_num = int(callback.data.split(':')[1])
@@ -377,23 +377,23 @@ async def referral_level_toggle(callback: CallbackQuery, state: FSMContext):
             break
     
     if not level:
-        await callback.answer("РЈСЂРѕРІРµРЅСЊ РЅРµ РЅР°Р№РґРµРЅ", show_alert=True)
+        await callback.answer("Уровень не найден", show_alert=True)
         return
     
     new_enabled = not level['enabled']
     update_referral_level(level_num, level['percent'], new_enabled)
     
-    status = "РІРєР»СЋС‡С‘РЅ вњ…" if new_enabled else "РІС‹РєР»СЋС‡РµРЅ"
-    await callback.answer(f"РЈСЂРѕРІРµРЅСЊ {level_num} {status}")
+    status = "включён ✅" if new_enabled else "выключен"
+    await callback.answer(f"Уровень {level_num} {status}")
     
     await referral_level_view(callback, state)
 
 
 @router.callback_query(F.data.regexp(r"^admin_referral_level_percent:(\d+)$"))
 async def referral_level_percent_start(callback: CallbackQuery, state: FSMContext):
-    """Р—Р°РїСЂРѕСЃ РЅРѕРІРѕРіРѕ РїСЂРѕС†РµРЅС‚Р° РґР»СЏ СѓСЂРѕРІРЅСЏ."""
+    """Запрос нового процента для уровня."""
     if not is_admin(callback.from_user.id):
-        await callback.answer("в›” Р”РѕСЃС‚СѓРї Р·Р°РїСЂРµС‰С‘РЅ", show_alert=True)
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
     
     level_num = int(callback.data.split(':')[1])
@@ -406,7 +406,7 @@ async def referral_level_percent_start(callback: CallbackQuery, state: FSMContex
             break
     
     if not level:
-        await callback.answer("РЈСЂРѕРІРµРЅСЊ РЅРµ РЅР°Р№РґРµРЅ", show_alert=True)
+        await callback.answer("Уровень не найден", show_alert=True)
         return
     
     await state.set_state(AdminStates.referral_level_edit)
@@ -416,9 +416,9 @@ async def referral_level_percent_start(callback: CallbackQuery, state: FSMContex
     )
     
     text = (
-        f"рџ“Љ <b>РЈСЂРѕРІРµРЅСЊ {level_num}</b>\n\n"
-        f"РўРµРєСѓС‰РёР№ РїСЂРѕС†РµРЅС‚: <b>{level['percent']}%</b>\n\n"
-        "Р’РІРµРґРёС‚Рµ РЅРѕРІС‹Р№ РїСЂРѕС†РµРЅС‚ (1-100):"
+        f"📊 <b>Уровень {level_num}</b>\n\n"
+        f"Текущий процент: <b>{level['percent']}%</b>\n\n"
+        "Введите новый процент (1-100):"
     )
     
     await safe_edit_or_send(callback.message, 
@@ -430,7 +430,7 @@ async def referral_level_percent_start(callback: CallbackQuery, state: FSMContex
 
 @router.message(AdminStates.referral_level_edit)
 async def referral_level_percent_input(message: Message, state: FSMContext):
-    """РћР±СЂР°Р±РѕС‚РєР° РІРІРѕРґР° РЅРѕРІРѕРіРѕ РїСЂРѕС†РµРЅС‚Р°."""
+    """Обработка ввода нового процента."""
     if not is_admin(message.from_user.id):
         return
     
@@ -446,7 +446,7 @@ async def referral_level_percent_input(message: Message, state: FSMContext):
     text = get_message_text_for_storage(message, 'plain')
     
     if not text.isdigit() or not (1 <= int(text) <= 100):
-        await safe_edit_or_send(message, "вќЊ Р’РІРµРґРёС‚Рµ С‡РёСЃР»Рѕ РѕС‚ 1 РґРѕ 100:")
+        await safe_edit_or_send(message, "❌ Введите число от 1 до 100:")
         return
     
     new_percent = int(text)
@@ -483,9 +483,9 @@ async def referral_level_percent_input(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "admin_referral_conditions")
 async def referral_conditions_start(callback: CallbackQuery, state: FSMContext):
-    """Р РµРґР°РєС‚РёСЂРѕРІР°РЅРёРµ С‚РµРєСЃС‚Р° СѓСЃР»РѕРІРёР№ С‡РµСЂРµР· СѓРЅРёРІРµСЂСЃР°Р»СЊРЅС‹Р№ СЂРµРґР°РєС‚РѕСЂ."""
+    """Редактирование текста условий через универсальный редактор."""
     if not is_admin(callback.from_user.id):
-        await callback.answer("в›” Р”РѕСЃС‚СѓРї Р·Р°РїСЂРµС‰С‘РЅ", show_alert=True)
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
     
     from bot.handlers.admin.message_editor import show_message_editor
@@ -501,9 +501,9 @@ async def referral_conditions_start(callback: CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("admin_referral_leads:"))
 async def admin_referral_leads(callback: CallbackQuery):
-    """РЎРїРёСЃРѕРє РїРѕР»СЊР·РѕРІР°С‚РµР»РµР№-СЂРµС„РµСЂРµСЂРѕРІ СЃ СЃРѕСЂС‚РёСЂРѕРІРєРѕР№."""
+    """Список пользователей-рефереров с сортировкой."""
     if not is_admin(callback.from_user.id):
-        await callback.answer("в›” Р”РѕСЃС‚СѓРї Р·Р°РїСЂРµС‰С‘РЅ", show_alert=True)
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
 
     page, sort_by, sort_dir = _parse_leads_payload(callback.data)
@@ -518,10 +518,10 @@ async def admin_referral_leads(callback: CallbackQuery):
     )
 
     text = (
-        "рџ‘Ґ <b>Р РµС„РµСЂРµСЂС‹ Рё СЃС‚Р°С‚РёСЃС‚РёРєР°</b>\n\n"
-        f"Р’СЃРµРіРѕ СЂРµС„РµСЂРµСЂРѕРІ: <b>{total}</b>\n"
-        "РџРѕРєР°Р·С‹РІР°СЋС‚СЃСЏ РїРѕР»СЊР·РѕРІР°С‚РµР»Рё, РєРѕС‚РѕСЂС‹Рµ РїСЂРёРІРµР»Рё С…РѕС‚СЏ Р±С‹ 1 С‡РµР»РѕРІРµРєР°.\n\n"
-        "Р¤РѕСЂРјР°С‚: <i>РїСЂРёРіР»Р°С€РµРЅРѕ/РѕРїР»Р°С‚РёР»Рё (РєРѕРЅРІРµСЂСЃРёСЏ)</i>"
+        "👥 <b>Рефереры и статистика</b>\n\n"
+        f"Всего рефереров: <b>{total}</b>\n"
+        "Показываются пользователи, которые привели хотя бы 1 человека.\n\n"
+        "Формат: <i>приглашено/оплатили (конверсия)</i>"
     )
     await safe_edit_or_send(
         callback.message,
@@ -534,7 +534,7 @@ async def admin_referral_leads(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("admin_referral_sort_toggle:"))
 async def admin_referral_sort_toggle(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer("в›” Р”РѕСЃС‚СѓРї Р·Р°РїСЂРµС‰С‘РЅ", show_alert=True)
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
 
     # admin_referral_sort_toggle:{page}:{sort_by}:{sort_dir}
@@ -553,10 +553,10 @@ async def admin_referral_sort_toggle(callback: CallbackQuery):
         sort_dir=new_dir,
     )
     text = (
-        "рџ‘Ґ <b>Р РµС„РµСЂРµСЂС‹ Рё СЃС‚Р°С‚РёСЃС‚РёРєР°</b>\n\n"
-        f"Р’СЃРµРіРѕ СЂРµС„РµСЂРµСЂРѕРІ: <b>{total}</b>\n"
-        "РџРѕРєР°Р·С‹РІР°СЋС‚СЃСЏ РїРѕР»СЊР·РѕРІР°С‚РµР»Рё, РєРѕС‚РѕСЂС‹Рµ РїСЂРёРІРµР»Рё С…РѕС‚СЏ Р±С‹ 1 С‡РµР»РѕРІРµРєР°.\n\n"
-        "Р¤РѕСЂРјР°С‚: <i>РїСЂРёРіР»Р°С€РµРЅРѕ/РѕРїР»Р°С‚РёР»Рё (РєРѕРЅРІРµСЂСЃРёСЏ)</i>"
+        "👥 <b>Рефереры и статистика</b>\n\n"
+        f"Всего рефереров: <b>{total}</b>\n"
+        "Показываются пользователи, которые привели хотя бы 1 человека.\n\n"
+        "Формат: <i>приглашено/оплатили (конверсия)</i>"
     )
     await safe_edit_or_send(
         callback.message,
@@ -568,14 +568,14 @@ async def admin_referral_sort_toggle(callback: CallbackQuery):
 
 @router.callback_query(F.data.startswith("admin_referrer_view:"))
 async def admin_referrer_view(callback: CallbackQuery):
-    """Карточка конкретного реферера."""
+    """Карточка реферера со статистикой и персональным оффером."""
     if not is_admin(callback.from_user.id):
-        await callback.answer("? Доступ запрещён", show_alert=True)
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
 
     parts = callback.data.split(":")
     if len(parts) < 5:
-        await callback.answer("Некорректные данные", show_alert=True)
+        await callback.answer("Некорректный payload", show_alert=True)
         return
 
     user_id = int(parts[1])
@@ -597,13 +597,13 @@ async def admin_referrer_view(callback: CallbackQuery):
     user_label = f"@{username}" if username else f"ID {user.get('telegram_id')}"
 
     lines = [
-        "?? <b>Карточка реферера</b>",
+        "👤 <b>Карточка реферера</b>",
         "",
-        f"Пользователь: <b>{user_label}</b>",
+        f"Профиль: <b>{user_label}</b>",
         f"Telegram ID: <code>{user.get('telegram_id')}</code>",
-        f"В боте с: <b>{user.get('created_at')}</b>",
+        f"Дата регистрации: <b>{user.get('created_at')}</b>",
         "",
-        f"Пригласил: <b>{invited}</b>",
+        f"Приглашено: <b>{invited}</b>",
         f"Оплатили: <b>{paid}</b>",
         f"Конверсия: <b>{conversion:.1f}%</b>",
     ]
@@ -613,7 +613,7 @@ async def admin_referrer_view(callback: CallbackQuery):
         lines.append("<b>Последние приглашённые:</b>")
         for ref in direct_refs:
             ref_name = f"@{ref['username']}" if ref.get("username") else f"ID {ref.get('telegram_id')}"
-            tariff = ref.get("last_tariff_name") or "нет оплат"
+            tariff = ref.get("last_tariff_name") or "без оплаты"
             lines.append(f"• {ref_name} | <code>{ref.get('telegram_id')}</code> | {tariff}")
 
     offer = get_referrer_offer(user_id) or {}
@@ -622,10 +622,10 @@ async def admin_referrer_view(callback: CallbackQuery):
     offer_active = int(offer.get("is_active") or 0) == 1
 
     lines.append("")
-    lines.append("<b>Media offer:</b>")
-    lines.append(f"Статус: <b>{'включен' if offer_active else 'выключен'}</b>")
-    lines.append(f"Промокод: <code>{escape_html(offer_promo or '—')}</code>")
-    lines.append(f"Бонус trial: <b>{offer_bonus_hours} ч</b>")
+    lines.append("<b>Персональный медиа-оффер:</b>")
+    lines.append(f"Статус: <b>{'активен' if offer_active else 'отключён'}</b>")
+    lines.append(f"Автопромокод: <code>{escape_html(offer_promo or 'не задан')}</code>")
+    lines.append(f"Бонус к trial: <b>{offer_bonus_hours} ч</b>")
 
     from aiogram.types import InlineKeyboardButton
     from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -633,16 +633,16 @@ async def admin_referrer_view(callback: CallbackQuery):
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
-            text="Media offer settings",
+            text="⚙️ Настроить медиа-оффер",
             callback_data=f"admin_referrer_offer:{user_id}:{page}:{sort_by}:{sort_dir}",
         )
     )
     builder.row(
         InlineKeyboardButton(
-            text="Back to list",
+            text="⬅️ К списку",
             callback_data=f"admin_referral_leads:{page}:{sort_by}:{sort_dir}",
         ),
-        InlineKeyboardButton(text="Home", callback_data="start"),
+        InlineKeyboardButton(text="🏠 На главную", callback_data="start"),
     )
 
     await safe_edit_or_send(
@@ -667,18 +667,18 @@ def _parse_offer_payload(data: str) -> tuple[int, int, str, str]:
 @router.callback_query(F.data.startswith("admin_referrer_offer:"))
 async def admin_referrer_offer(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
 
     try:
         user_id, page, sort_by, sort_dir = _parse_offer_payload(callback.data)
     except Exception:
-        await callback.answer("Invalid payload", show_alert=True)
+        await callback.answer("Некорректный payload", show_alert=True)
         return
 
     user = get_user_by_id(user_id)
     if not user:
-        await callback.answer("User not found", show_alert=True)
+        await callback.answer("Пользователь не найден", show_alert=True)
         return
 
     offer = get_referrer_offer(user_id) or {}
@@ -687,12 +687,13 @@ async def admin_referrer_offer(callback: CallbackQuery):
     is_active = int(offer.get("is_active") or 0) == 1
 
     text = (
-        "<b>Media offer settings</b>\n\n"
-        f"Referrer: <code>{user.get('telegram_id')}</code>\n"
-        f"Status: <b>{'active' if is_active else 'disabled'}</b>\n"
-        f"Promo code: <code>{escape_html(promo_code or 'none')}</code>\n"
-        f"Trial bonus: <b>{trial_bonus_hours}h</b>\n\n"
-        "Configure promo code and trial bonus for users coming via this ref link."
+        "🎯 <b>Настройки медиа-оффера</b>\n\n"
+        f"Реферер: <code>{user.get('telegram_id')}</code>\n"
+        f"Статус: <b>{'активен' if is_active else 'отключён'}</b>\n"
+        f"Автопромокод: <code>{escape_html(promo_code or 'не задан')}</code>\n"
+        f"Бонус к trial: <b>{trial_bonus_hours} ч</b>\n\n"
+        "Этот оффер автоматически применяется новым пользователям,\n"
+        "которые переходят по реферальной ссылке данного реферера."
     )
 
     await safe_edit_or_send(
@@ -706,20 +707,20 @@ async def admin_referrer_offer(callback: CallbackQuery):
 @router.callback_query(F.data.startswith("admin_referrer_offer_setpromo:"))
 async def admin_referrer_offer_setpromo(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
     try:
         user_id, page, sort_by, sort_dir = _parse_offer_payload(callback.data.replace("admin_referrer_offer_setpromo:", "admin_referrer_offer:"))
     except Exception:
-        await callback.answer("Invalid payload", show_alert=True)
+        await callback.answer("Некорректный payload", show_alert=True)
         return
 
     await state.set_state(AdminStates.referral_offer_promo_edit)
     await state.update_data(ref_offer_user_id=user_id, ref_offer_page=page, ref_offer_sort_by=sort_by, ref_offer_sort_dir=sort_dir)
     await safe_edit_or_send(
         callback.message,
-        "Enter promo code for this referrer media offer.\n"
-        "Send '-' to clear promo code.",
+        "Введите промокод для этого медиа-оффера.\n"
+        "Отправьте <code>-</code>, чтобы очистить автопромокод.",
         reply_markup=_referrer_offer_kb(user_id, page, sort_by, sort_dir),
     )
     await callback.answer()
@@ -728,19 +729,19 @@ async def admin_referrer_offer_setpromo(callback: CallbackQuery, state: FSMConte
 @router.callback_query(F.data.startswith("admin_referrer_offer_settrial:"))
 async def admin_referrer_offer_settrial(callback: CallbackQuery, state: FSMContext):
     if not is_admin(callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
     try:
         user_id, page, sort_by, sort_dir = _parse_offer_payload(callback.data.replace("admin_referrer_offer_settrial:", "admin_referrer_offer:"))
     except Exception:
-        await callback.answer("Invalid payload", show_alert=True)
+        await callback.answer("Некорректный payload", show_alert=True)
         return
 
     await state.set_state(AdminStates.referral_offer_trial_bonus_edit)
     await state.update_data(ref_offer_user_id=user_id, ref_offer_page=page, ref_offer_sort_by=sort_by, ref_offer_sort_dir=sort_dir)
     await safe_edit_or_send(
         callback.message,
-        "Enter trial bonus hours for this referrer media offer (0-720).",
+        "Введите бонусные часы trial для этого медиа-оффера (0-720).",
         reply_markup=_referrer_offer_kb(user_id, page, sort_by, sort_dir),
     )
     await callback.answer()
@@ -749,16 +750,16 @@ async def admin_referrer_offer_settrial(callback: CallbackQuery, state: FSMConte
 @router.callback_query(F.data.startswith("admin_referrer_offer_clear:"))
 async def admin_referrer_offer_clear(callback: CallbackQuery):
     if not is_admin(callback.from_user.id):
-        await callback.answer("Access denied", show_alert=True)
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
         return
     try:
         user_id, page, sort_by, sort_dir = _parse_offer_payload(callback.data.replace("admin_referrer_offer_clear:", "admin_referrer_offer:"))
     except Exception:
-        await callback.answer("Invalid payload", show_alert=True)
+        await callback.answer("Некорректный payload", show_alert=True)
         return
 
     clear_referrer_offer(user_id)
-    await callback.answer("Offer cleared")
+    await callback.answer("Оффер очищен")
 
     class _Cb:
         def __init__(self, src: CallbackQuery):
@@ -792,10 +793,10 @@ async def admin_referrer_offer_promo_save(message: Message, state: FSMContext):
         promo_code = raw.upper()
         promo = get_promocode(promo_code)
         if not promo:
-            await safe_edit_or_send(message, "Promo code not found. Try again or send '-' to clear.", force_new=True)
+            await safe_edit_or_send(message, "Промокод не найден. Повторите ввод или отправьте '-' для очистки.", force_new=True)
             return
         if int(promo.get("is_active") or 0) != 1:
-            await safe_edit_or_send(message, "Promo code is inactive. Activate it first.", force_new=True)
+            await safe_edit_or_send(message, "Промокод неактивен. Сначала активируйте его.", force_new=True)
             return
 
     current_offer = get_referrer_offer(user_id) or {}
@@ -809,7 +810,7 @@ async def admin_referrer_offer_promo_save(message: Message, state: FSMContext):
     await state.clear()
     await safe_edit_or_send(
         message,
-        f"Saved. Promo code: <code>{escape_html(promo_code or 'none')}</code>",
+        f"Сохранено. Автопромокод: <code>{escape_html(promo_code or 'не задан')}</code>",
         force_new=True,
     )
 
@@ -841,11 +842,11 @@ async def admin_referrer_offer_trial_save(message: Message, state: FSMContext):
 
     raw = get_message_text_for_storage(message, "plain").strip()
     if not raw.isdigit():
-        await safe_edit_or_send(message, "Enter number from 0 to 720.", force_new=True)
+        await safe_edit_or_send(message, "Введите число от 0 до 720.", force_new=True)
         return
     trial_bonus_hours = int(raw)
     if trial_bonus_hours < 0 or trial_bonus_hours > 720:
-        await safe_edit_or_send(message, "Allowed range: 0..720", force_new=True)
+        await safe_edit_or_send(message, "Допустимый диапазон: 0..720.", force_new=True)
         return
 
     current_offer = get_referrer_offer(user_id) or {}
@@ -859,7 +860,7 @@ async def admin_referrer_offer_trial_save(message: Message, state: FSMContext):
     await state.clear()
     await safe_edit_or_send(
         message,
-        f"Saved. Trial bonus: <b>{trial_bonus_hours}h</b>",
+        f"Сохранено. Бонус к trial: <b>{trial_bonus_hours} ч</b>",
         force_new=True,
     )
 

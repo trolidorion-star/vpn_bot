@@ -11,6 +11,7 @@ def bot_settings_kb() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text='🔄 Обновления', callback_data='admin_update_bot'))
     builder.row(InlineKeyboardButton(text='✏️ Изменить тексты', callback_data='admin_edit_texts'))
+    builder.row(InlineKeyboardButton(text='🎁 Пробная подписка', callback_data='admin_trial'))
     builder.row(InlineKeyboardButton(text='🔗 Реферальная система', callback_data='admin_referral'))
     builder.row(InlineKeyboardButton(text='🔥 Акция и скидки', callback_data='admin_flash_sale'))
     builder.row(InlineKeyboardButton(text='🛑 Остановить бота', callback_data='admin_stop_bot'))
