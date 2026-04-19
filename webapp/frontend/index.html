@@ -3359,10 +3359,25 @@
                   </button>
                 </div>
 
-                <div className="mt-3 grid grid-cols-3 gap-2">
-                  <button onClick={impact(() => refreshSelectedKeyDetails(), 'light')} className="rounded-xl border border-white/15 px-3 py-2 text-sm">Обновить</button>
-                  <button onClick={impact(() => copyKeyLinkById(selectedKeyId))} className="rounded-xl border border-white/15 px-3 py-2 text-sm">Скопировать</button>
-                  <button onClick={impact(() => { setSelectedKeyId(null); setSelectedKeyDetails(null); })} className="rounded-xl border border-white/15 px-3 py-2 text-sm">Закрыть</button>
+                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  <button
+                    onClick={impact(() => refreshSelectedKeyDetails(), 'light')}
+                    className="min-w-0 rounded-xl border border-white/15 px-3 py-2 text-center text-sm leading-tight whitespace-nowrap"
+                  >
+                    Обновить
+                  </button>
+                  <button
+                    onClick={impact(() => copyKeyLinkById(selectedKeyId))}
+                    className="min-w-0 rounded-xl border border-white/15 px-3 py-2 text-center text-sm leading-tight whitespace-nowrap"
+                  >
+                    Скопировать
+                  </button>
+                  <button
+                    onClick={impact(() => { setSelectedKeyId(null); setSelectedKeyDetails(null); })}
+                    className="min-w-0 rounded-xl border border-white/15 px-3 py-2 text-center text-sm leading-tight whitespace-nowrap"
+                  >
+                    Закрыть
+                  </button>
                 </div>
               </div>
             </div>
