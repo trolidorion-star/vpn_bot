@@ -415,16 +415,24 @@ def _serialize_promocode_state(telegram_id: int) -> Dict[str, Any]:
     }
 
     if user_code:
+        discount_type = str((promo or {}).get("discount_type") or "").upper()
+        discount_value = int((promo or {}).get("discount_value") or 0)
         result["active"] = {
             "code": user_code,
             "scope": str((promo or {}).get("visibility") or active_user.get("visibility") or "HIDDEN").upper(),
             "source": str(active_user.get("source") or "manual"),
+            "discount_type": discount_type,
+            "discount_value": discount_value,
+            "discount_percent": discount_value if discount_type == "PERCENT" else 0,
         }
     elif result["global"]["active"]:
         result["active"] = {
             "code": global_code,
             "scope": "PUBLIC",
             "source": "flash_sale",
+            "discount_type": "PERCENT",
+            "discount_value": global_discount_pct,
+            "discount_percent": global_discount_pct,
         }
     return result
 

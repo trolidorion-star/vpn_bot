@@ -1168,20 +1168,55 @@
         return { points, hasPoints, peakPct, avgPct, currentPct, firstLabel, midLabel, lastLabel, polylinePoints, circles, lastPoint };
       }, [usagePoints]);
 
+      const resolvePromoForPrice = (basePrice, usePromo = true) => {
+        const safeBase = Math.max(0, Number(basePrice || 0));
+        if (!usePromo || safeBase <= 0) {
+          return { discountValue: 0, discountPercent: 0, finalPrice: safeBase };
+        }
+
+        const activeCode = String(activePromo?.code || '').trim().toUpperCase();
+        const activeType = String(activePromo?.discount_type || '').trim().toUpperCase();
+        const activeValueRaw = Number(activePromo?.discount_value || 0);
+        const globalCode = String(promoGlobal?.code || '').trim().toUpperCase();
+        const globalPercent = (promoGlobal?.active && Number(promoGlobal?.discount_percent || 0) > 0)
+          ? Math.min(95, Math.max(1, Number(promoGlobal?.discount_percent || 0)))
+          : 0;
+
+        let discountValue = 0;
+        let discountPercent = 0;
+
+        if (activeCode) {
+          if (activeType === 'PERCENT' && activeValueRaw > 0) {
+            discountPercent = Math.min(95, Math.max(1, activeValueRaw));
+            discountValue = Math.round((safeBase * discountPercent) / 100);
+          } else if (activeType === 'FIXED' && activeValueRaw > 0) {
+            discountValue = Math.max(1, Math.round(activeValueRaw));
+          } else if (globalPercent > 0 && globalCode && activeCode === globalCode) {
+            discountPercent = globalPercent;
+            discountValue = Math.round((safeBase * discountPercent) / 100);
+          }
+        } else if (globalPercent > 0) {
+          discountPercent = globalPercent;
+          discountValue = Math.round((safeBase * discountPercent) / 100);
+        }
+
+        if (discountValue > 0) {
+          discountValue = Math.min(safeBase - 1, discountValue);
+        }
+        const finalPrice = discountValue > 0 ? Math.max(1, safeBase - discountValue) : safeBase;
+        return { discountValue, discountPercent, finalPrice };
+      };
+
       const tariffCards = useMemo(() => {
         return (tariffs || []).map((tariff, idx) => {
           const isLifetime = String(tariff?.name || '').toLowerCase().includes('навсегда') || Number(tariff?.days || 0) >= 666;
           const daysLabel = isLifetime ? '∞' : `${tariff.days} дней доступа`;
           const oldPriceRaw = Number(tariff?.old_price_rub || tariff?.old_price || 0);
           const basePrice = Number(tariff?.price_rub || 0);
-          const promoDiscountPct = (promoGlobal?.active && Number(promoGlobal?.discount_percent || 0) > 0)
-            ? Math.min(95, Math.max(1, Number(promoGlobal?.discount_percent || 0)))
-            : 0;
+          const promo = resolvePromoForPrice(basePrice, true);
           const hasBuiltInSale = oldPriceRaw > basePrice && oldPriceRaw > 0;
-          const promoDiscountedPrice = promoDiscountPct > 0
-            ? Math.max(1, Math.round(basePrice * (100 - promoDiscountPct) / 100))
-            : basePrice;
-          const oldPrice = hasBuiltInSale ? oldPriceRaw : (promoDiscountPct > 0 ? basePrice : 0);
+          const promoDiscountedPrice = promo.finalPrice;
+          const oldPrice = hasBuiltInSale ? oldPriceRaw : (promoDiscountedPrice < basePrice ? basePrice : 0);
           const newPrice = hasBuiltInSale ? basePrice : promoDiscountedPrice;
           const perDayLabel = isLifetime
             ? 'Лучшее долгосрочное решение'
@@ -1197,7 +1232,7 @@
             isPopular: idx === 0,
           };
         });
-      }, [tariffs, promoGlobal]);
+      }, [tariffs, promoGlobal, activePromo]);
 
       const showToast = (message, type = 'ok') => {
         if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
@@ -2386,6 +2421,12 @@
       function renderPlans() {
         const activePromoCode = String(activePromo?.code || promoCodeApplied || '').trim().toUpperCase();
         const activePromoScope = String(activePromo?.scope || '').toUpperCase();
+        const activePromoDiscountPct = Number(activePromo?.discount_percent || 0);
+        const promoBadgePercent = activePromoDiscountPct > 0
+          ? Math.round(activePromoDiscountPct)
+          : ((promoGlobal?.active && Number(promoGlobal?.discount_percent || 0) > 0)
+            ? Math.round(Number(promoGlobal.discount_percent || 0))
+            : 0);
         const promoScopeLabel = activePromoScope === 'HIDDEN'
             ? 'Скрытый'
             : 'Общий';
@@ -2420,9 +2461,9 @@
                 <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-accent/35 bg-accent/10 px-3 py-1 text-xs text-accent">
                   <span>{promoScopeLabel}</span>
                   <span className="mono">{activePromoCode}</span>
-                  {promoGlobal?.active && Number(promoGlobal?.discount_percent || 0) > 0 && (
+                  {promoBadgePercent > 0 && (
                     <span className="rounded-full border border-accent/35 bg-accent/12 px-1.5 py-0.5 text-[10px] font-semibold">
-                      -{Math.round(Number(promoGlobal.discount_percent || 0))}%
+                      -{promoBadgePercent}%
                     </span>
                   )}
                 </div>
@@ -3226,13 +3267,9 @@
                       ? '∞'
                       : `${selectedTariff.days} дней`;
                     const basePrice = Number(selectedTariff?.price_rub || 0);
-                    const discountPct = (promoGlobal?.active && checkoutUsePromo)
-                      ? Number(promoGlobal?.discount_percent || 0)
-                      : 0;
-                    const finalPrice = discountPct > 0
-                      ? Math.max(1, Math.round(basePrice * (100 - discountPct) / 100))
-                      : basePrice;
-                    if (discountPct > 0 && finalPrice < basePrice) {
+                    const promoPrice = resolvePromoForPrice(basePrice, checkoutUsePromo);
+                    const finalPrice = Number(promoPrice?.finalPrice || basePrice);
+                    if (finalPrice < basePrice) {
                       return <span>{daysLabel} • <s>{basePrice} ₽</s> <span className="text-accent font-semibold">{finalPrice} ₽</span></span>;
                     }
                     return <span>{daysLabel} • {basePrice} ₽</span>;
@@ -3248,9 +3285,9 @@
                   <div className="mt-2">
                     <div className="text-xs text-muted">
                       Промокод
-                      {promoGlobal?.active && Number(promoGlobal?.discount_percent || 0) > 0 && (
+                      {promoBadgePercent > 0 && (
                         <span className="ml-1 inline-block rounded-full border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent">
-                          -{Math.round(Number(promoGlobal.discount_percent || 0))}%
+                          -{promoBadgePercent}%
                         </span>
                       )}
                     </div>
