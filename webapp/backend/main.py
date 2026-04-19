@@ -8,6 +8,7 @@ import secrets
 import time
 import logging
 import asyncio
+import uuid
 import aiohttp
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,6 +32,7 @@ from bot.services.platega_client import (
 from bot.services.flash_sale import get_flash_sale_state
 from bot.services.ru_bypass import get_default_ru_exclusions
 from bot.services.split_config_settings import get_split_config_public_base_url
+from bot.services.key_limits import get_key_connection_limit
 from bot.services.vpn_api import get_client
 from bot.utils.key_generator import generate_link
 from config import ADMIN_IDS
@@ -50,6 +52,7 @@ from database.requests import (
     ensure_user_referral_code,
     get_active_referral_levels,
     get_all_tariffs,
+    get_active_servers,
     get_direct_referrals_with_purchase_info,
     get_key_details_for_user,
     get_or_create_user,
@@ -72,6 +75,7 @@ from database.requests import (
     set_user_active_promocode,
     set_miniapp_enabled,
     update_key_custom_name,
+    update_vpn_key_config,
     update_transaction_status,
     consume_order_promocode,
 )
@@ -419,8 +423,104 @@ def _build_key_copy_value(key: Optional[dict[str, Any]]) -> str:
     return ""
 
 
+def _generate_unique_panel_email(telegram_id: int, username: Optional[str]) -> str:
+    base_raw = username or str(telegram_id)
+    base = re.sub(r"[^A-Za-z0-9_]+", "_", str(base_raw)).strip("_") or str(telegram_id)
+    return f"user_{base}_{uuid.uuid4().hex[:5]}"
+
+
+async def _ensure_key_provisioned_for_user(telegram_id: int, key_id: int) -> bool:
+    """
+    Self-heal for draft keys created after payment.
+    If key has no panel/server binding, bind it to the first available active server/inbound.
+    """
+    key = get_key_details_for_user(key_id, telegram_id)
+    if not key:
+        return False
+    if key.get("server_id") and key.get("panel_email") and key.get("client_uuid") and key.get("panel_inbound_id"):
+        return True
+
+    servers = get_active_servers()
+    if not servers:
+        logger.warning("MiniApp key provision: no active servers for key_id=%s telegram_id=%s", key_id, telegram_id)
+        return False
+
+    server = servers[0]
+    server_id = int(server.get("id") or 0)
+    if server_id <= 0:
+        return False
+
+    try:
+        client = await asyncio.wait_for(get_client(server_id), timeout=2.5)
+        inbounds = await asyncio.wait_for(client.get_inbounds(), timeout=3.5)
+        if not inbounds:
+            logger.warning("MiniApp key provision: no inbounds on server_id=%s", server_id)
+            return False
+        inbound_id = int(inbounds[0].get("id") or 0)
+        if inbound_id <= 0:
+            return False
+
+        user_row, _ = get_or_create_user(telegram_id, None)
+        panel_email = _generate_unique_panel_email(telegram_id, user_row.get("username"))
+
+        traffic_limit_bytes = int(key.get("traffic_limit") or 0)
+        if traffic_limit_bytes > 0:
+            total_gb = max(1, int((traffic_limit_bytes + (1024**3 - 1)) // (1024**3)))
+        else:
+            total_gb = 0
+
+        expires_at_raw = key.get("expires_at")
+        expire_days = 30
+        if expires_at_raw:
+            try:
+                expires_at = datetime.fromisoformat(str(expires_at_raw).replace("Z", "+00:00"))
+                now = datetime.now(expires_at.tzinfo) if expires_at.tzinfo else datetime.now()
+                delta = expires_at - now
+                expire_days = max(1, delta.days + (1 if delta.seconds > 0 else 0))
+            except Exception:
+                expire_days = 30
+
+        flow = await asyncio.wait_for(client.get_inbound_flow(inbound_id), timeout=2.5)
+        created = await asyncio.wait_for(
+            client.add_client(
+                inbound_id=inbound_id,
+                email=panel_email,
+                total_gb=total_gb,
+                expire_days=expire_days,
+                limit_ip=get_key_connection_limit(),
+                enable=True,
+                tg_id=str(telegram_id),
+                flow=flow,
+            ),
+            timeout=4.5,
+        )
+        client_uuid = str(created.get("uuid") or "").strip()
+        if not client_uuid:
+            return False
+
+        ok = update_vpn_key_config(
+            key_id=key_id,
+            server_id=server_id,
+            panel_inbound_id=inbound_id,
+            panel_email=panel_email,
+            client_uuid=client_uuid,
+        )
+        if ok:
+            logger.info("MiniApp key provision: key_id=%s configured on server_id=%s", key_id, server_id)
+        return bool(ok)
+    except Exception as exc:
+        logger.warning("MiniApp key provision failed for key_id=%s telegram_id=%s: %s", key_id, telegram_id, exc)
+        return False
+
+
 async def _resolve_key_link_for_user(telegram_id: int) -> str:
     key = _resolve_main_key(telegram_id)
+    if key and (not key.get("server_id") or not key.get("panel_email") or not key.get("client_uuid")):
+        try:
+            await _ensure_key_provisioned_for_user(telegram_id, int(key.get("id")))
+        except Exception as exc:
+            logger.warning("MiniApp key self-heal failed for telegram_id=%s key_id=%s: %s", telegram_id, key.get("id"), exc)
+        key = _resolve_main_key(telegram_id)
     link = _build_key_copy_value(key)
     if link and not re.fullmatch(r"user_[A-Za-z0-9_\\-]+", link):
         return link
@@ -445,6 +545,11 @@ async def _resolve_key_link_for_key(telegram_id: int, key_id: int) -> str:
     key = get_key_details_for_user(key_id, telegram_id)
     if not key:
         raise HTTPException(status_code=404, detail="Key not found")
+    if not key.get("server_id") or not key.get("panel_email") or not key.get("client_uuid"):
+        await _ensure_key_provisioned_for_user(telegram_id, key_id)
+        key = get_key_details_for_user(key_id, telegram_id)
+        if not key:
+            raise HTTPException(status_code=404, detail="Key not found")
 
     link = _build_key_copy_value(key)
     if link and not re.fullmatch(r"user_[A-Za-z0-9_\\-]+", link):
