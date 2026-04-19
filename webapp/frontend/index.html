@@ -1649,7 +1649,9 @@
 
       useEffect(() => {
         if (!token) return;
-        recoverRecentPaidOrder({ silent: true }).catch(() => null);
+        const pending = loadPendingPayment();
+        if (!pending?.order_id) return;
+        recoverRecentPaidOrder({ silent: true, expectedOrderId: String(pending.order_id || '') }).catch(() => null);
       }, [token]);
 
       useEffect(() => {
@@ -1857,7 +1859,11 @@
             const byId = await api(`/api/keys/${keyId}/link`, { token });
             link = String(byId?.data?.key_link || '').trim();
           } catch {}
-          if (!link) {
+          // IMPORTANT:
+          // For post-payment flow we must not fallback to generic /api/key_link,
+          // otherwise we can accidentally show/copy an older "main" key.
+          const allowGenericFallback = !source?.order_id;
+          if (!link && allowGenericFallback) {
             try {
               const fallback = await api('/api/key_link', { token });
               link = String(fallback?.data?.key_link || '').trim();
@@ -1874,13 +1880,16 @@
         }
       }
 
-      async function recoverRecentPaidOrder({ silent = false } = {}) {
+      async function recoverRecentPaidOrder({ silent = false, expectedOrderId = null } = {}) {
         if (!token) return false;
         try {
           const response = await api('/api/payment_status_recent', { token });
           const found = Boolean(response?.data?.found_paid);
           const order = response?.data?.order || null;
           if (!found || !order) return false;
+          if (expectedOrderId && String(order.order_id || '').trim() !== String(expectedOrderId || '').trim()) {
+            return false;
+          }
           const details = {
             order_id: String(order.order_id || '').trim(),
             key_id: Number(order.key_id || 0) || null,
@@ -1953,7 +1962,7 @@
           }
           count += 1;
           if (count % 3 === 0) {
-            const restoredEarly = await recoverRecentPaidOrder({ silent: true });
+            const restoredEarly = await recoverRecentPaidOrder({ silent: true, expectedOrderId: String(orderId || '') });
             if (restoredEarly) {
               setPaymentPolling(false);
               return;
@@ -1961,7 +1970,7 @@
           }
           if (count >= attempts) {
             setPaymentPolling(false);
-            const restored = await recoverRecentPaidOrder({ silent: true });
+            const restored = await recoverRecentPaidOrder({ silent: true, expectedOrderId: String(orderId || '') });
             if (!restored && !silent) showToast('Оплата еще обрабатывается. Обновите через пару секунд.');
             return;
           }
@@ -1980,9 +1989,9 @@
             body: {
               tariff_id: selectedTariff.id,
               method,
-              // Renew only when user explicitly opened a concrete key card.
-              // Regular tariff purchase from catalog should create a new key.
-              key_id: selectedKeyId || null,
+              // Catalog purchase always creates a new key.
+              // Renewal must be explicit in a separate flow.
+              key_id: null,
               promo_code: String(promoCodeApplied || '').trim() || null,
               use_promo: Boolean(checkoutUsePromo),
             },
