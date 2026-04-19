@@ -8,6 +8,7 @@
 - Текст условий
 """
 import logging
+import re
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
@@ -22,6 +23,7 @@ from database.requests import (
     get_referrer_offer,
     get_referrers_with_stats,
     get_promocode,
+    create_or_update_promocode,
     get_user_by_id,
     count_direct_referrals,
     count_direct_paid_referrals,
@@ -45,6 +47,41 @@ logger = logging.getLogger(__name__)
 from bot.utils.text import safe_edit_or_send, get_message_text_for_storage, escape_html
 
 router = Router()
+
+
+def _parse_hidden_promo_spec(raw: str) -> tuple[str, str, int]:
+    """
+    Формат:
+    - CODE 20%  -> PERCENT 20
+    - CODE 150  -> FIXED 150
+    - CODE 150₽ -> FIXED 150
+    """
+    text = (raw or "").strip()
+    parts = text.split()
+    if len(parts) < 2:
+        raise ValueError("format")
+
+    code = str(parts[0]).strip().upper()
+    if not code:
+        raise ValueError("format")
+
+    value_raw = str(parts[1]).strip().upper().replace(",", ".")
+    if value_raw.endswith("%"):
+        pct_raw = value_raw[:-1].strip()
+        if not pct_raw.isdigit():
+            raise ValueError("percent")
+        pct = int(pct_raw)
+        if pct < 1 or pct > 95:
+            raise ValueError("percent")
+        return code, "PERCENT", pct
+
+    fixed_digits = re.sub(r"[^0-9]", "", value_raw)
+    if not fixed_digits:
+        raise ValueError("fixed")
+    fixed = int(fixed_digits)
+    if fixed < 1 or fixed > 100000:
+        raise ValueError("fixed")
+    return code, "FIXED", fixed
 
 
 def _referral_leads_kb(page: int, total: int, sort_by: str, sort_dir: str, rows: list[dict], mode: str = "all"):
@@ -320,6 +357,69 @@ async def referral_bonus_input(message: Message, state: FSMContext):
         message,
         f"✅ Фиксированный бонус обновлён: <b>{value} ₽</b>",
         reply_markup=back_and_home_kb('admin_referral')
+    )
+
+
+@router.callback_query(F.data == "admin_referral_hidden_promo_create")
+async def admin_referral_hidden_promo_create(callback: CallbackQuery, state: FSMContext):
+    """Создание/обновление скрытого промокода прямо из меню рефералов."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    await state.set_state(AdminStates.referral_hidden_promo_create)
+    await safe_edit_or_send(
+        callback.message,
+        "🎟 <b>Создание скрытого промокода</b>\n\n"
+        "Формат ввода:\n"
+        "• <code>CODE 20%</code> — процентная скидка\n"
+        "• <code>CODE 150</code> — скидка в рублях\n\n"
+        "Пример: <code>MEDIA30 30%</code>\n"
+        "Отправьте <code>-</code>, чтобы отменить.",
+        reply_markup=back_and_home_kb("admin_referral"),
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.referral_hidden_promo_create)
+async def admin_referral_hidden_promo_create_save(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+
+    raw = get_message_text_for_storage(message, "plain").strip()
+    if raw == "-":
+        await state.set_state(AdminStates.referral_menu)
+        await safe_edit_or_send(message, "Отменено.", reply_markup=back_and_home_kb("admin_referral"))
+        return
+
+    try:
+        code, discount_type, discount_value = _parse_hidden_promo_spec(raw)
+    except ValueError:
+        await safe_edit_or_send(
+            message,
+            "❌ Некорректный формат.\n"
+            "Используйте: <code>CODE 20%</code> или <code>CODE 150</code>.",
+            force_new=True,
+        )
+        return
+
+    create_or_update_promocode(
+        code=code,
+        discount_type=discount_type,
+        discount_value=discount_value,
+        min_amount=1,
+        is_active=True,
+        visibility="HIDDEN",
+    )
+
+    await state.set_state(AdminStates.referral_menu)
+    await safe_edit_or_send(
+        message,
+        f"✅ Скрытый промокод сохранён: <code>{escape_html(code)}</code>\n"
+        f"Тип: <b>{'процент' if discount_type == 'PERCENT' else 'фикс'}</b>\n"
+        f"Значение: <b>{discount_value}{'%' if discount_type == 'PERCENT' else ' ₽'}</b>",
+        reply_markup=back_and_home_kb("admin_referral"),
+        force_new=True,
     )
 
 
@@ -705,6 +805,10 @@ async def admin_referrer_view(callback: CallbackQuery):
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
+            text="➕ Добавить промокод",
+            callback_data=f"admin_referrer_offer_setpromo:{user_id}:{page}:{sort_by}:{sort_dir}",
+        ),
+        InlineKeyboardButton(
             text="⚙️ Настроить медиа-оффер",
             callback_data=f"admin_referrer_offer:{user_id}:{page}:{sort_by}:{sort_dir}",
         )
@@ -791,7 +895,10 @@ async def admin_referrer_offer_setpromo(callback: CallbackQuery, state: FSMConte
     await state.update_data(ref_offer_user_id=user_id, ref_offer_page=page, ref_offer_sort_by=sort_by, ref_offer_sort_dir=sort_dir)
     await safe_edit_or_send(
         callback.message,
-        "Введите промокод для этого медиа-оффера.\n"
+        "Введите промокод для этого медиа-оффера.\n\n"
+        "Можно сразу создать скрытый промокод:\n"
+        "• <code>CODE 20%</code>\n"
+        "• <code>CODE 150</code>\n\n"
         "Отправьте <code>-</code>, чтобы очистить автопромокод.",
         reply_markup=_referrer_offer_kb(user_id, page, sort_by, sort_dir),
     )
@@ -862,7 +969,19 @@ async def admin_referrer_offer_promo_save(message: Message, state: FSMContext):
     raw = get_message_text_for_storage(message, "plain").strip()
     promo_code = None
     if raw and raw != "-":
-        promo_code = raw.upper()
+        try:
+            code_new, dtype_new, dval_new = _parse_hidden_promo_spec(raw)
+            create_or_update_promocode(
+                code=code_new,
+                discount_type=dtype_new,
+                discount_value=dval_new,
+                min_amount=1,
+                is_active=True,
+                visibility="HIDDEN",
+            )
+            promo_code = code_new
+        except ValueError:
+            promo_code = raw.upper()
         promo = get_promocode(promo_code)
         if not promo:
             await safe_edit_or_send(message, "Промокод не найден. Повторите ввод или отправьте '-' для очистки.", force_new=True)
