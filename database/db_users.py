@@ -532,6 +532,7 @@ def get_referrers_with_stats(
     limit: int = 20,
     sort_by: str = "invited",
     sort_dir: str = "desc",
+    media_only: bool = False,
 ) -> tuple[List[Dict[str, Any]], int]:
     """
     Возвращает список пользователей, которые привели хотя бы 1 реферала,
@@ -553,6 +554,16 @@ def get_referrers_with_stats(
     }
     order_col = sort_columns.get(sort_by, "invited_count")
     order_dir = "ASC" if str(sort_dir).lower() == "asc" else "DESC"
+
+    media_filter_sql = ""
+    if media_only:
+        media_filter_sql = (
+            " AND EXISTS ("
+            "   SELECT 1 FROM referral_offers ro"
+            "   WHERE ro.referrer_user_id = u.id"
+            "     AND COALESCE(ro.is_active, 0) = 1"
+            " )"
+        )
 
     with get_db() as conn:
         cursor = conn.execute(
@@ -585,6 +596,9 @@ def get_referrers_with_stats(
                 FROM ref_stats rs
                 JOIN users u ON u.id = rs.referrer_id
                 WHERE rs.invited_count > 0
+            """
+            + media_filter_sql
+            + """
             )
             SELECT *
             FROM ref_stats_filtered
@@ -608,6 +622,10 @@ def get_referrers_with_stats(
                 SELECT u.id
                 FROM users u
                 JOIN users r ON r.referred_by = u.id
+                WHERE 1 = 1
+            """
+            + media_filter_sql
+            + """
                 GROUP BY u.id
             ) t
             """

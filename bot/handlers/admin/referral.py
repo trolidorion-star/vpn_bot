@@ -47,7 +47,7 @@ from bot.utils.text import safe_edit_or_send, get_message_text_for_storage, esca
 router = Router()
 
 
-def _referral_leads_kb(page: int, total: int, sort_by: str, sort_dir: str, rows: list[dict]):
+def _referral_leads_kb(page: int, total: int, sort_by: str, sort_dir: str, rows: list[dict], mode: str = "all"):
     from aiogram.types import InlineKeyboardButton
     from aiogram.utils.keyboard import InlineKeyboardBuilder
 
@@ -62,22 +62,24 @@ def _referral_leads_kb(page: int, total: int, sort_by: str, sort_dir: str, rows:
         "created": "По дате",
     }
     dir_label = "↓" if sort_dir == "desc" else "↑"
+    leads_cb = "admin_referral_media_leads" if mode == "media" else "admin_referral_leads"
+    sort_toggle_cb = "admin_referral_media_sort_toggle" if mode == "media" else "admin_referral_sort_toggle"
 
     builder = InlineKeyboardBuilder()
     builder.row(
         InlineKeyboardButton(
             text=f"Сортировка: {sort_labels.get(sort_by, 'По приглашенным')} {dir_label}",
-            callback_data=f"admin_referral_sort_toggle:{page}:{sort_by}:{sort_dir}",
+            callback_data=f"{sort_toggle_cb}:{page}:{sort_by}:{sort_dir}",
         )
     )
 
     builder.row(
-        InlineKeyboardButton(text="👥 Приглашенные", callback_data=f"admin_referral_leads:{page}:invited:{sort_dir}"),
-        InlineKeyboardButton(text="💳 Оплатившие", callback_data=f"admin_referral_leads:{page}:paid:{sort_dir}"),
+        InlineKeyboardButton(text="👥 Приглашенные", callback_data=f"{leads_cb}:{page}:invited:{sort_dir}"),
+        InlineKeyboardButton(text="💳 Оплатившие", callback_data=f"{leads_cb}:{page}:paid:{sort_dir}"),
     )
     builder.row(
-        InlineKeyboardButton(text="📈 Конверсия", callback_data=f"admin_referral_leads:{page}:conversion:{sort_dir}"),
-        InlineKeyboardButton(text="🗓 Дата", callback_data=f"admin_referral_leads:{page}:created:{sort_dir}"),
+        InlineKeyboardButton(text="📈 Конверсия", callback_data=f"{leads_cb}:{page}:conversion:{sort_dir}"),
+        InlineKeyboardButton(text="🗓 Дата", callback_data=f"{leads_cb}:{page}:created:{sort_dir}"),
     )
 
     for row in rows:
@@ -98,7 +100,7 @@ def _referral_leads_kb(page: int, total: int, sort_by: str, sort_dir: str, rows:
         nav_row.append(
             InlineKeyboardButton(
                 text="⬅️",
-                callback_data=f"admin_referral_leads:{page - 1}:{sort_by}:{sort_dir}",
+                callback_data=f"{leads_cb}:{page - 1}:{sort_by}:{sort_dir}",
             )
         )
     nav_row.append(
@@ -111,7 +113,7 @@ def _referral_leads_kb(page: int, total: int, sort_by: str, sort_dir: str, rows:
         nav_row.append(
             InlineKeyboardButton(
                 text="➡️",
-                callback_data=f"admin_referral_leads:{page + 1}:{sort_by}:{sort_dir}",
+                callback_data=f"{leads_cb}:{page + 1}:{sort_by}:{sort_dir}",
             )
         )
     builder.row(*nav_row)
@@ -515,6 +517,7 @@ async def admin_referral_leads(callback: CallbackQuery):
         limit=per_page,
         sort_by=sort_by,
         sort_dir=sort_dir,
+        media_only=False,
     )
 
     text = (
@@ -526,7 +529,40 @@ async def admin_referral_leads(callback: CallbackQuery):
     await safe_edit_or_send(
         callback.message,
         text,
-        reply_markup=_referral_leads_kb(page, total, sort_by, sort_dir, rows),
+        reply_markup=_referral_leads_kb(page, total, sort_by, sort_dir, rows, mode="all"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_referral_media_leads:"))
+async def admin_referral_media_leads(callback: CallbackQuery):
+    """Список рефереров с активным медиа-оффером."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    page, sort_by, sort_dir = _parse_leads_payload(callback.data.replace("admin_referral_media_leads:", "admin_referral_leads:"))
+    per_page = 10
+    offset = page * per_page
+
+    rows, total = get_referrers_with_stats(
+        offset=offset,
+        limit=per_page,
+        sort_by=sort_by,
+        sort_dir=sort_dir,
+        media_only=True,
+    )
+
+    text = (
+        "🎯 <b>Медиа-рефералы</b>\n\n"
+        f"Всего рефереров с активным оффером: <b>{total}</b>\n"
+        "Показываются пользователи с включённым персональным медиа-оффером.\n\n"
+        "Формат: <i>приглашено/оплатили (конверсия)</i>"
+    )
+    await safe_edit_or_send(
+        callback.message,
+        text,
+        reply_markup=_referral_leads_kb(page, total, sort_by, sort_dir, rows, mode="media"),
     )
     await callback.answer()
 
@@ -551,6 +587,7 @@ async def admin_referral_sort_toggle(callback: CallbackQuery):
         limit=per_page,
         sort_by=sort_by,
         sort_dir=new_dir,
+        media_only=False,
     )
     text = (
         "👥 <b>Рефереры и статистика</b>\n\n"
@@ -561,7 +598,42 @@ async def admin_referral_sort_toggle(callback: CallbackQuery):
     await safe_edit_or_send(
         callback.message,
         text,
-        reply_markup=_referral_leads_kb(page, total, sort_by, new_dir, rows),
+        reply_markup=_referral_leads_kb(page, total, sort_by, new_dir, rows, mode="all"),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("admin_referral_media_sort_toggle:"))
+async def admin_referral_media_sort_toggle(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    parts = callback.data.split(":")
+    page = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+    sort_by = parts[2] if len(parts) > 2 else "invited"
+    sort_dir = parts[3] if len(parts) > 3 else "desc"
+    new_dir = "asc" if sort_dir == "desc" else "desc"
+
+    per_page = 10
+    offset = page * per_page
+    rows, total = get_referrers_with_stats(
+        offset=offset,
+        limit=per_page,
+        sort_by=sort_by,
+        sort_dir=new_dir,
+        media_only=True,
+    )
+    text = (
+        "🎯 <b>Медиа-рефералы</b>\n\n"
+        f"Всего рефереров с активным оффером: <b>{total}</b>\n"
+        "Показываются пользователи с включённым персональным медиа-оффером.\n\n"
+        "Формат: <i>приглашено/оплатили (конверсия)</i>"
+    )
+    await safe_edit_or_send(
+        callback.message,
+        text,
+        reply_markup=_referral_leads_kb(page, total, sort_by, new_dir, rows, mode="media"),
     )
     await callback.answer()
 
@@ -653,14 +725,14 @@ async def admin_referrer_view(callback: CallbackQuery):
     await callback.answer()
 
 def _parse_offer_payload(data: str) -> tuple[int, int, str, str]:
-    # admin_referrer_offer:*:{user_id}:{page}:{sort_by}:{sort_dir}
+    # admin_referrer_offer:{user_id}:{page}:{sort_by}:{sort_dir}
     parts = data.split(":")
-    if len(parts) < 6:
+    if len(parts) < 5:
         raise ValueError("invalid callback payload")
-    user_id = int(parts[2])
-    page = int(parts[3]) if parts[3].isdigit() else 0
-    sort_by = parts[4]
-    sort_dir = parts[5]
+    user_id = int(parts[1])
+    page = int(parts[2]) if parts[2].isdigit() else 0
+    sort_by = parts[3]
+    sort_dir = parts[4]
     return user_id, page, sort_by, sort_dir
 
 
