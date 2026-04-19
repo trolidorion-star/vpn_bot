@@ -660,6 +660,12 @@
         if (!parsed || typeof parsed !== 'object') return null;
         const orderId = String(parsed.order_id || '').trim();
         if (!orderId) return null;
+        const createdAt = Number(parsed.created_at || 0);
+        const ageMs = createdAt > 0 ? (Date.now() - createdAt) : 0;
+        if (createdAt > 0 && ageMs > 1000 * 60 * 60 * 2) {
+          localStorage.removeItem(PENDING_PAYMENT_KEY);
+          return null;
+        }
         return parsed;
       } catch {
         return null;
@@ -1606,6 +1612,11 @@
         return () => document.removeEventListener('visibilitychange', onVisibility);
       }, [token]);
 
+      useEffect(() => {
+        if (!token) return;
+        recoverRecentPaidOrder({ silent: true }).catch(() => null);
+      }, [token]);
+
       async function copyText(text, okText = 'Скопировано') {
         try {
           await navigator.clipboard.writeText(text || '');
@@ -1739,6 +1750,32 @@
         savePendingPayment(null);
       };
 
+      async function recoverRecentPaidOrder({ silent = false } = {}) {
+        if (!token) return false;
+        try {
+          const response = await api('/api/payment_status_recent', { token });
+          const found = Boolean(response?.data?.found_paid);
+          const order = response?.data?.order || null;
+          if (!found || !order) return false;
+          const details = {
+            order_id: String(order.order_id || '').trim(),
+            key_id: Number(order.key_id || 0) || null,
+            key_link: String(order.key_link || '').trim(),
+            key_name: String(order.key_name || '').trim(),
+            expires_at: order.expires_at || null,
+          };
+          setPaymentResult(details);
+          clearPendingPayment();
+          await refreshData(token, { silent: true });
+          if (details.key_id) setSelectedKeyId(details.key_id);
+          if (!silent) showToast('Нашли успешную оплату и выдали ключ.');
+          return true;
+        } catch (error) {
+          if (!silent) showToast(error?.message || 'Не удалось проверить последние оплаты', 'error');
+          return false;
+        }
+      }
+
       async function pollPaymentStatus(orderId, { silent = false } = {}) {
         if (!token || !orderId) return { done: false, paid: false };
         const response = await api(`/api/payment_status/${encodeURIComponent(orderId)}`, { token });
@@ -1793,7 +1830,8 @@
           count += 1;
           if (count >= attempts) {
             setPaymentPolling(false);
-            if (!silent) showToast('Оплата еще обрабатывается. Обновите через пару секунд.');
+            const restored = await recoverRecentPaidOrder({ silent: true });
+            if (!restored && !silent) showToast('Оплата еще обрабатывается. Обновите через пару секунд.');
             return;
           }
           paymentPollTimerRef.current = setTimeout(tick, intervalMs);

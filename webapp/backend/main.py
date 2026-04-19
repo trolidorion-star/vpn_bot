@@ -536,6 +536,81 @@ async def _finalize_miniapp_order_if_needed(telegram_id: int, order_id: str, sta
     return await _load_miniapp_order_state(telegram_id, order_id)
 
 
+async def _serialize_paid_order_for_user(telegram_id: int, order_id: str) -> Optional[dict[str, Any]]:
+    try:
+        state = await _load_miniapp_order_state(telegram_id, order_id)
+    except Exception:
+        return None
+
+    payment = dict(state.get("payment") or {})
+    tx = dict(state.get("transaction") or {})
+    payment_status = str(payment.get("status") or "").strip().lower()
+    if payment_status != "paid":
+        return None
+
+    tx_status = str(tx.get("status") or "").strip().upper()
+    key_id_raw = payment.get("vpn_key_id")
+    key_id = int(key_id_raw) if key_id_raw is not None else None
+    key_link = ""
+    key_name = None
+    expires_at = None
+    if key_id:
+        key = get_key_details_for_user(key_id, telegram_id)
+        if key:
+            key_name = key.get("display_name")
+            expires_at = key.get("expires_at")
+            try:
+                key_link = await _resolve_key_link_for_key(telegram_id, key_id)
+            except Exception as exc:
+                logger.warning("MiniApp paid-order serialize: failed to resolve key link for key_id=%s order=%s: %s", key_id, order_id, exc)
+
+    payload = PaymentStatusResponse(
+        order_id=order_id,
+        payment_status=payment_status,
+        transaction_status=tx_status or "SUCCESS",
+        is_paid=True,
+        key_id=key_id,
+        key_link=key_link or "",
+        key_name=key_name,
+        expires_at=expires_at,
+    )
+    return payload.dict()
+
+
+async def _reconcile_recent_user_platega_orders(telegram_id: int, limit: int = 12) -> Optional[dict[str, Any]]:
+    with get_db() as conn:
+        rows = conn.execute(
+            """
+            SELECT p.order_id
+            FROM payments p
+            JOIN users u ON u.id = p.user_id
+            WHERE u.telegram_id = ?
+              AND p.payment_type = 'platega'
+            ORDER BY p.id DESC
+            LIMIT ?
+            """,
+            (telegram_id, max(1, int(limit))),
+        ).fetchall()
+    order_ids = [str(row["order_id"]) for row in rows if row and row["order_id"]]
+    if not order_ids:
+        return None
+
+    for order_id in order_ids:
+        try:
+            state = await _load_miniapp_order_state(telegram_id, order_id)
+            payment_status = str((state.get("payment") or {}).get("status") or "").strip().lower()
+            if payment_status != "paid":
+                await _finalize_miniapp_order_if_needed(telegram_id, order_id, state)
+        except Exception as exc:
+            logger.warning("MiniApp reconcile_recent: failed for order=%s telegram_id=%s err=%s", order_id, telegram_id, exc)
+
+    for order_id in order_ids:
+        paid_payload = await _serialize_paid_order_for_user(telegram_id, order_id)
+        if paid_payload:
+            return paid_payload
+    return None
+
+
 def _admin_ticket_reply_markup(ticket_id: int) -> dict[str, Any]:
     return {
         "inline_keyboard": [
@@ -1045,39 +1120,33 @@ async def get_payment_status(order_id: str, session: dict[str, Any] = Depends(_c
     state = await _load_miniapp_order_state(telegram_id, clean_order_id)
     state = await _finalize_miniapp_order_if_needed(telegram_id, clean_order_id, state)
 
+    paid_payload = await _serialize_paid_order_for_user(telegram_id, clean_order_id)
+    if paid_payload:
+        return {"ok": True, "data": paid_payload}
+
     payment = dict(state.get("payment") or {})
     tx = dict(state.get("transaction") or {})
-
-    payment_status = str(payment.get("status") or "").strip().lower()
-    tx_status = str(tx.get("status") or "").strip().upper()
-    key_id_raw = payment.get("vpn_key_id")
-    key_id = int(key_id_raw) if key_id_raw is not None else None
-
-    key_link = ""
-    key_name = None
-    expires_at = None
-    if key_id:
-        key = get_key_details_for_user(key_id, telegram_id)
-        if key:
-            key_name = key.get("display_name")
-            expires_at = key.get("expires_at")
-            try:
-                key_link = await _resolve_key_link_for_key(telegram_id, key_id)
-            except Exception as exc:
-                logger.warning("MiniApp payment_status: failed to resolve key link for key_id=%s order=%s: %s", key_id, clean_order_id, exc)
-
-    is_paid = payment_status == "paid"
     payload = PaymentStatusResponse(
         order_id=clean_order_id,
-        payment_status=payment_status or "pending",
-        transaction_status=tx_status or "PENDING",
-        is_paid=is_paid,
-        key_id=key_id,
-        key_link=key_link or "",
-        key_name=key_name,
-        expires_at=expires_at,
+        payment_status=str(payment.get("status") or "").strip().lower() or "pending",
+        transaction_status=str(tx.get("status") or "").strip().upper() or "PENDING",
+        is_paid=False,
+        key_id=int(payment.get("vpn_key_id")) if payment.get("vpn_key_id") is not None else None,
+        key_link="",
+        key_name=None,
+        expires_at=None,
     )
     return {"ok": True, "data": payload.dict()}
+
+
+@app.get("/api/payment_status_recent")
+async def get_payment_status_recent(session: dict[str, Any] = Depends(_current_session)) -> dict[str, Any]:
+    _ensure_miniapp_enabled()
+    telegram_id = int(session["telegram_id"])
+    paid_payload = await _reconcile_recent_user_platega_orders(telegram_id, limit=12)
+    if paid_payload:
+        return {"ok": True, "data": {"found_paid": True, "order": paid_payload}}
+    return {"ok": True, "data": {"found_paid": False}}
 
 
 @app.post("/api/set_ru_bypass")
