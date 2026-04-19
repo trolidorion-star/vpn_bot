@@ -247,6 +247,30 @@
     .usage-key-card {
       background: linear-gradient(145deg, rgba(16, 28, 40, 0.85), rgba(11, 21, 33, 0.88));
     }
+    .tab-dashboard .premium-card,
+    .tab-plans .premium-card {
+      contain: layout style;
+    }
+    .scroll-optimizing.tab-dashboard .glass,
+    .scroll-optimizing.tab-plans .glass {
+      -webkit-backdrop-filter: blur(5px);
+      backdrop-filter: blur(5px);
+    }
+    .scroll-optimizing.tab-dashboard .shine::before,
+    .scroll-optimizing.tab-plans .shine::before {
+      animation-play-state: paused;
+      opacity: .42;
+    }
+    .scroll-optimizing.tab-dashboard .hero-glow::after,
+    .scroll-optimizing.tab-plans .hero-glow::after {
+      animation-play-state: paused;
+      opacity: .2;
+    }
+    .scroll-optimizing.tab-dashboard .app-orb,
+    .scroll-optimizing.tab-plans .app-orb {
+      filter: blur(24px);
+      opacity: .2;
+    }
     .tab-usage .hero-glow::after,
     .tab-usage .shine::before,
     .tab-usage .card-rise,
@@ -885,6 +909,7 @@
       const [promoGlobal, setPromoGlobal] = useState(null);
       const [selectedUsageKey, setSelectedUsageKey] = useState('all');
       const [checkoutUsePromo, setCheckoutUsePromo] = useState(true);
+      const [isScrollOptimizing, setIsScrollOptimizing] = useState(false);
       const [giftMode, setGiftMode] = useState(false);
       const [giftRecipientName, setGiftRecipientName] = useState('');
       const [giftComment, setGiftComment] = useState('');
@@ -895,6 +920,8 @@
       const refreshBusyRef = useRef(false);
       const saveCacheTimerRef = useRef(null);
       const saveCacheIdleRef = useRef(null);
+      const scrollOptimizeTimerRef = useRef(null);
+      const lastScrollSampleRef = useRef({ t: 0, y: 0 });
 
       const expiresAtMs = useMemo(() => {
         const ts = new Date(user?.expires_at || 0).getTime();
@@ -1180,7 +1207,48 @@
         if (tabLoadingTimerRef.current) clearTimeout(tabLoadingTimerRef.current);
         if (saveCacheTimerRef.current) clearTimeout(saveCacheTimerRef.current);
         if (saveCacheIdleRef.current && window.cancelIdleCallback) window.cancelIdleCallback(saveCacheIdleRef.current);
+        if (scrollOptimizeTimerRef.current) clearTimeout(scrollOptimizeTimerRef.current);
       }, []);
+
+      useEffect(() => {
+        const scrollSensitiveTab = tab === 'dashboard' || tab === 'plans';
+        if (!scrollSensitiveTab) {
+          setIsScrollOptimizing(false);
+          return;
+        }
+        const initY = window.scrollY || window.pageYOffset || 0;
+        const initT = window.performance?.now ? window.performance.now() : Date.now();
+        lastScrollSampleRef.current = { t: initT, y: initY };
+
+        const onScroll = () => {
+          const y = window.scrollY || window.pageYOffset || 0;
+          const t = window.performance?.now ? window.performance.now() : Date.now();
+          const prev = lastScrollSampleRef.current || { t, y };
+          const dt = Math.max(1, t - Number(prev.t || t));
+          const dy = Math.abs(y - Number(prev.y || y));
+          const velocity = dy / dt;
+          lastScrollSampleRef.current = { t, y };
+
+          if (velocity > 0.75 || dy > 22) {
+            setIsScrollOptimizing((prevState) => (prevState ? prevState : true));
+          }
+          if (scrollOptimizeTimerRef.current) clearTimeout(scrollOptimizeTimerRef.current);
+          scrollOptimizeTimerRef.current = setTimeout(() => {
+            setIsScrollOptimizing(false);
+            scrollOptimizeTimerRef.current = null;
+          }, 150);
+        };
+
+        window.addEventListener('scroll', onScroll, { passive: true });
+        return () => {
+          window.removeEventListener('scroll', onScroll);
+          if (scrollOptimizeTimerRef.current) {
+            clearTimeout(scrollOptimizeTimerRef.current);
+            scrollOptimizeTimerRef.current = null;
+          }
+          setIsScrollOptimizing(false);
+        };
+      }, [tab]);
 
       useEffect(() => {
         const payload = {
@@ -2471,7 +2539,7 @@
       }
 
       return (
-        <div className={`relative mx-auto min-h-screen w-full max-w-[520px] px-3 pb-24 pt-5 sm:px-4 ${tab === 'usage' ? 'tab-usage' : ''}`}>
+        <div className={`relative mx-auto min-h-screen w-full max-w-[520px] px-3 pb-24 pt-5 sm:px-4 ${tab === 'usage' ? 'tab-usage' : ''} ${tab === 'dashboard' ? 'tab-dashboard' : ''} ${tab === 'plans' ? 'tab-plans' : ''} ${isScrollOptimizing ? 'scroll-optimizing' : ''}`}>
           <div className="app-bg">
             <div className="app-orb one"></div>
             <div className="app-orb two"></div>
