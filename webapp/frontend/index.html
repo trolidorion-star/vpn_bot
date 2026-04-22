@@ -1036,6 +1036,14 @@
         const elapsed = Math.max(0, Math.floor((clock - lastSyncAt) / 1000));
         return Math.max(0, base - elapsed);
       }, [promoGlobal, lastSyncAt, clock]);
+      const promoBadgePercent = useMemo(() => {
+        const activePromoDiscountPct = Number(activePromo?.discount_percent || 0);
+        if (activePromoDiscountPct > 0) return Math.round(activePromoDiscountPct);
+        if (promoGlobal?.active && Number(promoGlobal?.discount_percent || 0) > 0) {
+          return Math.round(Number(promoGlobal.discount_percent || 0));
+        }
+        return 0;
+      }, [activePromo?.discount_percent, promoGlobal?.active, promoGlobal?.discount_percent]);
       const isActive = user?.status === 'active' && msLeft > 0;
       const referralLink = normalizeReferralLink(refData?.referral_link || user?.referral_link || '');
       const usagePoints = useMemo(() => {
@@ -2421,12 +2429,6 @@
       function renderPlans() {
         const activePromoCode = String(activePromo?.code || promoCodeApplied || '').trim().toUpperCase();
         const activePromoScope = String(activePromo?.scope || '').toUpperCase();
-        const activePromoDiscountPct = Number(activePromo?.discount_percent || 0);
-        const promoBadgePercent = activePromoDiscountPct > 0
-          ? Math.round(activePromoDiscountPct)
-          : ((promoGlobal?.active && Number(promoGlobal?.discount_percent || 0) > 0)
-            ? Math.round(Number(promoGlobal.discount_percent || 0))
-            : 0);
         const promoScopeLabel = activePromoScope === 'HIDDEN'
             ? 'Скрытый'
             : 'Общий';
