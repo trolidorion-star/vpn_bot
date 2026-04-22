@@ -133,6 +133,7 @@ def referral_main_kb(
         InlineKeyboardButton(text='👥 Все рефералы', callback_data='admin_referral_leads:0:invited:desc'),
         InlineKeyboardButton(text='🎯 Медиа-рефералы', callback_data='admin_referral_media_leads:0:invited:desc'),
     )
+    builder.row(InlineKeyboardButton(text='🔎 Найти/настроить реферала', callback_data='admin_referral_find_referrer'))
     builder.row(InlineKeyboardButton(text='🎟 Создать скрытый промокод', callback_data='admin_referral_hidden_promo_create'))
     builder.row(InlineKeyboardButton(text='📝 Текст условий', callback_data='admin_referral_conditions'))
     builder.row(back_button('admin_panel'), home_button())

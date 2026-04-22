@@ -49,6 +49,7 @@ class AdminStates(StatesGroup):
     referral_offer_promo_edit = State()  # Редактирование промокода оффера реферера
     referral_offer_trial_bonus_edit = State()  # Редактирование trial-бонуса оффера реферера
     referral_hidden_promo_create = State()  # Создание скрытого промокода из реферального меню
+    referral_find_referrer = State()  # Поиск реферера по @username / telegram_id / internal id
     trial_hours_edit = State()       # Редактирование длительности trial в часах
     flash_sale_menu = State()        # Меню акции/скидок
     flash_sale_edit = State()        # Ввод значения для полей акции

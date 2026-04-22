@@ -25,6 +25,8 @@ from database.requests import (
     get_promocode,
     create_or_update_promocode,
     get_user_by_id,
+    get_user_by_telegram_id,
+    get_user_by_username,
     count_direct_referrals,
     count_direct_paid_referrals,
     get_direct_referrals_with_purchase_info,
@@ -379,6 +381,72 @@ async def admin_referral_hidden_promo_create(callback: CallbackQuery, state: FSM
         reply_markup=back_and_home_kb("admin_referral"),
     )
     await callback.answer()
+
+
+@router.callback_query(F.data == "admin_referral_find_referrer")
+async def admin_referral_find_referrer(callback: CallbackQuery, state: FSMContext):
+    """Поиск реферера для настройки оффера до привлечения трафика."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("⛔ Доступ запрещён", show_alert=True)
+        return
+
+    await state.set_state(AdminStates.referral_find_referrer)
+    await safe_edit_or_send(
+        callback.message,
+        "🔎 <b>Найти/настроить реферала</b>\n\n"
+        "Отправьте один из вариантов:\n"
+        "• <code>@username</code>\n"
+        "• <code>telegram_id</code>\n"
+        "• <code>internal id</code> (из БД users.id)\n\n"
+        "После этого сразу откроется карточка для настройки медиа-оффера.",
+        reply_markup=referral_back_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(AdminStates.referral_find_referrer)
+async def admin_referral_find_referrer_input(message: Message, state: FSMContext):
+    if not is_admin(message.from_user.id):
+        return
+
+    raw = get_message_text_for_storage(message, "plain").strip()
+    if not raw:
+        await safe_edit_or_send(message, "❌ Введите @username, telegram_id или internal id.", force_new=True)
+        return
+
+    user = None
+    if raw.startswith("@"):
+        username = raw[1:].strip().lower()
+        if username:
+            user = get_user_by_username(username)
+    elif raw.isdigit():
+        numeric = int(raw)
+        user = get_user_by_telegram_id(numeric) or get_user_by_id(numeric)
+    else:
+        user = get_user_by_username(raw.lower())
+
+    if not user:
+        await safe_edit_or_send(
+            message,
+            "❌ Пользователь не найден.\n"
+            "Проверьте @username / telegram_id / internal id и попробуйте снова.",
+            force_new=True,
+        )
+        return
+
+    await state.set_state(AdminStates.referral_menu)
+
+    class _Cb:
+        def __init__(self, msg: Message, target_user_id: int):
+            self.message = msg
+            self.from_user = msg.from_user
+            self.bot = msg.bot
+            self.data = f"admin_referrer_view:{target_user_id}:0:invited:desc"
+
+        async def answer(self, *args, **kwargs):
+            return None
+
+    await admin_referrer_view(_Cb(message, int(user["id"])))
 
 
 @router.message(AdminStates.referral_hidden_promo_create)
